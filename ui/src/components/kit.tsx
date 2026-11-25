@@ -4,6 +4,7 @@ import { useId } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Timer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export const spring = { type: "spring", stiffness: 500, damping: 32 } as const;
 export const pop = { type: "spring", stiffness: 520, damping: 17 } as const;
@@ -17,16 +18,12 @@ export function initials(name: string) {
     .join("");
 }
 
+/** Avatar shadcn à initiales (Teams n'expose pas les photos). */
 export function InitialsAvatar({ name, className }: { name: string; className?: string }) {
   return (
-    <div
-      className={cn(
-        "flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium transition-opacity",
-        className
-      )}
-    >
-      {initials(name)}
-    </div>
+    <Avatar className={cn("size-9 transition-opacity", className)} aria-hidden>
+      <AvatarFallback className="bg-secondary text-xs font-medium text-secondary-foreground">{initials(name)}</AvatarFallback>
+    </Avatar>
   );
 }
 
@@ -54,23 +51,43 @@ export function Segment<T extends string = "draft" | "auto">({
   value,
   onChange,
   disabled,
+  label = "Mode",
   options = MODE_OPTIONS as unknown as readonly SegmentOption<T>[],
 }: {
   value: T;
   onChange: (v: T) => void;
   disabled?: boolean;
+  label?: string;
   options?: readonly SegmentOption<T>[];
 }) {
   const id = useId();
+  // Contrôle segmenté accessible : groupe de boutons radio, flèches pour changer.
+  const move = (e: React.KeyboardEvent, i: number) => {
+    const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const next = options[(i + d + options.length) % options.length];
+    onChange(next.value);
+    (e.currentTarget.parentElement?.children[(i + d + options.length) % options.length] as HTMLElement | undefined)?.focus();
+  };
   return (
-    <div className={cn("flex rounded-full bg-secondary p-0.5 text-xs font-medium transition-opacity", disabled && "opacity-40")}>
-      {options.map((o) => (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cn("flex rounded-full bg-secondary p-0.5 text-xs font-medium transition-opacity", disabled && "opacity-40")}
+    >
+      {options.map((o, i) => (
         <button
           key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          tabIndex={value === o.value ? 0 : -1}
           disabled={disabled}
+          onKeyDown={(e) => move(e, i)}
           onClick={() => onChange(o.value)}
           className={cn(
-            "relative rounded-full px-3 py-1 transition-colors duration-200",
+            "relative rounded-full px-3 py-1 transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             value === o.value
               ? o.tone === "auto"
                 ? "text-warning"
@@ -111,18 +128,18 @@ export function StatusDot({ status, className }: { status: Status; className?: s
         )}
         {status === "run" && (
           <motion.span key="run" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Loader2 className="size-5 animate-spin text-primary" />
+            <Loader2 className="size-5 animate-spin text-link" />
           </motion.span>
         )}
         {status === "ok" && (
           <motion.span key="ok" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={pop}
-            className="grid size-6 place-items-center rounded-full bg-success text-white">
+            className="grid size-6 place-items-center rounded-full bg-success text-success-foreground">
             <Check className="size-3.5" strokeWidth={3} />
           </motion.span>
         )}
         {status === "error" && (
           <motion.span key="error" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={pop}
-            className="grid size-6 place-items-center rounded-full bg-destructive text-white">
+            className="grid size-6 place-items-center rounded-full bg-destructive text-destructive-foreground">
             <X className="size-3.5" strokeWidth={3} />
           </motion.span>
         )}
@@ -135,6 +152,7 @@ export function StatusDot({ status, className }: { status: Status; className?: s
 export function SelectCircle({ checked }: { checked: boolean }) {
   return (
     <span
+      aria-hidden
       className={cn(
         "grid size-5 shrink-0 place-items-center rounded-full border transition-colors duration-200",
         checked ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"
@@ -162,7 +180,7 @@ export function CountBadge({ n }: { n: number }) {
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.4, opacity: 0 }}
           transition={pop}
-          className="ml-1.5 inline-block rounded-full bg-primary/15 px-1.5 text-xs tabular-nums text-primary"
+          className="ml-1.5 inline-block rounded-full bg-primary/15 px-1.5 text-xs tabular-nums text-link"
         >
           {n}
         </motion.span>

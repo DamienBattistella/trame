@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -7,6 +7,8 @@ import { GithubLogo } from "@/brands";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -27,22 +29,20 @@ import { DraftItem, LogItem, Settings, SettingsPatch, Surface } from "@/types";
 
 const SURFACE = { dm: "1:1", group: "Groupe", channel: "Canal" } as const;
 
-function SurfaceTag({ s }: { s: Surface }) {
-  return <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">{SURFACE[s]}</span>;
-}
-
 type OpenBrief = (t: BriefTarget) => void;
+
+const MotionCard = motion.create(Card);
 
 /** Point d'entrée du brief ; grisé avec explication quand la fonction est coupée. */
 function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; target: BriefTarget; onBrief: OpenBrief; compact?: boolean }) {
   const enabled = trame.briefPrefs.enabled;
   const button = compact ? (
-    <Button variant="ghost" size="icon" className="size-8 rounded-full" disabled={!enabled} aria-label="Contexte" onClick={() => onBrief(target)}>
+    <Button variant="ghost" size="icon" className="size-8 rounded-full" disabled={!enabled} aria-label="Résumé" onClick={() => onBrief(target)}>
       <BookOpenText className="size-4" />
     </Button>
   ) : (
     <Button variant="secondary" className="rounded-full" disabled={!enabled} onClick={() => onBrief(target)}>
-      <BookOpenText className="size-4" /> Contexte
+      <BookOpenText className="size-4" /> Résumé
     </Button>
   );
   return (
@@ -52,7 +52,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
         <span className="inline-flex">{button}</span>
       </TooltipTrigger>
       <TooltipContent>
-        {enabled ? "Résumé et contexte GitHub" : "Brief de conversation désactivé dans Réglages"}
+        {enabled ? "Résumé de la conversation et liens GitHub" : "Brief de conversation désactivé dans Réglages"}
       </TooltipContent>
     </Tooltip>
   );
@@ -79,7 +79,7 @@ export function Panel({ trame }: { trame: Trame }) {
             className="shrink-0 overflow-hidden"
           >
             <div className="mb-4 flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/10 px-4 py-2 text-sm">
-              <AlertTriangle className="size-4 text-warning" /> Veille en pause — aucun message n'est traité.
+              <AlertTriangle className="size-4 text-warning" /> Trame est en pause : aucun message n'est lu.
             </div>
           </motion.div>
         )}
@@ -95,7 +95,7 @@ export function Panel({ trame }: { trame: Trame }) {
             className="shrink-0 overflow-hidden"
           >
             <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm">
-              <Loader2 className="size-4 animate-spin text-destructive" /> Moteur injoignable — reconnexion… Rien ne peut être envoyé pour l'instant.
+              <Loader2 className="size-4 animate-spin text-destructive" /> Moteur injoignable. Reconnexion… Rien ne peut partir pour l'instant.
             </div>
           </motion.div>
         )}
@@ -106,7 +106,7 @@ export function Panel({ trame }: { trame: Trame }) {
           <TabsTrigger value="drafts" className="rounded-full">
             Brouillons <CountBadge n={state.drafts.length} />
           </TabsTrigger>
-          <TabsTrigger value="watchlist" className="rounded-full">Watchlist</TabsTrigger>
+          <TabsTrigger value="watchlist" className="rounded-full">Conversations</TabsTrigger>
           <TabsTrigger value="logs" className="rounded-full">Journal</TabsTrigger>
           <TabsTrigger value="settings" className="rounded-full">Réglages</TabsTrigger>
         </TabsList>
@@ -312,10 +312,10 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
       transition={spring}
       aria-label={`Réponse à ${d.from}`}
     >
-      <motion.div
+      <MotionCard
         animate={controls}
         className={cn(
-          "flex flex-col gap-3 rounded-2xl border bg-card p-4 transition-colors duration-300",
+          "gap-3 rounded-2xl p-4 shadow-none transition-colors duration-300",
           status === "sent" && "border-success/50"
         )}
       >
@@ -351,9 +351,9 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
         </div>
 
         <div className="flex flex-col items-end gap-1.5">
-          <label htmlFor={`reply-${d.id}`} className="mr-1 text-xs text-muted-foreground">
+          <Label htmlFor={`reply-${d.id}`} className="mr-1 text-xs font-normal text-muted-foreground">
             {edited ? "Ta réponse · modifiée" : "Réponse proposée · modifiable"}
-          </label>
+          </Label>
           <Textarea
             id={`reply-${d.id}`}
             value={text}
@@ -381,7 +381,7 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 rounded-full text-primary"
+                  className="h-7 rounded-full text-link"
                   onClick={() => {
                     setText(fresher);
                     setFresher(null);
@@ -427,41 +427,56 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
             </AnimatePresence>
           </Button>
         </footer>
-      </motion.div>
+      </MotionCard>
     </motion.article>
   );
 }
 
 function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   const report = (what: string) => (res: Result) => {
-    if (!res.ok) toast.error(what, { description: `${res.error} La watchlist est revenue à son état précédent.` });
+    if (!res.ok) toast.error(what, { description: `${res.error} Rien n'a été modifié.` });
   };
   return (
     <div className="flex flex-col gap-3 py-5">
-      <SectionLabel>Conversations surveillées</SectionLabel>
+      <SectionLabel>Conversations suivies</SectionLabel>
       <ConversationList
         items={trame.state.watchlist}
         onBulk={(ids, watch) => trame.setWatchMany(ids, watch).then(report("Mise à jour groupée impossible"))}
         className="h-[52vh]"
         renderRow={(c) => (
-          <div className="flex items-center gap-3 px-4 py-2.5">
-            <Switch
-              checked={c.watch}
-              onCheckedChange={() => trame.toggleWatch(c.threadId).then(report(`Impossible de modifier « ${c.displayName} »`))}
-            />
+          <div className="group flex min-h-14 items-center gap-3 px-4 py-2">
             <InitialsAvatar name={c.displayName} className={cn("size-8", !c.watch && "opacity-50")} />
             <div className="flex min-w-0 flex-1 flex-col">
               <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground")}>{c.displayName}</span>
-              {c.namedPeople.length > 0 && (
-                <span className="truncate text-xs text-muted-foreground">réagit à : {c.namedPeople.join(", ")}</span>
-              )}
+              <span className="truncate text-xs text-muted-foreground">
+                {SURFACE[c.surface]}
+                {c.namedPeople.length > 0 && ` · réagit à ${c.namedPeople.join(", ")}`}
+              </span>
             </div>
-            <SurfaceTag s={c.surface} />
-            <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
-            <Segment
-              value={c.mode}
-              onChange={(v) => trame.setMode(c.threadId, v).then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
-              disabled={!c.watch}
+            <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
+            </span>
+            <AnimatePresence initial={false}>
+              {c.watch && (
+                <motion.div
+                  key="mode"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={spring}
+                >
+                  <Segment
+                    label={`Mode pour ${c.displayName}`}
+                    value={c.mode}
+                    onChange={(v) => trame.setMode(c.threadId, v).then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <Switch
+              aria-label={`Suivre ${c.displayName}`}
+              checked={c.watch}
+              onCheckedChange={() => trame.toggleWatch(c.threadId).then(report(`Impossible de modifier « ${c.displayName} »`))}
             />
           </div>
         )}
@@ -525,7 +540,7 @@ function SectionHeader({ children, state }: { children: React.ReactNode; state: 
               animate={{ scale: 1 }}
               exit={{ scale: 0, opacity: 0 }}
               transition={pop}
-              className="grid size-4 place-items-center rounded-full bg-success text-white"
+              className="grid size-4 place-items-center rounded-full bg-success text-success-foreground"
               aria-label="Enregistré"
             >
               <Check className="size-2.5" strokeWidth={3.5} />
@@ -623,13 +638,13 @@ function SettingsView({ trame }: { trame: Trame }) {
         <GroupList>
           <AutostartRow />
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
-            Fermer la fenêtre la réduit dans la barre des tâches : Trame continue de veiller. « Quitter » depuis l'icône l'arrête.
+            Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
           </div>
         </GroupList>
       </div>
 
       <motion.div animate={githubCtl}>
-        <SectionHeader state={save.github}>Contexte GitHub</SectionHeader>
+        <SectionHeader state={save.github}>GitHub</SectionHeader>
         <GithubConnect trame={trame} />
         <AnimatePresence initial={false}>
           {trame.githubStatus?.loggedIn && (
@@ -642,7 +657,7 @@ function SettingsView({ trame }: { trame: Trame }) {
             >
               <GroupList className="mt-3">
                 <ToggleRow
-                  label="Utiliser GitHub pour le contexte"
+                  label="Consulter GitHub pour les réponses"
                   checked={github.enabled}
                   onChange={(enabled) => update("github", { github: { ...github, enabled } })}
                 />
@@ -660,10 +675,10 @@ function SettingsView({ trame }: { trame: Trame }) {
       </motion.div>
 
       <motion.div animate={briefCtl}>
-        <SectionHeader state={save.brief}>Brief de conversation</SectionHeader>
+        <SectionHeader state={save.brief}>Résumé</SectionHeader>
         <GroupList>
           <ToggleRow
-            label="Résumé et contexte GitHub"
+            label="Résumé de conversation"
             checked={brief.enabled}
             onChange={(enabled) => update("brief", { brief: { ...brief, enabled } })}
           />
@@ -677,7 +692,7 @@ function SettingsView({ trame }: { trame: Trame }) {
             />
           </div>
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
-            Bouton « Contexte » sur chaque conversation · GitHub en lecture seule, selon le réglage ci-dessus.
+            Depuis une réponse à relire (menu …) ou une conversation. GitHub en lecture seule.
           </div>
         </GroupList>
       </motion.div>
@@ -686,12 +701,12 @@ function SettingsView({ trame }: { trame: Trame }) {
         <SectionHeader state={save.safety}>Sécurité</SectionHeader>
         <GroupList>
           <ToggleRow
-            label="Auto-pause pendant un partage d'écran"
+            label="Pause pendant un partage d'écran"
             checked={safety.autoPauseOnScreenShare}
             onChange={(v) => update("safety", { safety: { ...safety, autoPauseOnScreenShare: v } })}
           />
           <ToggleRow
-            label="Auto-test des sélecteurs au démarrage"
+            label="Vérifier Teams au démarrage"
             checked={safety.selftestGate}
             onChange={(v) => update("safety", { safety: { ...safety, selftestGate: v } })}
           />
@@ -802,10 +817,11 @@ function ToggleRow({
   onChange: (v: boolean) => void;
   disabled?: boolean;
 }) {
+  const id = useId();
   return (
     <div className="flex items-center justify-between px-4 py-3">
-      <span className={cn("text-sm transition-colors", disabled && "text-muted-foreground")}>{label}</span>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
+      <Label htmlFor={id} className={cn("font-normal transition-colors", disabled && "text-muted-foreground")}>{label}</Label>
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
 }
@@ -817,13 +833,17 @@ function AutostartRow() {
   }, []);
   return (
     <div className="flex items-center justify-between px-4 py-3">
-      <span className="text-sm">Lancer au démarrage de Windows</span>
+      <Label htmlFor="autostart" className="font-normal">Lancer au démarrage de Windows</Label>
       <Switch
+        id="autostart"
         checked={on}
         disabled={!isDesktop()}
-        onCheckedChange={(v) => {
+        onCheckedChange={async (v) => {
           setOn(v);
-          setAutostart(v);
+          if (!(await setAutostart(v))) {
+            setOn(!v);
+            toast.error("Réglage non appliqué", { description: "Windows a refusé de modifier le démarrage automatique." });
+          }
         }}
       />
     </div>

@@ -60,7 +60,7 @@ class Watcher:
             self.state.selftest_ok = bool(self.driver.selftest())
         except Exception:
             self.state.selftest_ok = False
-        self.log("info", f"Auto-test des sélecteurs : {'OK' if self.state.selftest_ok else 'ÉCHEC → repli brouillon'}")
+        self.log("info", f"Vérification de Teams : {'OK' if self.state.selftest_ok else 'échec, tout reste en brouillon'}")
         try:
             self.state.watchlist = self._merge(self.driver.list_conversations())
         except Exception:
@@ -85,7 +85,7 @@ class Watcher:
         cfg = self.cfg
         if cfg.get("safety", {}).get("auto_pause_on_screen_share", True) and self._screen_sharing():
             self.state.screen_sharing = True
-            self.log("warn", "Partage d'écran détecté → veille en pause automatique")
+            self.log("warn", "Partage d'écran : Trame se met en pause")
             return None
         self.state.screen_sharing = False
 
@@ -140,19 +140,19 @@ class Watcher:
 
         if mode == "auto":
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
-            self.log("info", f"Envoi auto dans {secs}s → {msg.sender} (annulable via pause)")
+            self.log("info", f"Réponse à {msg.sender} envoyée dans {secs} s (la pause l'annule)")
             if not self._countdown_ok(secs):
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
-                self.log("warn", f"Envoi auto annulé → gardé en brouillon ({msg.sender})")
+                self.log("warn", f"Envoi à {msg.sender} annulé : réponse gardée en brouillon")
                 return "draft"
             if self._deliver(msg.thread_id, proposal, send=True, restore=True, auto=True):
-                self.log("sent", f"Auto → {msg.sender} : « {proposal[:60]} »")
+                self.log("sent", f"Envoyé à {msg.sender} : « {proposal[:60]} »")
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
-            self.log("warn", f"Envoi auto non effectué → gardé en brouillon ({msg.sender})")
+            self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
             return "draft"
         self._queue_draft(msg, proposal, entity.mode, gh_ref)
-        self.log("draft", f"Brouillon déposé → {msg.sender}")
+        self.log("draft", f"Réponse à relire pour {msg.sender}")
         return "draft"
 
     def _countdown_ok(self, seconds: float) -> bool:
@@ -273,7 +273,7 @@ class Watcher:
             if not self._deliver(d.thread_id, body, send=True, restore=True):
                 with self._lock:
                     d.proposal = body
-                self.log("warn", f"Envoi refusé : conversation de {d.from_} non confirmée → brouillon conservé")
+                self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
                 raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été envoyé, le brouillon est conservé.")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
@@ -479,7 +479,7 @@ class Watcher:
             self.cfg = new_cfg
             if new_brain is not None:
                 self.brain = new_brain
-                self.log("info", f"Cerveau changé → {merged.brain}")
+                self.log("info", f"Cerveau : {'Claude' if merged.brain == 'claude' else 'Copilot'}")
             self.state.brain = merged.brain
             self.state.onboarded = merged.onboarded
             return merged

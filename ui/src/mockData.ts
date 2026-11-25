@@ -69,11 +69,11 @@ export const mockDrafts: DraftItem[] = [
 ];
 
 export const mockLogs: LogItem[] = [
-  { at: "20:14:02", level: "sent", text: "Auto → Sofia Marino : « Ça marche, je regarde. »" },
-  { at: "20:11:40", level: "draft", text: "Brouillon déposé → Lucas Bernard (fil non ouvert)" },
-  { at: "20:09:18", level: "info", text: "Contexte GitHub consulté : Wifsimster/passerelle PR #214" },
-  { at: "20:02:55", level: "warn", text: "Partage d'écran détecté → veille en pause automatique" },
-  { at: "20:00:01", level: "info", text: "Auto-test des sélecteurs : OK (compo, liste, rail)" },
+  { at: "20:14:02", level: "sent", text: "Envoyé à Sofia Marino : « Ça marche, je regarde. »" },
+  { at: "20:11:40", level: "draft", text: "Réponse à relire pour Lucas Bernard" },
+  { at: "20:09:18", level: "info", text: "GitHub consulté : Wifsimster/passerelle PR #214" },
+  { at: "20:02:55", level: "warn", text: "Partage d'écran : Trame se met en pause" },
+  { at: "20:00:01", level: "info", text: "Vérification de Teams : OK" },
 ];
 
 type BriefSeed = {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { ArrowRight, Check, FileText, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
+import { Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
@@ -108,7 +109,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     }
     if (!res.selftestOk) {
       setProbe("fail");
-      setProbeError("Trame ne repère pas encore Teams. Ouvre Teams sur une conversation et relance. Tu peux continuer : tout restera en brouillon.");
+      setProbeError("Teams n'est pas repéré. Ouvre une conversation et vérifie à nouveau. Tu peux continuer : tout restera en brouillon.");
       return;
     }
     for (let i = 1; i <= PROBE_CHECKS.length; i++) {
@@ -131,8 +132,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   // « Réglages » (qui marque l'onboarding comme fait) passe en dernier : un échec avant
   // laisse le wizard à refaire, jamais un panneau sans watchlist.
   const plan = (): ActivationStep[] => [
-    { id: "watchlist", label: `${watched.length} conversation${watched.length > 1 ? "s" : ""} sous surveillance`, status: "idle" },
-    ...(soul ? [{ id: "soul" as const, label: `Ta voix importée (${soul.name})`, status: "idle" as Status }] : []),
+    { id: "watchlist", label: `${watched.length} conversation${watched.length > 1 ? "s" : ""} suivie${watched.length > 1 ? "s" : ""}`, status: "idle" },
+    ...(soul ? [{ id: "soul" as const, label: `Ta voix (${soul.name})`, status: "idle" as Status }] : []),
     { id: "settings", label: "Réglages enregistrés", status: "idle" },
   ];
 
@@ -180,11 +181,14 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     (activation === "idle" || activation === "error") &&
     (step !== TOTAL - 1 || live);
   const last = step === TOTAL - 1;
+  // Étapes facultatives encore vides : le bouton principal devient « Plus tard », en retrait.
+  const skippable = (step === 5 && !soul) || (step === 6 && !githubConnected);
+  const canGoBack = step > 0 && activation !== "run" && activation !== "ok";
 
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
     {
-      title: "Bienvenue dans Trame",
-      sub: "Ton assistant répond sur Teams, dans ta voix, en pilotant l'app — sans toucher à ta connexion.",
+      title: "Bonjour",
+      sub: "Trame lit tes conversations Teams et prépare tes réponses, dans ta voix. Sans toucher à ton compte.",
       body: (
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
@@ -200,19 +204,19 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           ) : trame.state.selftestOk ? (
             <><Check className="size-4" /> Microsoft Teams détecté</>
           ) : (
-            <>Teams pas encore repéré — ouvre-le, on vérifie à l'étape 3</>
+            <>Teams n'est pas encore ouvert</>
           )}
         </motion.div>
       ),
     },
     {
-      title: "Choisis le cerveau",
-      sub: "Qui rédige tes réponses. Modifiable à tout moment.",
+      title: "Qui rédige ?",
+      sub: "Tu pourras changer à tout moment.",
       body: <BrainPicker value={brain} onChange={pickBrain} />,
     },
     {
-      title: "Un petit test",
-      sub: "Ouvre Teams sur une conversation, puis lance le test : Trame vérifie qu'il repère la fenêtre, les messages et la zone de saisie.",
+      title: "Vérification de Teams",
+      sub: "Ouvre une conversation dans Teams, puis lance la vérification.",
       body: (
         <div className="flex w-full flex-col items-center gap-4">
           <GroupList>
@@ -242,20 +246,23 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           </GroupList>
           <Button variant="outline" className="rounded-full px-6" disabled={probe === "running"} onClick={runProbe}>
             {probe === "running" && <Loader2 className="size-4 animate-spin" />}
-            {probe === "ok" || probe === "fail" ? "Relancer le test" : probe === "running" ? "Test en cours…" : "Lancer le test"}
+            {probe === "ok" || probe === "fail" ? "Vérifier à nouveau" : probe === "running" ? "Vérification…" : "Vérifier"}
           </Button>
         </div>
       ),
     },
     {
-      title: "Qui surveiller ?",
-      sub: "Coche les conversations que Trame doit suivre. Recherche et filtres pour aller vite.",
+      title: "Quelles conversations ?",
+      sub: "Trame ne lit que celles que tu choisis.",
       body: (
         <ConversationList
           items={convs}
           onBulk={setWatchMany}
           renderRow={(c) => (
             <motion.button
+              type="button"
+              role="checkbox"
+              aria-checked={c.watch}
               whileTap={{ scale: 0.985 }}
               onClick={() => toggleWatch(c.threadId)}
               className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
@@ -269,8 +276,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       ),
     },
     {
-      title: "Brouillon ou auto ?",
-      sub: "Choisis, conversation par conversation, si Trame attend ton feu vert.",
+      title: "Qui envoie ?",
+      sub: "Pour chaque conversation : toi, ou Trame après un court délai.",
       body: (
         <div className="flex w-full flex-col gap-4">
           <div className="grid grid-cols-2 gap-3 text-left">
@@ -306,7 +313,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Ta voix",
-      sub: "Dépose ton SOUL.md — ta façon d'écrire, ton rôle, ce que Trame refuse. Ou plus tard.",
+      sub: "Dépose ton SOUL.md : ta façon d'écrire, ton rôle, ce que Trame doit refuser.",
       body: (
         <div className="flex w-full flex-col items-center gap-3">
           <SoulDrop value={soul} onChange={setSoul} />
@@ -315,29 +322,27 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       ),
     },
     {
-      title: "Contexte GitHub",
-      sub: "Pour retrouver les PR et issues dont on te parle. Lecture seule.",
+      title: "GitHub",
+      sub: "Pour retrouver les PR et issues dont on te parle. En lecture seule.",
       body: (
         <div className="flex w-full flex-col gap-2">
           <GithubConnect trame={trame} />
-          {!githubConnected && (
-            <span className="text-xs text-muted-foreground">Facultatif · modifiable dans Réglages</span>
-          )}
+
         </div>
       ),
     },
     {
       title: "Tout est prêt",
-      sub: "Trame veille sur tes conversations et te propose des réponses. Tu gardes la main.",
+      sub: "Rien ne part sans toi, sauf dans les conversations en Auto.",
       body: (
         <div className="flex w-full flex-col gap-3">
           <GroupList>
             {([
               ["Cerveau", brain === "claude" ? "Claude" : "Copilot"],
-              ["Surveillées", `${watched.length}`],
+              ["Conversations", `${watched.length}`],
               ["En auto", `${watched.filter((c) => c.mode === "auto").length}`],
               ["GitHub", githubConnected ? `Connecté · ${trame.githubStatus?.account ?? ""}` : "Non connecté", !githubConnected],
-              ["Ta voix", soul ? soul.name : "Plus tard"],
+              ["Ta voix", soul ? soul.name : "Plus tard", !soul],
             ] as [string, string, boolean?][]).map(([label, value, muted], i) => (
               <motion.div
                 key={label}
@@ -404,7 +409,22 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const s = screens[step];
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      <AnimatePresence initial={false}>
+        {canGoBack && (
+          <motion.div
+            key="back"
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -6 }}
+            className="absolute top-4 left-4 z-10"
+          >
+            <Button variant="ghost" size="sm" className="gap-0.5 rounded-full pl-1.5 text-muted-foreground" onClick={() => go(-1)}>
+              <ChevronLeft className="size-4" /> Retour
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="flex flex-1 items-center justify-center overflow-hidden px-6">
         <AnimatePresence mode="wait" custom={dir} initial={false}>
           <motion.div
@@ -435,6 +455,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
         >
           <Button
             size="lg"
+            variant={skippable ? "secondary" : "default"}
             className={cn(
               "h-12 min-w-44 rounded-full px-10 text-base transition-colors",
               activation === "ok" && "bg-success hover:bg-success"
@@ -444,16 +465,16 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           >
             <AnimatePresence mode="popLayout" initial={false}>
               <motion.span
-                key={last ? activation : "next"}
+                key={last ? activation : skippable ? "skip" : "next"}
                 initial={{ y: 10, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: -10, opacity: 0 }}
                 className="flex items-center gap-2"
               >
-                {!last && <>Continuer <ArrowRight className="size-4" /></>}
+                {!last && (skippable ? "Plus tard" : "Continuer")}
                 {last && activation === "idle" && (live ? "Activer Trame" : <><Loader2 className="size-4 animate-spin" /> Démarrage du moteur…</>)}
                 {last && activation === "run" && <><Loader2 className="size-4 animate-spin" /> Activation…</>}
-                {last && activation === "ok" && <><Check className="size-4" strokeWidth={3} /> C'est parti</>}
+                {last && activation === "ok" && <><Check className="size-4" strokeWidth={3} /> Terminé</>}
                 {last && activation === "error" && <><RotateCcw className="size-4" /> Réessayer</>}
               </motion.span>
             </AnimatePresence>
@@ -470,13 +491,6 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             />
           ))}
         </div>
-
-        <button
-          onClick={() => go(-1)}
-          className={cn("text-sm text-muted-foreground transition-opacity hover:text-foreground", (step === 0 || activation === "run" || activation === "ok") && "pointer-events-none opacity-0")}
-        >
-          Retour
-        </button>
       </div>
     </div>
   );
@@ -585,14 +599,14 @@ function ModeCard({
   const auto = mode === "auto";
   const allSet = total > 0 && count === total;
   return (
-    <div
+    <Card
       className={cn(
-        "flex flex-col gap-1.5 rounded-2xl border bg-card p-3.5 transition-colors duration-300",
-        auto && count > 0 && "border-warning/40 bg-warning/[0.04]"
+        "gap-1.5 rounded-2xl p-3.5 shadow-none transition-colors duration-300",
+        auto && count > 0 && "border-warning/40 bg-warning/5"
       )}
     >
       <div className="flex items-center gap-2.5">
-        <span className={cn("grid size-8 place-items-center rounded-full", auto ? "bg-warning/15 text-warning" : "bg-primary/10 text-primary")}>
+        <span className={cn("grid size-8 place-items-center rounded-full", auto ? "bg-warning/15 text-warning" : "bg-primary/10 text-link")}>
           {auto ? <Timer className="size-4" /> : <PenLine className="size-4" />}
         </span>
         <span className="font-semibold">{auto ? "Auto" : "Brouillon"}</span>
@@ -623,10 +637,10 @@ function ModeCard({
       <button
         onClick={onAll}
         disabled={allSet}
-        className="mt-auto self-start text-xs font-medium text-primary transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-40"
+        className="mt-auto self-start text-xs font-medium text-link transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-40"
       >
         {allSet ? `Toutes en ${auto ? "auto" : "brouillon"}` : `Tout en ${auto ? "auto" : "brouillon"}`}
       </button>
-    </div>
+    </Card>
   );
 }

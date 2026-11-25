@@ -17,11 +17,15 @@ export async function autostartEnabled(): Promise<boolean> {
   }
 }
 
-export async function setAutostart(on: boolean): Promise<void> {
+/** true si le réglage a été appliqué (ou hors Tauri, où il est sans effet). */
+export async function setAutostart(on: boolean): Promise<boolean> {
+  const t = tauri();
+  if (!t?.core) return true;
   try {
-    await tauri()?.core?.invoke(on ? "plugin:autostart|enable" : "plugin:autostart|disable");
+    await t.core.invoke(on ? "plugin:autostart|enable" : "plugin:autostart|disable");
+    return true;
   } catch {
-    /* hors Tauri : sans effet */
+    return false;
   }
 }
 

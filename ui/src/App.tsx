@@ -36,7 +36,7 @@ function WindowControls() {
       <button className={`${base} hover:bg-accent hover:text-foreground`} onClick={() => win?.toggleMaximize?.()} aria-label="Agrandir">
         <Square className="size-3.5" />
       </button>
-      <button className={`${base} hover:bg-red-500 hover:text-white`} onClick={() => win?.close?.()} aria-label="Réduire dans la barre des tâches">
+      <button className={`${base} hover:bg-destructive hover:text-destructive-foreground`} onClick={() => win?.close?.()} aria-label="Réduire dans la barre des tâches">
         <X className="size-4" />
       </button>
     </div>
@@ -107,10 +107,7 @@ export default function App() {
           className="flex h-12 select-none items-center gap-3 border-b bg-sidebar pl-4"
         >
           <Logo size={30} />
-          <div className="flex flex-col leading-none">
-            <span className="text-sm font-semibold">Trame</span>
-            <span className="text-[11px] text-muted-foreground">la trame de tes conversations</span>
-          </div>
+          <span className="text-sm font-semibold">Trame</span>
 
           <div className="flex-1" />
 
@@ -136,24 +133,24 @@ export default function App() {
                   </motion.span>
                 </AnimatePresence>
                 <span className="w-14 text-xs">{paused ? "En pause" : "Actif"}</span>
-                <Switch checked={paused} onCheckedChange={togglePause} />
+                <Switch aria-label="Mettre Trame en pause" checked={paused} onCheckedChange={togglePause} />
               </div>
             )}
 
             {configured && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" onClick={() => { firstRun.current = false; setView("wizard"); }}>
+                  <Button variant="ghost" size="icon" aria-label="Reprendre la configuration" onClick={() => { firstRun.current = false; setView("wizard"); }}>
                     <Settings2 className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Relancer le wizard</TooltipContent>
+                <TooltipContent>Reprendre la configuration</TooltipContent>
               </Tooltip>
             )}
 
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
+                <Button variant="ghost" size="icon" aria-label={dark ? "Thème clair" : "Thème sombre"} onClick={() => setDark(!dark)}>
                   <AnimatePresence mode="popLayout" initial={false}>
                     <motion.span
                       key={dark ? "sun" : "moon"}
@@ -167,7 +164,7 @@ export default function App() {
                   </AnimatePresence>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Thème clair / sombre — Alt + D</TooltipContent>
+              <TooltipContent>Thème clair ou sombre (Alt + D)</TooltipContent>
             </Tooltip>
           </div>
 
@@ -216,8 +213,8 @@ function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolea
         {connected
           ? "Connecté au moteur Trame"
           : demo
-            ? "Moteur Trame injoignable — données d'exemple affichées"
-            : "Moteur Trame injoignable — reconnexion en cours, aucune action possible"}
+            ? "Moteur injoignable : données d'exemple"
+            : "Moteur injoignable : reconnexion en cours"}
       </TooltipContent>
     </Tooltip>
   );

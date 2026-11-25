@@ -58,7 +58,7 @@ export function SoulHelp() {
             <li><span className="text-foreground">Ce qu'il te laisse</span> : délais, RH, sujets sensibles.</li>
             <li><span className="text-foreground">Des exemples</span> de messages que tu as écrits.</li>
           </ul>
-          <pre className="max-h-32 overflow-auto rounded-lg bg-muted/60 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          <pre className="max-h-32 overflow-auto rounded-lg bg-muted/60 p-2.5 font-mono text-xs leading-relaxed text-muted-foreground">
 {`# Ma voix
 Direct et cordial, tutoiement.
 Réponses courtes, pas d'emojis.

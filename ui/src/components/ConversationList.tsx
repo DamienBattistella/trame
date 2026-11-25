@@ -14,7 +14,7 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "dm", label: "1:1" },
   { id: "group", label: "Groupes" },
   { id: "channel", label: "Canaux" },
-  { id: "watched", label: "Surveillées" },
+  { id: "watched", label: "Suivies" },
 ];
 
 const sortKey = (c: WatchEntity) => c.displayName.replace(/^#/, "");
@@ -104,14 +104,14 @@ export function ConversationList({
               onClick={() => setFilter(f.id)}
               className={cn(
                 "relative rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                filter === f.id ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                filter === f.id ? "text-link" : "text-muted-foreground hover:text-foreground"
               )}
             >
               {filter === f.id && (
                 <motion.span layoutId={`filter-${id}`} transition={spring} className="absolute inset-0 rounded-full bg-primary/12 ring-1 ring-primary/30" />
               )}
               <span className="relative">
-                {f.label} <span className="tabular-nums opacity-70">{counts[f.id]}</span>
+                {f.label} <span className="tabular-nums">{counts[f.id]}</span>
               </span>
             </button>
           ))}
@@ -138,13 +138,13 @@ export function ConversationList({
       <div className="flex items-center justify-between px-1 text-xs text-muted-foreground">
         {footer ?? (
           <span className="tabular-nums">
-            {watchedTotal} surveillée{watchedTotal > 1 ? "s" : ""} sur {items.length}
+            {watchedTotal} suivie{watchedTotal > 1 ? "s" : ""} sur {items.length}
           </span>
         )}
         {onBulk && visible.length > 0 && (
           <button
             onClick={() => onBulk(visible.map((c) => c.threadId), !allVisibleWatched)}
-            className="font-medium text-primary hover:underline"
+            className="font-medium text-link hover:underline"
           >
             {allVisibleWatched ? "Tout décocher" : "Tout cocher"}
             {visible.length !== items.length && ` (${visible.length})`}

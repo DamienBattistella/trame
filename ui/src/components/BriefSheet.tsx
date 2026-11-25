@@ -331,7 +331,7 @@ function BriefResult({ brief, githubConnected }: { brief: Brief; githubConnected
 const KIND_ICON = { pr: GitPullRequest, issue: CircleDot, commit: GitCommitHorizontal } as const;
 const STATE = {
   open: { label: "ouverte", className: "bg-success/15 text-success" },
-  merged: { label: "fusionnée", className: "bg-primary/15 text-primary" },
+  merged: { label: "fusionnée", className: "bg-primary/15 text-link" },
   closed: { label: "fermée", className: "bg-secondary text-muted-foreground" },
 } as const;
 

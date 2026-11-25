@@ -34,10 +34,10 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 |:-:|:-:|
 | <img src="docs/screenshots/wizard-bienvenue.png" alt="Bienvenue" /> | <img src="docs/screenshots/wizard-cerveau.png" alt="Choix du cerveau" /> |
 | **Bienvenue** — Trame détecte Teams | **Cerveau** — Claude ou GitHub Copilot |
-| <img src="docs/screenshots/wizard-test.png" alt="Test de lecture" /> | <img src="docs/screenshots/wizard-watchlist.png" alt="Qui surveiller" /> |
-| **Test** — Trame vérifie qu'il sait lire et écrire | **Qui surveiller** — recherche et filtres, même avec des centaines de conversations |
+| <img src="docs/screenshots/wizard-test.png" alt="Test de lecture" /> | <img src="docs/screenshots/wizard-watchlist.png" alt="Quelles conversations" /> |
+| **Vérification** — Trame repère la fenêtre, les messages et la zone de saisie | **Quelles conversations** — recherche et filtres, même avec des centaines de conversations |
 | <img src="docs/screenshots/wizard-modes.png" alt="Brouillon ou auto" /> | <img src="docs/screenshots/wizard-persona.png" alt="Ta voix" /> |
-| **Brouillon ou auto** — par conversation | **Ta voix** — dépose ton `SOUL.md`, avec une aide et un modèle à copier |
+| **Qui envoie** — toi ou Trame, par conversation | **Ta voix** — dépose ton `SOUL.md`, avec une aide et un modèle à copier |
 
 <p align="center">
   <img src="docs/screenshots/ame-etats.png" width="760" alt="L'âme de Trame : attente, fichier au-dessus, accepté, refusé" /><br/>
@@ -48,8 +48,8 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 
 | | |
 |:-:|:-:|
-| <img src="docs/screenshots/brouillons.png" alt="Brouillons" /> | <img src="docs/screenshots/watchlist.png" alt="Watchlist" /> |
-| **Brouillons** — relire, modifier, envoyer ou ouvrir dans Teams | **Watchlist** — qui surveiller, et comment |
+| <img src="docs/screenshots/brouillons.png" alt="Brouillons" /> | <img src="docs/screenshots/watchlist.png" alt="Conversations" /> |
+| **Brouillons** — leur message, ta réponse modifiable, un bouton Envoyer | **Conversations** — lesquelles suivre, et qui envoie |
 | <img src="docs/screenshots/journal.png" alt="Journal" /> | <img src="docs/screenshots/reglages.png" alt="Réglages" /> |
 | **Journal** — tout ce que Trame a lu, proposé et envoyé | **Réglages** — cerveau, démarrage, GitHub, sécurité |
 
@@ -57,7 +57,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 
 <p align="center">
   <img src="docs/screenshots/brief.png" width="760" alt="Brief de conversation : résumé, points ouverts, sujets et contexte GitHub" /><br/>
-  <sub>Depuis une conversation ou un brouillon, « Contexte » résume la discussion, liste les points ouverts et retrouve les PR, issues et commits liés sur GitHub.</sub>
+  <sub>Depuis une réponse à relire (menu …) ou une conversation, « Résumé » résume la discussion, liste les points ouverts et retrouve les PR, issues et commits liés sur GitHub.</sub>
 </p>
 
 <p align="center">

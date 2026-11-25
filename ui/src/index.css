@@ -11,7 +11,8 @@
   --card-foreground: oklch(0.141 0.005 285.823);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.55 0.2 258);
+  --primary: oklch(0.5 0.2 258);
+  --link: oklch(0.5 0.2 258);
   --primary-foreground: oklch(0.98 0.015 258);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
@@ -22,9 +23,12 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.55 0.2 258);
+  --ring: oklch(0.5 0.2 258);
   --success: oklch(0.646 0.17 157);
+  --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.769 0.17 70);
+  --warning-foreground: oklch(0.21 0.006 285.885);
+  --destructive-foreground: oklch(0.985 0 0);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.55 0.2 258);
@@ -42,7 +46,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.21 0.006 285.885);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.62 0.19 258);
+  --primary: oklch(0.5 0.19 258);
+  --link: oklch(0.74 0.14 255);
   --primary-foreground: oklch(0.98 0.015 258);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
@@ -55,7 +60,10 @@
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.62 0.19 258);
   --success: oklch(0.696 0.17 162.48);
+  --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.828 0.19 84);
+  --warning-foreground: oklch(0.141 0.005 285.823);
+  --destructive-foreground: oklch(0.985 0 0);
   --sidebar: oklch(0.21 0.006 285.885);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.62 0.19 258);
@@ -85,9 +93,13 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-link: var(--link);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

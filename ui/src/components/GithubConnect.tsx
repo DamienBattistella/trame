@@ -245,7 +245,7 @@ function ConnectButton({ busy, onClick, label }: { busy: boolean; onClick: () =>
     <Button
       size="sm"
       variant="outline"
-      className="rounded-full border-primary/40 text-primary hover:text-primary"
+      className="rounded-full border-primary/40 text-link hover:text-link"
       disabled={busy}
       onClick={onClick}
     >
@@ -259,7 +259,7 @@ function ConnectButton({ busy, onClick, label }: { busy: boolean; onClick: () =>
 function GithubMark({ connected = false, animate = false }: { connected?: boolean; animate?: boolean }) {
   return (
     <span className="relative grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
-      <GithubLogo className="size-[18px]" />
+      <GithubLogo className="size-4.5" />
       <AnimatePresence initial={!animate ? false : true}>
         {connected && (
           <motion.span
@@ -267,7 +267,7 @@ function GithubMark({ connected = false, animate = false }: { connected?: boolea
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ ...pop, delay: animate ? 0.15 : 0 }}
-            className="absolute -right-0.5 -bottom-0.5 grid size-3.5 place-items-center rounded-full bg-success text-white ring-2 ring-card"
+            className="absolute -right-0.5 -bottom-0.5 grid size-3.5 place-items-center rounded-full bg-success text-success-foreground ring-2 ring-card"
           >
             <Check className="size-2.5" strokeWidth={4} />
           </motion.span>

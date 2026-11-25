@@ -211,3 +211,11 @@ réglages fins repliés sous « Avancé ».
 
 L'UI shadcn et une large part du backend se développent hors du poste. Seule la
 couche UIA se cale sur la machine (phase 0, le vrai go/no-go).
+
+## Design system (revue de conformité, 2026-11-25)
+
+- **Composants** : shadcn/ui partout où il en existe un (Button, Card, Avatar, Label, Switch, Tabs, DropdownMenu, Sheet, Popover, Tooltip, Kbd, Textarea, Input, ScrollArea, Sonner). Le kit (`components/kit.tsx`) n'ajoute que ce que shadcn n'a pas : contrôle segmenté (radiogroup accessible, flèches), liste groupée façon iOS, pastille d'état, compteur animé.
+- **Tokens** : aucune couleur en dur hors logo et illustration. `--primary` sert aux fonds (texte blanc ≥ 4,5:1), `--link` au texte d'accent (≥ 4,5:1 sur fond sombre comme clair), `--success|warning|destructive-foreground` au contenu posé sur ces couleurs.
+- **Accessibilité** : audit axe-core WCAG 2 AA sur les 12 écrans, sans violation (hors animations d'apparition). Chaque interrupteur et bouton-icône a un nom accessible.
+- **Vocabulaire** : on *suit* une conversation (jamais « surveiller », jamais « watchlist » à l'écran) ; « Résumé » pour le brief ; pas de jargon technique (sélecteurs, wizard) ; pas de flèches ni d'emoji dans les textes ; phrases courtes, deux-points plutôt que tirets.
+- **Parcours façon Apple** : une idée par écran, titre court + une phrase, bouton principal unique en bas, « Retour » en haut à gauche, étape facultative encore vide → bouton « Plus tard » en retrait, récapitulatif avant activation.

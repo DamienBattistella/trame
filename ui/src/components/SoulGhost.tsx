@@ -11,8 +11,8 @@ const BODY =
   "M9 27 C9 15.5 15.7 8 24 8 C32.3 8 39 15.5 39 27 V44 Q36.5 49 34 44 Q31.5 49 29 44 Q26.5 49 24 44 Q21.5 49 19 44 Q16.5 49 14 44 Q11.5 49 9 44 Z";
 
 const COLOR: Record<GhostState, string> = {
-  idle: "text-primary",
-  drag: "text-primary",
+  idle: "text-link",
+  drag: "text-link",
   ok: "text-success",
   error: "text-destructive",
 };
