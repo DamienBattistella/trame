@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { ArrowRight, Check, FileText, GitBranch, Loader2, PenLine, RotateCcw, Timer, UploadCloud } from "lucide-react";
+import { ArrowRight, Check, FileText, GitBranch, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
+import { SoulGhost } from "@/components/SoulGhost";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { SOUL_MAX_BYTES, Trame } from "@/api";
@@ -451,6 +452,7 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
     setError(msg);
     setState("error");
     controls.start(shake);
+    setTimeout(() => setState((cur) => (cur === "error" ? (value ? "ok" : "idle") : cur)), 2600);
   };
 
   const accept = async (f: File | undefined) => {
@@ -472,7 +474,10 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
           e.preventDefault();
           if (state !== "drag") setState("drag");
         }}
-        onDragLeave={() => setState(file ? "ok" : "idle")}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          setState(file ? "ok" : "idle");
+        }}
         onDrop={(e) => {
           e.preventDefault();
           accept(e.dataTransfer.files[0]);
@@ -480,7 +485,7 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
         animate={{ scale: state === "drag" ? 1.02 : 1 }}
         transition={{ type: "spring", stiffness: 400, damping: 25 }}
         className={cn(
-          "flex w-full cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed p-8 transition-colors duration-200",
+          "flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed p-7 transition-colors duration-200",
           state === "idle" && "text-muted-foreground hover:border-primary/60 hover:text-foreground",
           state === "drag" && "border-primary bg-primary/5 text-foreground",
           state === "ok" && "border-success/60 bg-success/5 text-foreground",
@@ -488,27 +493,29 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
         )}
       >
         <input ref={input} type="file" accept=".md,.txt" className="hidden" onChange={(e) => accept(e.target.files?.[0])} />
-        <AnimatePresence mode="popLayout" initial={false}>
-          {state === "ok" && file ? (
-            <motion.div key="ok" initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={pop} className="flex flex-col items-center gap-2">
-              <span className="grid size-10 place-items-center rounded-full bg-success text-white">
-                <Check className="size-5" strokeWidth={3} />
-              </span>
-              <span className="flex items-center gap-1.5 text-sm font-medium">
-                <FileText className="size-4" /> {file.name}
-              </span>
-              <span className="text-xs text-muted-foreground">{file.lines} lignes · clique pour remplacer</span>
-            </motion.div>
-          ) : (
-            <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-2">
-              <motion.span animate={{ y: state === "drag" ? -4 : 0 }}>
-                <UploadCloud className={cn("size-7", state === "drag" && "text-primary")} />
-              </motion.span>
+        <SoulGhost state={state} />
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={state === "ok" ? "ok" : state}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, delay: state === "ok" ? 0.4 : 0 }}
+            className="flex flex-col items-center gap-0.5 text-center"
+          >
+            {state === "ok" && file ? (
+              <>
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <FileText className="size-4" /> {file.name}
+                </span>
+                <span className="text-xs text-muted-foreground">Ta voix est prête · {file.lines} lignes · clique pour remplacer</span>
+              </>
+            ) : (
               <span className="text-sm">
-                {state === "drag" ? "Lâche pour déposer" : state === "error" ? error : "Glisse ton SOUL.md ici ou clique pour choisir"}
+                {state === "drag" ? "Lâche, je l'attrape" : state === "error" ? error : "Glisse ton SOUL.md ici ou clique pour choisir"}
               </span>
-            </motion.div>
-          )}
+            )}
+          </motion.div>
         </AnimatePresence>
       </motion.div>
     </motion.div>

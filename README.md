@@ -39,6 +39,11 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 | <img src="docs/screenshots/wizard-modes.png" alt="Brouillon ou auto" /> | <img src="docs/screenshots/wizard-persona.png" alt="Ta voix" /> |
 | **Brouillon ou auto** — par conversation | **Ta voix** — dépose ton `SOUL.md` |
 
+<p align="center">
+  <img src="docs/screenshots/ame-etats.png" width="760" alt="L'âme de Trame : attente, fichier au-dessus, accepté, refusé" /><br/>
+  <sub>L'âme de Trame réagit au dépôt du <code>SOUL.md</code> : elle attend, s'approche quand un fichier arrive, l'absorbe avec plaisir — ou secoue la tête si ce n'est pas le bon format.</sub>
+</p>
+
 ### Au quotidien
 
 | | |
