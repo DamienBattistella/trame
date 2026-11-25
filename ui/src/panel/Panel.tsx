@@ -11,6 +11,7 @@ import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { useTrame } from "@/api";
 import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
+import { BRAINS } from "@/brands";
 import { DraftItem, LogItem, Surface, WatchEntity } from "@/types";
 
 const SURFACE = { dm: "1:1", group: "Groupe", channel: "Canal" } as const;
@@ -153,7 +154,7 @@ function SettingsView({ brain: initialBrain }: { brain: "claude" | "copilot" }) 
       <div>
         <SectionLabel>Cerveau</SectionLabel>
         <div className="grid grid-cols-2 gap-3">
-          {([["claude", "Claude", "via ton abonnement"], ["copilot", "Copilot", "via GitHub"]] as const).map(([v, name, desc]) => (
+          {BRAINS.map(({ id: v, name, desc, Logo: BrandLogo }) => (
             <button
               key={v}
               onClick={() => setBrain(v)}
@@ -162,6 +163,7 @@ function SettingsView({ brain: initialBrain }: { brain: "claude" | "copilot" }) 
                 brain === v ? "border-primary bg-primary/5" : "border-border hover:bg-accent"
               )}
             >
+              <BrandLogo className="mb-1.5 size-7" />
               <span className="font-semibold">{name}</span>
               <span className="text-xs text-muted-foreground">{desc}</span>
             </button>

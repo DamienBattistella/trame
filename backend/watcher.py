@@ -104,7 +104,11 @@ class Watcher:
             threading.Event().wait(0.1)
         return not (self._stop.is_set() or self.state.paused)
 
+    MAX_DRAFTS = 50
+
     def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None) -> None:
+        # One pending draft per thread: the latest message supersedes the older proposal.
+        self.state.drafts = [d for d in self.state.drafts if d.thread_id != msg.thread_id][: self.MAX_DRAFTS - 1]
         self.state.drafts.insert(0, Draft(
             id=str(uuid.uuid4())[:8], thread_id=msg.thread_id, **{"from": msg.sender},
             surface=msg.surface, incoming=msg.text, proposal=proposal,

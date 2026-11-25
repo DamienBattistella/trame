@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Logo } from "@/Logo";
 import { BrainIcon, ScanIcon, PeopleIcon, PencilIcon, VoiceIcon, BranchIcon, ReadyIcon } from "@/icons";
+import { BRAINS } from "@/brands";
 import { cn } from "@/lib/utils";
 import { mockConversations } from "@/mockData";
 import { WatchEntity } from "@/types";
@@ -82,10 +83,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       sub: "Qui rédige tes réponses. Modifiable à tout moment.",
       body: (
         <div className="grid w-full grid-cols-2 gap-3">
-          {([
-            ["claude", "Claude", "via ton abonnement"],
-            ["copilot", "Copilot", "via GitHub"],
-          ] as const).map(([v, name, desc]) => (
+          {BRAINS.map(({ id: v, name, desc, Logo: BrandLogo }) => (
             <button
               key={v}
               onClick={() => setBrain(v)}
@@ -94,6 +92,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
                 brain === v ? "border-primary bg-primary/5" : "border-border hover:bg-accent"
               )}
             >
+              <BrandLogo className="mb-2 size-9" />
               <span className="text-base font-semibold">{name}</span>
               <span className="text-xs text-muted-foreground">{desc}</span>
             </button>
