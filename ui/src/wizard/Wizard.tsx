@@ -2,8 +2,6 @@ import { useState } from "react";
 import { Check, PlayCircle, UploadCloud, GitBranch, Loader2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Logo } from "@/Logo";
-import { BrainIcon, ScanIcon, PeopleIcon, PencilIcon, VoiceIcon, BranchIcon, ReadyIcon } from "@/icons";
 import { BRAINS } from "@/brands";
 import { cn } from "@/lib/utils";
 import { mockConversations } from "@/mockData";
@@ -13,14 +11,6 @@ const TOTAL = 8;
 
 function initials(name: string) {
   return name.replace(/[#]/g, "").split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
-}
-
-function IconTile({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex size-20 items-center justify-center rounded-3xl bg-primary/10 text-primary">
-      {children}
-    </div>
-  );
 }
 
 function GroupList({ children }: { children: React.ReactNode }) {
@@ -66,9 +56,8 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
   const canContinue = step !== 2 || probe === "ok";
   const last = step === TOTAL - 1;
 
-  const screens: { icon: React.ReactNode; title: string; sub: string; body?: React.ReactNode }[] = [
+  const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
     {
-      icon: <Logo size={72} />,
       title: "Bienvenue dans Trame",
       sub: "Ton assistant répond sur Teams, dans ta voix, en pilotant l'app — sans toucher à ta connexion.",
       body: (
@@ -78,7 +67,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><BrainIcon className="size-10" /></IconTile>,
       title: "Choisis le cerveau",
       sub: "Qui rédige tes réponses. Modifiable à tout moment.",
       body: (
@@ -101,7 +89,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><ScanIcon className="size-10" /></IconTile>,
       title: "Un petit test",
       sub: "Envoie-toi un message sur Teams, puis vérifie que Trame sait le lire.",
       body: (
@@ -127,7 +114,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><PeopleIcon className="size-10" /></IconTile>,
       title: "Qui surveiller ?",
       sub: "Coche les conversations que Trame doit suivre.",
       body: (
@@ -156,7 +142,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><PencilIcon className="size-10" /></IconTile>,
       title: "Brouillon ou auto ?",
       sub: "Brouillon : tu valides. Auto : Trame envoie après un court délai annulable.",
       body: (
@@ -174,7 +159,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><VoiceIcon className="size-10" /></IconTile>,
       title: "Ta voix",
       sub: "Dépose ton SOUL.md — ta façon d'écrire, ton rôle, ce que Trame refuse. Ou plus tard.",
       body: (
@@ -185,7 +169,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><BranchIcon className="size-10" /></IconTile>,
       title: "Contexte GitHub",
       sub: "En lecture seule, consulté quand un message parle code. Trame n'écrit jamais.",
       body: (
@@ -199,7 +182,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       ),
     },
     {
-      icon: <IconTile><ReadyIcon className="size-10" /></IconTile>,
       title: "Tout est prêt",
       sub: "Trame veille sur tes conversations et te propose des réponses. Tu gardes la main.",
       body: (
@@ -222,7 +204,6 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
           key={step}
           className="flex w-full max-w-md flex-col items-center gap-6 py-8 text-center duration-300 animate-in fade-in slide-in-from-bottom-3"
         >
-          {s.icon}
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold tracking-tight text-balance">{s.title}</h1>
             <p className="text-balance text-muted-foreground">{s.sub}</p>
