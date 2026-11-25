@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Callable, Iterable, Optional
@@ -48,6 +49,7 @@ class Watcher:
         self._lock = threading.RLock()
         self._ui_lock = threading.Lock()
         self._briefs: dict[str, Brief] = {}
+        self._history: dict[str, tuple[float, str]] = {}
 
     # --- lifecycle ---
     def start(self) -> None:
@@ -417,12 +419,33 @@ class Watcher:
         self.log("info", "Persona mis à jour")
 
     # --- helpers ---
+    HISTORY_TTL = 120.0
+
     def _summary(self, thread_id: str, last_n: int) -> str:
+        """History for drafting. Opens the conversation just long enough to read it
+        and reopens the previous one; reused for HISTORY_TTL so a burst of messages
+        doesn't keep switching the user's view. Never switches during a screen share."""
+        cached = self._history.get(thread_id)
+        if cached and time.monotonic() - cached[0] < self.HISTORY_TTL:
+            return cached[1]
+        msgs: list[IncomingMessage] = []
         try:
-            msgs = self.driver.read_context(thread_id, last_n)
-            return "\n".join(f"{m.sender}: {m.text}" for m in msgs)
+            with self._ui_lock:
+                if self.driver._current() == thread_id:
+                    msgs = self.driver.read_context(thread_id, last_n)
+                elif self._screen_share_guarded():
+                    return ""
+                else:
+                    with self.driver.focused(thread_id, restore=True) as focus:
+                        if focus.ok:
+                            msgs = self.driver.read_context(thread_id, last_n)
+                    self._warn_if_not_restored(focus)
         except Exception:
             return ""
+        text = "\n".join(f"{m.sender}: {m.text}" for m in msgs)
+        if text:
+            self._history[thread_id] = (time.monotonic(), text)
+        return text
 
     def _merge(self, discovered: list[WatchEntity]) -> list[WatchEntity]:
         by_id = {w.thread_id: w for w in self.state.watchlist}

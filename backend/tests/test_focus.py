@@ -58,7 +58,7 @@ def test_auto_send_restores_user_view(make_client):
     _client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)))
     assert watcher._process(_msg(DM_AUTO)) == "sent"
     assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
-    assert driver.opened == [DM_AUTO, USER_VIEW]
+    assert driver.opened == [DM_AUTO, USER_VIEW, DM_AUTO, USER_VIEW]
     assert driver.active_thread() == USER_VIEW
 
 
@@ -125,3 +125,47 @@ def test_brief_never_switches_conversation_during_screen_share(make_client):
     assert driver.opened == [] and brain.prompts == []
     driver._active = DM_DRAFT
     assert client.post(f"/api/threads/{DM_DRAFT}/brief").status_code == 200
+
+
+class SummaryBrain(FakeBrain):
+    def __init__(self):
+        super().__init__()
+        self.summaries: list[str] = []
+
+    def draft(self, soul, thread_summary, incoming, github_context=""):
+        self.summaries.append(thread_summary)
+        return super().draft(soul, thread_summary, incoming, github_context)
+
+
+def test_background_draft_reads_history_then_restores(make_client):
+    brain = SummaryBrain()
+    _client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)), brain=brain)
+    assert watcher._process(_msg(DM_DRAFT)) == "draft"
+    assert driver.opened == [DM_DRAFT, USER_VIEW] and driver.active_thread() == USER_VIEW
+    assert "Lucas Bernard:" in brain.summaries[0]
+
+
+def test_history_cache_avoids_reopening_within_ttl(make_client, monkeypatch):
+    brain = SummaryBrain()
+    _client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)), brain=brain)
+    watcher._process(_msg(DM_DRAFT))
+    watcher._process(_msg(DM_DRAFT, "Et sinon ?"))
+    assert driver.opened == [DM_DRAFT, USER_VIEW]
+    assert brain.summaries[0] == brain.summaries[1] != ""
+    real = watcher._history[DM_DRAFT]
+    watcher._history[DM_DRAFT] = (real[0] - watcher.HISTORY_TTL - 1, real[1])
+    watcher._process(_msg(DM_DRAFT, "Toujours là ?"))
+    assert driver.opened == [DM_DRAFT, USER_VIEW, DM_DRAFT, USER_VIEW]
+
+
+def test_history_on_open_thread_does_not_switch(make_client):
+    brain = SummaryBrain()
+    _client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999), DM_DRAFT), brain=brain)
+    watcher._process(_msg(DM_DRAFT))
+    assert driver.opened == [] and brain.summaries[0]
+
+
+def test_history_never_switches_during_screen_share(make_client):
+    _client, watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
+    assert watcher._summary(DM_DRAFT, 15) == ""
+    assert driver.opened == [] and DM_DRAFT not in watcher._history
