@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Moon, Sun, Settings2, Pause, Play, Minus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -8,6 +8,7 @@ import { Logo } from "@/Logo";
 import { Wizard } from "@/wizard/Wizard";
 import { Panel } from "@/panel/Panel";
 import { useTrame } from "@/api";
+import { onTrayTogglePause, setAutostart } from "@/desktop";
 
 function tauriWindow() {
   const w = (window as unknown as { __TAURI__?: any }).__TAURI__?.window;
@@ -25,7 +26,7 @@ function WindowControls() {
       <button className={`${base} hover:bg-accent hover:text-foreground`} onClick={() => win?.toggleMaximize?.()} aria-label="Agrandir">
         <Square className="size-3.5" />
       </button>
-      <button className={`${base} hover:bg-red-500 hover:text-white`} onClick={() => win?.close?.()} aria-label="Fermer">
+      <button className={`${base} hover:bg-red-500 hover:text-white`} onClick={() => win?.close?.()} aria-label="Réduire dans la barre des tâches">
         <X className="size-4" />
       </button>
     </div>
@@ -37,6 +38,10 @@ export default function App() {
   const [configured, setConfigured] = useState(false);
   const trame = useTrame();
   const paused = trame.state.paused;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+
+  useEffect(() => onTrayTogglePause(() => trame.setPaused(!pausedRef.current)), []);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -105,7 +110,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-hidden">
-          {configured ? <Panel trame={trame} /> : <Wizard onFinish={() => setConfigured(true)} />}
+          {configured ? <Panel trame={trame} /> : <Wizard onFinish={() => { setConfigured(true); setAutostart(true); }} />}
         </main>
       </div>
       <Toaster richColors position="bottom-right" />

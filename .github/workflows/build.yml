@@ -28,6 +28,8 @@ jobs:
             --hidden-import uvicorn.protocols.http.auto `
             --hidden-import uvicorn.protocols.websockets.auto `
             --hidden-import uvicorn.lifespan.on `
+            --add-data "..\config.json;." `
+            --add-data "..\SOUL.md;." `
             run.py
           New-Item -ItemType Directory -Force -Path ..\ui\src-tauri\binaries | Out-Null
           Copy-Item dist\trame-backend.exe ..\ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe

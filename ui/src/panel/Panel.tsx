@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -10,6 +10,7 @@ import { GroupList, Segment, InitialsAvatar, SectionLabel } from "@/components/k
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { useTrame } from "@/api";
+import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
 import { DraftItem, LogItem, Surface, WatchEntity } from "@/types";
 
 const SURFACE = { dm: "1:1", group: "Groupe", channel: "Canal" } as const;
@@ -169,6 +170,16 @@ function SettingsView({ brain: initialBrain }: { brain: "claude" | "copilot" }) 
       </div>
 
       <div>
+        <SectionLabel>Application</SectionLabel>
+        <GroupList>
+          <AutostartRow />
+          <div className="px-4 py-2.5 text-xs text-muted-foreground">
+            Fermer la fenêtre la réduit dans la barre des tâches : Trame continue de veiller. « Quitter » depuis l'icône l'arrête.
+          </div>
+        </GroupList>
+      </div>
+
+      <div>
         <SectionLabel>Contexte GitHub</SectionLabel>
         <GroupList>
           <ToggleRow label="Activer le contexte GitHub" defaultChecked />
@@ -202,6 +213,26 @@ function ToggleRow({ label, defaultChecked }: { label: string; defaultChecked?: 
     <div className="flex items-center justify-between px-4 py-3">
       <span className="text-sm">{label}</span>
       <Switch checked={on} onCheckedChange={setOn} />
+    </div>
+  );
+}
+
+function AutostartRow() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    autostartEnabled().then(setOn);
+  }, []);
+  return (
+    <div className="flex items-center justify-between px-4 py-3">
+      <span className="text-sm">Lancer au démarrage de Windows</span>
+      <Switch
+        checked={on}
+        disabled={!isDesktop()}
+        onCheckedChange={(v) => {
+          setOn(v);
+          setAutostart(v);
+        }}
+      />
     </div>
   );
 }
