@@ -60,7 +60,8 @@ class Watcher:
         if entity is None:
             return
         triggers = self.cfg.get("triggers", {})
-        if not safety.should_react(entity.surface.value, msg.mentions, entity.named_people, triggers):
+        self_names = triggers.get("self_names", ["Damien"])
+        if not safety.should_react(entity.surface.value, msg.mentions, entity.named_people, triggers, self_names):
             return
 
         ctx = self.cfg.get("context", {})
@@ -79,17 +80,37 @@ class Watcher:
         if mode == "auto" and (not self.state.selftest_ok or safety.blocked_by_filter(proposal, filt)):
             mode = "draft"
 
+        gh_ref = gh_ctx.splitlines()[0] if gh_ctx else None
+
         if mode == "auto":
-            self.driver.type_reply(msg.thread_id, proposal, send=True)
-            self.log("sent", f"Auto → {msg.sender} : « {proposal[:60]} »")
+            secs = self.cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
+            self.log("info", f"Envoi auto dans {secs}s → {msg.sender} (annulable via pause)")
+            if self._countdown_ok(secs):
+                self.driver.type_reply(msg.thread_id, proposal, send=True)
+                self.log("sent", f"Auto → {msg.sender} : « {proposal[:60]} »")
+            else:
+                self._queue_draft(msg, proposal, entity.mode, gh_ref)
+                self.log("warn", f"Envoi auto annulé → gardé en brouillon ({msg.sender})")
         else:
-            self.state.drafts.insert(0, Draft(
-                id=str(uuid.uuid4())[:8], thread_id=msg.thread_id, **{"from": msg.sender},
-                surface=msg.surface, incoming=msg.text, proposal=proposal,
-                received_at=msg.received_at, mode=entity.mode,
-                used_github=(gh_ctx.splitlines()[0] if gh_ctx else None),
-            ))
+            self._queue_draft(msg, proposal, entity.mode, gh_ref)
             self.log("draft", f"Brouillon déposé → {msg.sender}")
+
+    def _countdown_ok(self, seconds: float) -> bool:
+        """Wait the cancelable window. Pausing (or stopping) during it cancels the send."""
+        steps = max(1, int(seconds / 0.1))
+        for _ in range(steps):
+            if self._stop.is_set() or self.state.paused:
+                return False
+            threading.Event().wait(0.1)
+        return not (self._stop.is_set() or self.state.paused)
+
+    def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None) -> None:
+        self.state.drafts.insert(0, Draft(
+            id=str(uuid.uuid4())[:8], thread_id=msg.thread_id, **{"from": msg.sender},
+            surface=msg.surface, incoming=msg.text, proposal=proposal,
+            received_at=msg.received_at, mode=mode,  # type: ignore[arg-type]
+            used_github=gh_ref,
+        ))
 
     # --- actions from the API ---
     def send_draft(self, draft_id: str) -> None:

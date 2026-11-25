@@ -45,7 +45,7 @@ Conséquences :
 ```
 ┌─────────────────────────────┐   localhost (HTTP/WS)   ┌──────────────────────────┐
 │  UI de contrôle (Tauri)     │ ◄─────────────────────► │  Watcher (Python)        │
-│  React + Fluent UI 2        │                         │  « les mains »           │
+│  React + shadcn/ui        │                         │  « les mains »           │
 │  • Wizard de configuration  │                         │  • UIA Teams (lire/écrire)│
 │  • Watchlist + modes        │                         │  • détection nouveaux msg │
 │  • File de brouillons       │                         │  • pause + partage d'écran│
@@ -64,7 +64,7 @@ Conséquences :
   d'événements, la file de propositions, la pause, le partage d'écran, le
   rattrapage. Expose une **API locale** (HTTP + WebSocket sur `127.0.0.1`).
 - **Frontend** : application desktop **Tauri** (petit binaire natif + icône
-  barre des tâches) embarquant une UI **React + Fluent UI 2**. Parle au backend
+  barre des tâches) embarquant une UI **React + shadcn/ui**. Parle au backend
   en local. Développable intégralement hors Windows.
 - **Cerveau** : invoqué par le backend. `claude -p` en headless par défaut
   (session Claude Code authentifiée via l'Ultra de l'utilisateur), GitHub
@@ -194,7 +194,8 @@ réglages fins repliés sous « Avancé ».
 | Brouillon | Notifie + saisit à l'ouverture, sans détourner la vue |
 | Sécurité | Interrupteur global + auto-pause partage d'écran + filtre + journal |
 | Contexte | N derniers msgs + GitHub lecture seule, pertinent, repos tous par défaut |
-| UI | Tauri + Fluent UI 2 ; panneau complet + wizard court guidé |
+| UI | Tauri + **shadcn/ui** (Radix + Tailwind) ; panneau complet + wizard court style Apple |
+| Marque | Nom produit **Trame** (code : dedalus-teams-agent) ; accent **bleu**, logo bulle + méandre |
 | Persona | Drop / édition / sélection dans l'UI ; fourni plus tard |
 
 ## 13. Plan de construction
@@ -206,7 +207,7 @@ réglages fins repliés sous « Avancé ».
 | 2 | Watcher : watchlist, détection, modes, délai, pause/partage, Rattraper | Poste | non |
 | 3 | Cerveau : `claude -p` + SOUL + contexte N msgs | Poste | partiel |
 | 4 | GitHub lecture seule + pertinence | Poste | oui |
-| 5 | UI Tauri + Fluent : panneau complet + wizard + drop persona | Poste | **oui, intégralement** |
+| 5 | UI Tauri + shadcn : panneau complet + wizard + drop persona | Poste | **oui, intégralement** |
 
-L'UI Fluent et une large part du backend se développent hors du poste. Seule la
+L'UI shadcn et une large part du backend se développent hors du poste. Seule la
 couche UIA se cale sur la machine (phase 0, le vrai go/no-go).

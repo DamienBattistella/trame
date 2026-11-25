@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -36,16 +36,24 @@ def make_brain(cfg: dict):
 cfg = cfgmod.load()
 watcher = Watcher(make_driver(), make_brain(cfg))
 
-app = FastAPI(title="Trame")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["*"], allow_headers=["*"],
-)
 
-
-@app.on_event("startup")
-def _startup():
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     watcher.start()
+    yield
+    watcher.stop()
+
+
+app = FastAPI(title="Trame", lifespan=lifespan)
+# Loopback-only server. Allow the dev origin (Vite) and the packaged Tauri origin
+# (tauri://localhost, http(s)://tauri.localhost) — otherwise POST actions are
+# blocked by CORS in the installed app.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https?://tauri\.localhost)$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/state")

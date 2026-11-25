@@ -83,8 +83,17 @@ export function useTrame() {
 
   useEffect(() => {
     let closed = false;
-    try {
-      const ws = new WebSocket(WS);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      if (closed) return;
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(WS);
+      } catch {
+        retry = setTimeout(connect, 2000);
+        return;
+      }
       wsRef.current = ws;
       ws.onopen = () => !closed && setConnected(true);
       ws.onmessage = (e) => {
@@ -95,13 +104,24 @@ export function useTrame() {
           /* ignore malformed frame */
         }
       };
-      ws.onclose = () => !closed && setConnected(false);
-      ws.onerror = () => {};
-    } catch {
-      /* no backend: stay on mock */
-    }
+      ws.onclose = () => {
+        if (closed) return;
+        setConnected(false);
+        retry = setTimeout(connect, 2000); // reconnect if the backend restarts
+      };
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch {
+          /* already closing */
+        }
+      };
+    };
+
+    connect();
     return () => {
       closed = true;
+      if (retry) clearTimeout(retry);
       wsRef.current?.close();
     };
   }, []);

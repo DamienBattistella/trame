@@ -111,8 +111,11 @@ class WindowsUIADriver(TeamsDriver):
             raise RuntimeError("Zone de composition introuvable (sélecteur à caler).")
         box.SetFocus()
         time.sleep(0.15)
-        # Keyboard injection is more reliable than ValuePattern on a contenteditable.
-        self.auto.SendKeys(text, waitTime=0.01)
+        # Paste via clipboard: robust for arbitrary text (SendKeys would mangle
+        # {}()+^%~). The compose box is a contenteditable, so ValuePattern is
+        # unreliable; keyboard paste is the dependable path.
+        self.auto.SetClipboardText(text)
+        self.auto.SendKeys("{Ctrl}v", waitTime=0.02)
         if send:
             time.sleep(0.2)
             self.auto.SendKeys("{Enter}")  # A CALER: guard the "Enter sends" setting.
