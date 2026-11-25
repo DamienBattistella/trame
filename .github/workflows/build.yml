@@ -1,0 +1,63 @@
+name: Build desktop (Windows)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  tauri:
+    name: Tauri build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build backend sidecar (PyInstaller)
+        shell: pwsh
+        run: |
+          cd backend
+          pip install -r requirements.txt pyinstaller
+          pyinstaller --onefile --name trame-backend run.py
+          New-Item -ItemType Directory -Force -Path ..\ui\src-tauri\binaries | Out-Null
+          Copy-Item dist\trame-backend.exe ..\ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri
+
+      - name: Install UI deps
+        run: npm ci
+        working-directory: ui
+
+      - name: Generate app icons
+        run: npm run tauri icon src-tauri/icons/source.png
+        working-directory: ui
+
+      - name: Tauri build
+        run: npm run tauri build
+        working-directory: ui
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: trame-windows
+          path: |
+            ui/src-tauri/target/release/bundle/**/*.msi
+            ui/src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: warn

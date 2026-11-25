@@ -1,0 +1,212 @@
+# dedalus-teams-agent — DESIGN
+
+Assistant Teams personnel qui pilote le client **Microsoft Teams v2 natif** sur
+le poste Windows de l'utilisateur, via **UI Automation**, pour lire les messages
+et proposer / envoyer des réponses dans la voix de l'utilisateur (persona).
+
+Ce document est la référence de conception. Il fige les décisions prises en
+interview (voir §12). Il n'y a pas de commentaires dans le code : les
+explications vivent ici, dans les commits et dans les PR.
+
+---
+
+## 1. Principe directeur
+
+On ne touche **jamais** à l'authentification Microsoft. L'utilisateur ouvre
+Teams et se connecte normalement via le portail Entra de son entreprise.
+L'agent **conduit la fenêtre Teams réelle**, dans la session déjà ouverte,
+exactement comme l'utilisateur le ferait à la main.
+
+Conséquences :
+- Aucun appel à Microsoft Graph, aucun jeton emprunté, aucun identifiant
+  d'application tiers, aucun clone du client natif.
+- Le blocage de consentement administrateur sur `Chat.Read` (constaté sur le
+  tenant) devient sans objet : on ne demande rien à Graph.
+- C'est de l'automatisation d'interface sur sa propre machine, avec son
+  consentement — même catégorie que Power Automate Desktop.
+
+## 2. Contraintes et choix assumés
+
+- **Cerveau** : commutable dans les paramètres. **Claude Code par défaut**
+  (priorité), **GitHub Copilot** en alternative.
+- **Compte Claude** : OAuth Anthropic, **abonnement Ultra personnel** de
+  l'utilisateur. Choix explicite et assumé de l'utilisateur, tracé ici et daté :
+  le contenu des messages Teams de l'entreprise transite par son compte
+  personnel. Ce n'est pas un défaut technique, c'est une décision prise en
+  connaissance de cause (interview, 2026-11-25).
+- **Surface UIA instable** : le nouveau Teams est une application WebView2
+  (Chromium). L'arbre d'accessibilité expose le DOM, pas des contrôles natifs.
+  Les sélecteurs cassent au rythme des mises à jour Teams (~mensuel). **Ce
+  n'est pas un logiciel « build-once »** : il demande une maintenance continue.
+  Voir §9.
+
+## 3. Architecture
+
+```
+┌─────────────────────────────┐   localhost (HTTP/WS)   ┌──────────────────────────┐
+│  UI de contrôle (Tauri)     │ ◄─────────────────────► │  Watcher (Python)        │
+│  React + Fluent UI 2        │                         │  « les mains »           │
+│  • Wizard de configuration  │                         │  • UIA Teams (lire/écrire)│
+│  • Watchlist + modes        │                         │  • détection nouveaux msg │
+│  • File de brouillons       │                         │  • pause + partage d'écran│
+│  • Pause / Rattraper / logs │                         │  • file brouillons / auto │
+│  • Réglages cerveau/GitHub  │                         └────────────┬─────────────┘
+│  • Persona SOUL (drop/edit) │                                      │ invoque
+└─────────────────────────────┘                         ┌───────────▼──────────────┐
+                                                         │  Cerveau (swappable)      │
+                                                         │  claude -p (défaut, Ultra)│
+                                                         │  / GitHub Copilot         │
+                                                         │  SOUL + N msgs + GitHub    │
+                                                         └───────────────────────────┘
+```
+
+- **Backend** : watcher Python. Détient toute la logique UIA, la boucle
+  d'événements, la file de propositions, la pause, le partage d'écran, le
+  rattrapage. Expose une **API locale** (HTTP + WebSocket sur `127.0.0.1`).
+- **Frontend** : application desktop **Tauri** (petit binaire natif + icône
+  barre des tâches) embarquant une UI **React + Fluent UI 2**. Parle au backend
+  en local. Développable intégralement hors Windows.
+- **Cerveau** : invoqué par le backend. `claude -p` en headless par défaut
+  (session Claude Code authentifiée via l'Ultra de l'utilisateur), GitHub
+  Copilot en alternative, derrière une interface commune.
+
+## 4. Veille
+
+- **Ciblée** : une *watchlist* composée par sélection dans la liste réelle des
+  conversations. Clé de stockage = **identifiant de fil stable**
+  (`19:…@thread.v2`), avec **repli sur le nom d'affichage**. L'identifiant est à
+  vérifier par build (voir §9) ; le wizard le fait de façon guidée.
+- **Toutes surfaces** : DM 1:1, chats de groupe, canaux d'équipe — chacun
+  activable indépendamment.
+- **Détection** : `StructureChanged` sur le fil ouvert comme signal de réveil,
+  puis **diff** contre une empreinte (expéditeur + texte + horodatage) pour
+  confirmer un vrai nouveau message ; **poll du badge « non lu »** du rail pour
+  les conversations non ouvertes.
+- **Au démarrage** : **nouveaux messages seulement**. Pas de rattrapage
+  automatique. Un bouton **Rattraper** traite les non-lus à la demande.
+
+## 5. Déclencheur de réaction
+
+- **DM 1:1** : réagit à chaque message entrant.
+- **Groupe / canal** : réagit **seulement** sur **@mention de l'utilisateur** ou
+  mention d'une **personne nommée** dans la configuration.
+
+## 6. Modes de réponse (par entité)
+
+Deux dimensions **indépendantes** par entité de la watchlist :
+
+| Dimension | Valeurs | Rôle |
+|---|---|---|
+| **Veille** | on / off | est-ce que je surveille cette entité ? |
+| **Mode** | `draft` / `auto` | quand je réagis, brouillon ou envoi ? |
+
+- **Brouillon (`draft`, défaut)** : l'agent **notifie** (toast/son), prépare le
+  texte, et ne le **saisit dans la zone de composition que lorsque
+  l'utilisateur ouvre ce fil** — il ne détourne jamais la vue en basculant de
+  conversation tout seul. Validation = l'utilisateur appuie sur Entrée.
+- **Auto (`auto`)** : l'agent saisit **et** envoie, précédé d'un **compte à
+  rebours annulable (~5 s)**. L'utilisateur regarde faire et garde un arrêt de
+  dernière seconde.
+- **Garde-fou mécanique** : **auto-test des sélecteurs au démarrage**. S'il
+  échoue, toute entité en `auto` retombe en `draft` pour la session.
+- **Bouton Rattraper** : génère **uniquement des brouillons**, même pour les
+  entités en `auto` (jamais de rafale d'envois sur un backlog).
+
+## 7. Contexte de rédaction
+
+- **N derniers messages** du fil (configurable, défaut 15), avec report de
+  l'auteur quand Teams regroupe les messages consécutifs.
+- **GitHub** comme source de contexte :
+  - **Lecture seule**. L'agent lit code, issues, PR ; il **n'écrit jamais**
+    (pas de commentaire, pas d'issue, pas de commit).
+  - Liste de repos **configurable**, **tous actifs par défaut**.
+  - Consulté **seulement quand le message le justifie** (sujet repo / code /
+    issue détecté), jamais sur un message trivial.
+  - Accès via `gh` avec les jetons déjà présents sur le poste.
+
+## 8. Sécurité et contrôle
+
+- **Interrupteur global** de pause (suspend toute la veille d'un coup).
+- **Auto-pause en partage d'écran** : l'agent ne saisit rien tant qu'un partage
+  d'écran Teams est détecté (sinon une réponse serait visible de toute la
+  réunion).
+- **Filtre de contenu** : liste de termes qui forcent le brouillon même en
+  `auto` (RH, confidentiel, salaire…).
+- **Journal** : trace de ce qui est lu, proposé, envoyé.
+
+## 9. Réalité UIA et maintenance
+
+Vérifié (recherche technique, 2026-11-25) :
+- **Robuste** : saisir/envoyer dans la zone de composition ; lire le texte brut
+  et l'expéditeur d'un message.
+- **Fragile et à maintenir** : détection événementielle propre (événements UIA
+  bruyants → repli par poll) ; **identité stable des conversations**
+  (l'`AutomationId` *devrait* porter le thread-id mais ce n'est pas garanti par
+  build).
+- **Parade** : couche de **sélecteurs multi-stratégie**
+  (`AutomationId` → rôle+Name → clavier/presse-papier), un **canary** qui
+  revalide chaque ancre après une mise à jour Teams, **OCR** en dernier recours.
+- **Activation paresseuse** : WebView2 ne construit l'arbre d'accessibilité que
+  lorsqu'un client UIA se connecte → se connecter tôt et **réessayer jusqu'à ce
+  que l'arbre se peuple**.
+
+## 10. Wizard de configuration
+
+Objectif : le plus court chemin vers « ça marche ». Défauts intelligents,
+réglages fins repliés sous « Avancé ».
+
+1. **Bienvenue** — détecte si Teams tourne.
+2. **Connexion cerveau** — « Se connecter à Claude » (OAuth Ultra) / option Copilot.
+3. **Test en direct (sonde UIA guidée)** — « Envoie-toi un message, clique
+   *Tester* » → l'appli confirme qu'elle lit le fil et repère la zone de
+   composition. Vert = go, rouge = diagnostic. (Remplace la sonde manuelle dans
+   Accessibility Insights.)
+4. **Watchlist** — la liste réelle des conversations s'affiche, l'utilisateur
+   coche qui surveiller.
+5. **Mode par entité** — `draft` (défaut) / `auto`.
+6. **Persona** — zone de **glisser-déposer** du `SOUL.md` (ou « plus tard », un
+   défaut est actif), édition et sélection entre plusieurs personas.
+7. **GitHub (optionnel)** — connecter `gh`, tous les repos par défaut.
+8. **Récapitulatif + Activer.**
+
+## 11. Modèle de configuration
+
+`config.json` (persisté par l'UI). Schéma de référence : voir le fichier
+`config.json` du dépôt. Clés principales : `brain`, `model`, `watchlist`
+(entrées `{thread_id, display_name, watch, mode}`), `triggers`, `context`,
+`github`, `safety`, `ui`. Le persona est un fichier `SOUL.md` déposé via l'UI
+(placeholder par défaut).
+
+## 12. Registre des décisions (interview)
+
+| # | Décision |
+|---|---|
+| Approche | Pilotage UIA du Teams natif ; ni Graph, ni clone, ni vol de jeton |
+| Cerveau | Commutable : Claude Code par défaut, Copilot alternative |
+| Compte | Claude via OAuth Ultra **perso** — assumé, pas de restriction données |
+| Veille | Continue, ciblée par watchlist (ID de fil stable + repli nom) |
+| Surfaces | DM, groupe, canal — toutes, configurables |
+| Modes | `draft` + `auto` par entité dès le départ ; auto-test sélecteurs |
+| Lecture | Hybride UIA + repli capture multimodale |
+| Saisie | Directe dans la compo ; draft = Entrée par l'utilisateur, auto = délai annulable |
+| Démarrage | Nouveaux messages seulement + bouton Rattraper (brouillons) |
+| Déclencheur | 1:1 = tout ; groupe = @mention / personnes nommées |
+| Brouillon | Notifie + saisit à l'ouverture, sans détourner la vue |
+| Sécurité | Interrupteur global + auto-pause partage d'écran + filtre + journal |
+| Contexte | N derniers msgs + GitHub lecture seule, pertinent, repos tous par défaut |
+| UI | Tauri + Fluent UI 2 ; panneau complet + wizard court guidé |
+| Persona | Drop / édition / sélection dans l'UI ; fourni plus tard |
+
+## 13. Plan de construction
+
+| Phase | Contenu | Où | Développable hors Windows |
+|---|---|---|---|
+| 0 | Sonde UIA (intégrée au wizard, étape 3) | Poste | non |
+| 1 | Backend cœur : UIA lire/écrire + API locale + schéma config | Poste | structure oui, UIA non |
+| 2 | Watcher : watchlist, détection, modes, délai, pause/partage, Rattraper | Poste | non |
+| 3 | Cerveau : `claude -p` + SOUL + contexte N msgs | Poste | partiel |
+| 4 | GitHub lecture seule + pertinence | Poste | oui |
+| 5 | UI Tauri + Fluent : panneau complet + wizard + drop persona | Poste | **oui, intégralement** |
+
+L'UI Fluent et une large part du backend se développent hors du poste. Seule la
+couche UIA se cale sur la machine (phase 0, le vrai go/no-go).

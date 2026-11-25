@@ -1,0 +1,62 @@
+from __future__ import annotations
+from enum import Enum
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
+
+
+class Surface(str, Enum):
+    dm = "dm"
+    group = "group"
+    channel = "channel"
+
+
+Mode = Literal["draft", "auto"]
+
+
+class WatchEntity(BaseModel):
+    thread_id: str
+    display_name: str
+    surface: Surface
+    watch: bool = False
+    mode: Mode = "draft"
+    named_people: list[str] = Field(default_factory=list)
+
+
+class IncomingMessage(BaseModel):
+    thread_id: str
+    sender: str
+    text: str
+    received_at: str
+    surface: Surface
+    mentions: list[str] = Field(default_factory=list)
+
+
+class Draft(BaseModel):
+    id: str
+    thread_id: str
+    from_: str = Field(alias="from")
+    surface: Surface
+    incoming: str
+    proposal: str
+    received_at: str
+    mode: Mode
+    used_github: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class LogItem(BaseModel):
+    at: str
+    level: Literal["info", "warn", "sent", "draft"]
+    text: str
+
+
+class AppState(BaseModel):
+    paused: bool = False
+    screen_sharing: bool = False
+    brain: Literal["claude", "copilot"] = "claude"
+    selftest_ok: bool = True
+    watchlist: list[WatchEntity] = Field(default_factory=list)
+    drafts: list[Draft] = Field(default_factory=list)
+    logs: list[LogItem] = Field(default_factory=list)

@@ -1,0 +1,71 @@
+{
+  "brain": {
+    "provider": "claude",
+    "_provider_options": [
+      "claude",
+      "copilot"
+    ],
+    "claude": {
+      "command": "claude",
+      "args": [
+        "-p"
+      ]
+    },
+    "copilot": {
+      "command": "gh",
+      "args": [
+        "copilot",
+        "suggest"
+      ]
+    }
+  },
+  "watchlist": [],
+  "triggers": {
+    "dm": "every_message",
+    "group": "mention_or_named",
+    "channel": "mention_or_named"
+  },
+  "reply": {
+    "auto_send_countdown_seconds": 5,
+    "startup": "new_only",
+    "catchup_button_drafts_only": true,
+    "selector_selftest_gate": true
+  },
+  "context": {
+    "last_messages": 15,
+    "github": {
+      "enabled": true,
+      "access": "read_only",
+      "repos": "all",
+      "repos_allowlist": [],
+      "consult": "when_relevant"
+    }
+  },
+  "safety": {
+    "global_pause": false,
+    "auto_pause_on_screen_share": true,
+    "never_auto_send_if_message_contains": [
+      "mot de passe",
+      "confidentiel",
+      "RH",
+      "salaire"
+    ],
+    "log_file": "logs/activity.log"
+  },
+  "ui": {
+    "design_system": "shadcn",
+    "shell": "tauri",
+    "local_api": {
+      "host": "127.0.0.1",
+      "port": 8731
+    },
+    "wizard": {
+      "mode": "short",
+      "advanced_collapsed": true
+    }
+  },
+  "persona": {
+    "active_soul": "SOUL.md",
+    "personas_dir": "personas"
+  }
+}

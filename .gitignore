@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.venv/
+**/__pycache__/
+*.pyc
+
+# builds
+ui/dist/
+ui/src-tauri/target/
+ui/src-tauri/gen/
+ui/src-tauri/binaries/*
+!ui/src-tauri/binaries/.gitkeep
+
+# generated Tauri icons (kept: source.png)
+ui/src-tauri/icons/*
+!ui/src-tauri/icons/source.png
+
+# backend runtime
+backend/logs/
+
+# generated preview (regenerable)
+ui/gallery.html
+
+# os / editor
+.DS_Store
+*.local
