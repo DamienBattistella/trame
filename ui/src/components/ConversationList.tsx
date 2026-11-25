@@ -18,6 +18,7 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 const sortKey = (c: WatchEntity) => c.displayName.replace(/^#/, "");
+const FEW = 6;
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /** Liste de conversations à grande échelle : recherche, filtres, sélection en masse,
@@ -28,13 +29,16 @@ export function ConversationList({
   onBulk,
   filters = true,
   className = "h-[40vh]",
+  footer,
 }: {
   items: WatchEntity[];
   renderRow: (c: WatchEntity) => React.ReactNode;
   onBulk?: (ids: string[], watch: boolean) => void;
   filters?: boolean;
   className?: string;
+  footer?: React.ReactNode;
 }) {
+  const few = items.length <= FEW;
   const id = useId();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -66,6 +70,7 @@ export function ConversationList({
 
   return (
     <div className="flex w-full flex-col gap-3 text-left">
+      {!few && (
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -89,8 +94,9 @@ export function ConversationList({
           )}
         </AnimatePresence>
       </div>
+      )}
 
-      {filters && (
+      {filters && !few && (
         <div className="flex flex-wrap gap-1">
           {FILTERS.map((f) => (
             <button
@@ -113,7 +119,7 @@ export function ConversationList({
       )}
 
       <GroupList>
-        <ScrollArea className={className}>
+        <ScrollArea className={cn("[&_[data-radix-scroll-area-viewport]>div]:!block", !few && className)}>
           <div className="divide-y divide-border">
             {visible.map((c) => (
               <div key={c.threadId}>{renderRow(c)}</div>
@@ -128,9 +134,11 @@ export function ConversationList({
       </GroupList>
 
       <div className="flex items-center justify-between px-1 text-xs text-muted-foreground">
-        <span className="tabular-nums">
-          {watchedTotal} surveillée{watchedTotal > 1 ? "s" : ""} sur {items.length}
-        </span>
+        {footer ?? (
+          <span className="tabular-nums">
+            {watchedTotal} surveillée{watchedTotal > 1 ? "s" : ""} sur {items.length}
+          </span>
+        )}
         {onBulk && visible.length > 0 && (
           <button
             onClick={() => onBulk(visible.map((c) => c.threadId), !allVisibleWatched)}

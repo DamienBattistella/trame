@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { ArrowRight, Check, FileText, GitBranch, Loader2, RotateCcw, UploadCloud } from "lucide-react";
+import { ArrowRight, Check, FileText, GitBranch, Loader2, PenLine, RotateCcw, Timer, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
@@ -35,6 +35,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const [convs, setConvs] = useState<WatchEntity[]>(source);
   const touched = useRef(false);
   const [github, setGithub] = useState(true);
+  const [countdown, setCountdown] = useState(5);
   const [soul, setSoul] = useState<Soul | null>(null);
   const [activation, setActivation] = useState<"idle" | "run" | "ok" | "error">("idle");
   const [steps, setSteps] = useState<ActivationStep[]>([]);
@@ -53,6 +54,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       if (!live || !res.ok || touched.current) return;
       setBrain(res.settings.brain);
       setGithub(res.settings.github.enabled);
+      setCountdown(res.settings.safety.countdownSeconds);
     });
     return () => {
       live = false;
@@ -64,6 +66,9 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     setConvs(fn);
   };
   const watched = convs.filter((c) => c.watch);
+  const autoCount = watched.filter((c) => c.mode === "auto").length;
+  const draftCount = watched.length - autoCount;
+  const setModeAll = (mode: "draft" | "auto") => edit((cs) => cs.map((c) => (c.watch ? { ...c, mode } : c)));
   const toggleWatch = (id: string) => edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: !c.watch } : c)));
   const setWatchMany = (ids: string[], watch: boolean) => {
     const set = new Set(ids);
@@ -227,19 +232,38 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Brouillon ou auto ?",
-      sub: "Brouillon : tu valides. Auto : Trame envoie après un court délai annulable.",
+      sub: "Choisis, conversation par conversation, si Trame attend ton feu vert.",
       body: (
-        <ConversationList
-          items={watched}
-          filters={false}
-          renderRow={(c) => (
-            <div className="flex items-center gap-3 px-4 py-2.5">
-              <InitialsAvatar name={c.displayName} className="size-8" />
-              <span className="flex-1 truncate">{c.displayName}</span>
-              <Segment value={c.mode} onChange={(v) => setMode(c.threadId, v)} />
-            </div>
-          )}
-        />
+        <div className="flex w-full flex-col gap-4">
+          <div className="grid grid-cols-2 gap-3 text-left">
+            <ModeCard mode="draft" count={draftCount} total={watched.length} countdown={countdown} onAll={() => setModeAll("draft")} />
+            <ModeCard mode="auto" count={autoCount} total={watched.length} countdown={countdown} onAll={() => setModeAll("auto")} />
+          </div>
+          <ConversationList
+            items={watched}
+            filters={false}
+            footer={
+              <span className="flex w-full justify-between gap-3">
+                <span className="tabular-nums">
+                  {draftCount} en brouillon · {autoCount} en auto
+                </span>
+                <span>Conseil : commence en brouillon.</span>
+              </span>
+            }
+            renderRow={(c) => (
+              <div className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors duration-300", c.mode === "auto" && "bg-warning/[0.05]")}>
+                <InitialsAvatar name={c.displayName} className="size-8" />
+                <div className="flex min-w-0 flex-1 flex-col text-left">
+                  <span className="truncate">{c.displayName}</span>
+                  <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>
+                </div>
+                <div className="shrink-0">
+                  <Segment value={c.mode} onChange={(v) => setMode(c.threadId, v)} />
+                </div>
+              </div>
+            )}
+          />
+        </div>
       ),
     },
     {
@@ -488,5 +512,73 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
         </AnimatePresence>
       </motion.div>
     </motion.div>
+  );
+}
+
+const SURFACE_HINT = {
+  dm: "Privé · à chaque message",
+  group: "Groupe · si on te mentionne",
+  channel: "Canal · si on te mentionne",
+} as const;
+
+function ModeCard({
+  mode,
+  count,
+  total,
+  countdown,
+  onAll,
+}: {
+  mode: "draft" | "auto";
+  count: number;
+  total: number;
+  countdown: number;
+  onAll: () => void;
+}) {
+  const auto = mode === "auto";
+  const allSet = total > 0 && count === total;
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-1.5 rounded-2xl border bg-card p-3.5 transition-colors duration-300",
+        auto && count > 0 && "border-warning/40 bg-warning/[0.04]"
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <span className={cn("grid size-8 place-items-center rounded-full", auto ? "bg-warning/15 text-warning" : "bg-primary/10 text-primary")}>
+          {auto ? <Timer className="size-4" /> : <PenLine className="size-4" />}
+        </span>
+        <span className="font-semibold">{auto ? "Auto" : "Brouillon"}</span>
+        <span className="relative ml-auto h-7 overflow-hidden">
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.span
+              key={count}
+              initial={{ y: 14, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -14, opacity: 0 }}
+              transition={pop}
+              className={cn("block text-xl font-semibold tabular-nums", auto && count > 0 && "text-warning")}
+            >
+              {count}
+            </motion.span>
+          </AnimatePresence>
+        </span>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        {auto ? (
+          <>
+            Envoi seul après <strong className="font-medium text-foreground">{countdown} s</strong>, annulable par la pause.
+          </>
+        ) : (
+          "Trame prépare, tu relis et tu envoies."
+        )}
+      </p>
+      <button
+        onClick={onAll}
+        disabled={allSet}
+        className="mt-auto self-start text-xs font-medium text-primary transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-40"
+      >
+        {allSet ? `Toutes en ${auto ? "auto" : "brouillon"}` : `Tout en ${auto ? "auto" : "brouillon"}`}
+      </button>
+    </div>
   );
 }
