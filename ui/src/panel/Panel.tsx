@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, History, Loader2, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Kbd } from "@/components/ui/kbd";
+import { GithubLogo } from "@/brands";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -121,22 +124,35 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
     const n = res.queued ?? 0;
     setAdded(n);
     setCatching("done");
-    if (n > 0) toast.success(`${n} brouillon${n > 1 ? "s" : ""} ajouté${n > 1 ? "s" : ""}`);
-    else toast.info("Aucun non-lu");
+    if (n > 0) toast.success(`${n} réponse${n > 1 ? "s" : ""} à relire`);
+    else toast.info("Aucun message non lu");
     setTimeout(() => setCatching("idle"), 1800);
   };
 
   return (
     <div className="flex flex-col gap-4 py-5">
-      <div className="flex items-center justify-between">
-        <SectionLabel>À relire</SectionLabel>
+      <div className="flex items-center justify-between gap-3">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.p
+            key={drafts.length === 0 ? "none" : "some"}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            className="ml-1 text-sm text-muted-foreground"
+          >
+            {drafts.length === 0
+              ? "Tout est à jour"
+              : `${drafts.length} réponse${drafts.length > 1 ? "s" : ""} à relire`}
+          </motion.p>
+        </AnimatePresence>
         <motion.div animate={controls}>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className={cn("min-w-44 rounded-full transition-colors", catching === "done" && "border-success/50 text-success")}
+            className={cn("rounded-full text-muted-foreground transition-colors", catching === "done" && "text-success")}
             disabled={catching !== "idle"}
             onClick={catchUp}
+            title="Préparer une réponse pour chaque message non lu des conversations suivies"
           >
             <AnimatePresence mode="popLayout" initial={false}>
               <motion.span
@@ -147,11 +163,11 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
                 className="flex items-center gap-2"
               >
                 {catching === "idle" && <><History className="size-4" /> Rattraper les non-lus</>}
-                {catching === "run" && <><Loader2 className="size-4 animate-spin" /> Rattrapage…</>}
+                {catching === "run" && <><Loader2 className="size-4 animate-spin" /> Lecture…</>}
                 {catching === "done" && (
                   <>
                     <Check className="size-4" strokeWidth={3} />
-                    {added > 0 ? `${added} ajouté${added > 1 ? "s" : ""}` : "À jour"}
+                    {added > 0 ? `${added} ajouté${added > 1 ? "s" : ""}` : "Rien de neuf"}
                   </>
                 )}
               </motion.span>
@@ -161,12 +177,7 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
       </div>
 
       <AnimatePresence initial={false} mode="popLayout">
-        {drafts.length === 0 && (
-          <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="py-10 text-center text-muted-foreground">
-            Rien à relire. 👌
-          </motion.p>
-        )}
+        {drafts.length === 0 && <EmptyDrafts key="empty" />}
         {drafts.map((d) => (
           <DraftCard key={d.id} draft={d} trame={trame} onBrief={onBrief} />
         ))}
@@ -175,21 +186,49 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   );
 }
 
+function EmptyDrafts() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center gap-3 py-16 text-center"
+    >
+      <motion.span
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ ...pop, delay: 0.1 }}
+        className="grid size-12 place-items-center rounded-full bg-success/15 text-success"
+      >
+        <Check className="size-6" strokeWidth={3} />
+      </motion.span>
+      <p className="font-medium">Rien à relire</p>
+      <p className="max-w-xs text-sm text-muted-foreground">
+        Quand quelqu'un que tu suis t'écrit, sa réponse proposée apparaît ici.
+      </p>
+    </motion.div>
+  );
+}
+
 function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Trame; onBrief: OpenBrief }) {
   const [text, setText] = useState(d.proposal);
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
-  const [compose, setCompose] = useState<"idle" | "opening" | "open">("idle");
+  const [compose, setCompose] = useState<"idle" | "opening">("idle");
   const [leaving, setLeaving] = useState<"sent" | "dismissed">("sent");
   const controls = useAnimationControls();
   const busy = status !== "idle" || compose === "opening";
+  const edited = text.trim() !== d.proposal.trim();
+  const conversation = trame.state.watchlist.find((w) => w.threadId === d.threadId)?.displayName;
+  const place = d.surface !== "dm" && conversation && conversation !== d.from ? conversation : null;
 
   const send = async () => {
+    if (busy || !text.trim()) return;
     setStatus("sending");
     const res = await trame.sendDraft(d.id, text);
     if (!res.ok) {
       setStatus("idle");
       controls.start(shake);
-      toast.error(`Échec de l'envoi à ${d.from}`, { description: `${res.error} Le brouillon est conservé.` });
+      toast.error(`Échec de l'envoi à ${d.from}`, { description: `${res.error} Ta réponse est conservée.` });
       return;
     }
     setStatus("sent");
@@ -202,16 +241,15 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
   const openInTeams = async () => {
     setCompose("opening");
     const res = await trame.composeDraft(d.id, text);
+    setCompose("idle");
     if (!res.ok) {
-      setCompose("idle");
       controls.start(shake);
       toast.error("Impossible d'ouvrir la conversation dans Teams", {
-        description: `${res.error} Le brouillon est conservé ici.`,
+        description: `${res.error} Ta réponse est conservée ici.`,
       });
       return;
     }
-    setCompose("open");
-    setTimeout(() => setCompose("idle"), 2500);
+    toast.success("Réponse copiée dans Teams", { description: "Termine-la et envoie-la depuis Teams." });
   };
 
   const dismiss = () => {
@@ -220,12 +258,13 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
   };
 
   return (
-    <motion.div
+    <motion.article
       layout
       initial={{ opacity: 0, y: -12, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={leaving === "sent" ? { opacity: 0, scale: 0.96, y: -8 } : { opacity: 0, x: -48 }}
       transition={spring}
+      aria-label={`Réponse à ${d.from}`}
     >
       <motion.div
         animate={controls}
@@ -234,27 +273,72 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
           status === "sent" && "border-success/50"
         )}
       >
-        <div className="flex items-center gap-3">
+        <header className="flex items-center gap-3">
           <InitialsAvatar name={d.from} className="size-8" />
-          <span className="font-medium">{d.from}</span>
-          <SurfaceTag s={d.surface} />
-          <span className="text-xs text-muted-foreground">{d.receivedAt}</span>
-        </div>
-        <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">{d.incoming}</div>
-        {d.usedGithub && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <BranchIcon className="size-3.5 text-primary" /> Contexte : {d.usedGithub}
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="truncate font-medium">{d.from}</span>
+            {place && <span className="truncate text-sm text-muted-foreground">dans {place}</span>}
           </div>
-        )}
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={busy}
-          className="min-h-20 rounded-xl"
-        />
-        <div className="flex gap-2">
+          <span className="shrink-0 text-xs text-muted-foreground">{d.receivedAt}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-8 rounded-full" disabled={busy} aria-label="Plus d'actions">
+                {compose === "opening" ? <Loader2 className="size-4 animate-spin" /> : <MoreHorizontal className="size-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem onSelect={openInTeams}>
+                <Pencil /> Terminer dans Teams
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!trame.briefPrefs.enabled}
+                onSelect={() => onBrief({ threadId: d.threadId, displayName: conversation ?? d.from })}
+              >
+                <BookOpenText /> Résumé de la conversation
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </header>
+
+        <div className="max-w-[85%] self-start rounded-2xl rounded-tl-md bg-muted px-3.5 py-2 text-sm">
+          {d.incoming}
+        </div>
+
+        <div className="flex flex-col items-end gap-1.5">
+          <label htmlFor={`reply-${d.id}`} className="mr-1 text-xs text-muted-foreground">
+            {edited ? "Ta réponse · modifiée" : "Réponse proposée · modifiable"}
+          </label>
+          <Textarea
+            id={`reply-${d.id}`}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            disabled={busy}
+            rows={1}
+            className="field-sizing-content min-h-0 w-full max-w-[85%] resize-none rounded-2xl rounded-tr-md border-primary/30 bg-primary/10 px-3.5 py-2 text-sm leading-relaxed shadow-none focus-visible:border-primary/60 dark:bg-primary/15"
+          />
+          {d.usedGithub && (
+            <span className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <GithubLogo className="size-3.5" /> {d.usedGithub}
+            </span>
+          )}
+        </div>
+
+        <footer className="flex items-center gap-2 pt-1">
+          <span className="hidden flex-1 items-center gap-1 text-xs text-muted-foreground sm:flex">
+            <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd> pour envoyer
+          </span>
+          <div className="flex-1 sm:hidden" />
+          <Button variant="ghost" className="rounded-full text-muted-foreground" disabled={busy} onClick={dismiss}>
+            Ignorer
+          </Button>
           <Button
-            className={cn("min-w-32 rounded-full transition-colors", status === "sent" && "bg-success hover:bg-success")}
+            className={cn("min-w-28 rounded-full transition-colors", status === "sent" && "bg-success hover:bg-success")}
             disabled={busy || !text.trim()}
             onClick={send}
           >
@@ -272,41 +356,9 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
               </motion.span>
             </AnimatePresence>
           </Button>
-          <Button
-            variant="secondary"
-            className={cn("min-w-44 rounded-full transition-colors", compose === "open" && "text-success")}
-            disabled={busy}
-            onClick={() => compose === "idle" && openInTeams()}
-          >
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={compose}
-                initial={{ y: 8, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -8, opacity: 0 }}
-                className="flex items-center gap-2"
-              >
-                {compose === "idle" && <><Pencil className="size-4" /> Modifier dans Teams</>}
-                {compose === "opening" && <><Loader2 className="size-4 animate-spin" /> Ouverture…</>}
-                {compose === "open" && <><Check className="size-4" strokeWidth={3} /> Dans Teams</>}
-              </motion.span>
-            </AnimatePresence>
-          </Button>
-          <ContextButton
-            trame={trame}
-            onBrief={onBrief}
-            target={{
-              threadId: d.threadId,
-              displayName: trame.state.watchlist.find((w) => w.threadId === d.threadId)?.displayName ?? d.from,
-            }}
-          />
-          <div className="flex-1" />
-          <Button variant="ghost" className="rounded-full" disabled={busy} onClick={dismiss}>
-            <Trash2 className="size-4" /> Ignorer
-          </Button>
-        </div>
+        </footer>
       </motion.div>
-    </motion.div>
+    </motion.article>
   );
 }
 
