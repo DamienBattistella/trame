@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Check, Moon, Sun, Settings2, Pause, Play, Minus, Square, X, WifiOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,12 +6,19 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
-import { Wizard } from "@/wizard/Wizard";
-import { Panel } from "@/panel/Panel";
 import { useTrame } from "@/api";
 import { toast } from "sonner";
 import { onTrayTogglePause, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
+
+// Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
+// partent dès le démarrage, pendant l'écran de chargement, pour ne jamais faire attendre.
+const loadWizard = () => import("@/wizard/Wizard");
+const loadPanel = () => import("@/panel/Panel");
+const Wizard = lazy(() => loadWizard().then((m) => ({ default: m.Wizard })));
+const Panel = lazy(() => loadPanel().then((m) => ({ default: m.Panel })));
+loadPanel();
+loadWizard();
 
 function tauriWindow() {
   const w = (window as unknown as { __TAURI__?: any }).__TAURI__?.window;
@@ -173,7 +180,9 @@ export default function App() {
               <Splash key="splash" connected={trame.connected} />
             ) : (
               <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
-                {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
+                <Suspense fallback={null}>
+                  {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
+                </Suspense>
               </motion.div>
             )}
           </AnimatePresence>

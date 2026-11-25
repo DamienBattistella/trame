@@ -272,6 +272,7 @@ export function useTrame() {
   useEffect(() => {
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let lastFrame = "";
 
     const connect = () => {
       if (closed) return;
@@ -290,6 +291,9 @@ export function useTrame() {
       };
       ws.onmessage = (e) => {
         if (closed) return;
+        // Trame identique à la précédente (keep-alive) : aucun re-rendu.
+        if (e.data === lastFrame) return;
+        lastFrame = e.data;
         try {
           setState(mapState(JSON.parse(e.data)));
         } catch {
@@ -298,6 +302,7 @@ export function useTrame() {
       };
       ws.onclose = () => {
         if (closed) return;
+        lastFrame = "";
         setConnected(false);
         retry = setTimeout(connect, 2000); // reconnect if the backend restarts
       };

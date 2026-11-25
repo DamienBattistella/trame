@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,7 +13,9 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BrainPicker } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
-import { BriefSheet, BriefTarget } from "@/components/BriefSheet";
+import type { BriefTarget } from "@/components/BriefSheet";
+
+const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GithubConnect } from "@/components/GithubConnect";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
@@ -59,6 +61,11 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
 export function Panel({ trame }: { trame: Trame }) {
   const { state } = trame;
   const [briefFor, setBriefFor] = useState<BriefTarget | null>(null);
+  // Le brief n'est chargé qu'à la première ouverture, puis reste monté pour ses animations.
+  const [briefUsed, setBriefUsed] = useState(false);
+  useEffect(() => {
+    if (briefFor) setBriefUsed(true);
+  }, [briefFor]);
 
   return (
     <div className="mx-auto flex h-full max-w-3xl flex-col overflow-hidden px-6 pt-5">
@@ -117,7 +124,11 @@ export function Panel({ trame }: { trame: Trame }) {
           <SettingsView trame={trame} />
         </TabsContent>
       </Tabs>
-      <BriefSheet trame={trame} target={briefFor} onClose={() => setBriefFor(null)} />
+      {briefUsed && (
+        <Suspense fallback={null}>
+          <BriefSheet trame={trame} target={briefFor} onClose={() => setBriefFor(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }

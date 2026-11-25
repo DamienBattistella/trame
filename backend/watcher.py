@@ -101,11 +101,24 @@ class Watcher:
 
         ctx = cfg.get("context", {})
         gh_cfg = ctx.get("github", {})
-        gh_ctx = ""
+        # GitHub (network) and the conversation history (Teams UI) are independent: fetch
+        # them side by side instead of one after the other.
+        gh_result: list[str] = [""]
+        gh_thread: threading.Thread | None = None
         if gh_cfg.get("enabled", True) and gh.is_relevant(msg.text):
-            repos = gh.list_repos() if gh_cfg.get("repos", "all") == "all" else gh_cfg.get("repos_allowlist", [])
-            gh_ctx = gh.fetch(msg.text, repos, True)
+            def _fetch_github() -> None:
+                try:
+                    repos = gh.list_repos() if gh_cfg.get("repos", "all") == "all" else gh_cfg.get("repos_allowlist", [])
+                    gh_result[0] = gh.fetch(msg.text, repos, True)
+                except Exception:
+                    gh_result[0] = ""
+
+            gh_thread = threading.Thread(target=_fetch_github, daemon=True)
+            gh_thread.start()
         summary = self._summary(msg.thread_id, ctx.get("last_messages", 15))
+        if gh_thread is not None:
+            gh_thread.join()
+        gh_ctx = gh_result[0]
 
         try:
             proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx)

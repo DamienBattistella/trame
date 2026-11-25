@@ -70,6 +70,7 @@ def fresh_home(monkeypatch):
     monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: "")
     monkeypatch.setattr(gh, "_run", _no_process)
     gh._sso_blocked.clear()
+    monkeypatch.setattr(gh, "_repos_cache", None)
     yield home
     gh._sso_blocked.clear()
 

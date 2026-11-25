@@ -35,9 +35,22 @@ def fetch(text: str, repos: list[str], enabled: bool) -> str:
     return "\n".join(refs)
 
 
+REPOS_TTL = 600.0
+_repos_cache: tuple[float, list[str]] | None = None
+
+
 def list_repos() -> list[str]:
+    """The account's repos, cached 10 min: `gh repo list` costs about a second and was
+    paid on every message that mentions a PR or an issue."""
+    global _repos_cache
+    now = time.monotonic()
+    if _repos_cache and now - _repos_cache[0] < REPOS_TTL:
+        return list(_repos_cache[1])
     out = _gh(["repo", "list", "--limit", "100", "--json", "nameWithOwner", "-q", ".[].nameWithOwner"])
-    return [r for r in out.splitlines() if r] if out else []
+    repos = [r for r in out.splitlines() if r] if out else []
+    if repos:
+        _repos_cache = (now, repos)
+    return repos
 
 
 MAX_HITS = 8

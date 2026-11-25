@@ -76,6 +76,10 @@ class LocalOnly:
         await self.app(scope, receive, send)
 
 
+WS_POLL = 0.25
+WS_KEEPALIVE = 15.0
+
+
 class PauseBody(BaseModel):
     paused: bool
 
@@ -258,11 +262,20 @@ def create_app(
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket):
+        # The state is checked often (changes show up within 250 ms) but only sent when it
+        # changed, plus a keep-alive every 15 s: an idle Trame sends almost nothing and
+        # the UI does not re-render the whole watchlist every second.
         await socket.accept()
+        last = ""
+        idle = 0.0
         try:
             while True:
-                await socket.send_text(state_payload())
-                await asyncio.sleep(1.0)
+                payload = state_payload()
+                if payload != last or idle >= WS_KEEPALIVE:
+                    await socket.send_text(payload)
+                    last, idle = payload, 0.0
+                await asyncio.sleep(WS_POLL)
+                idle += WS_POLL
         except WebSocketDisconnect:
             return
 

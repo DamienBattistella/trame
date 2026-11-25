@@ -364,3 +364,18 @@ def test_login_env_disables_prompts_only():
     env = ghauth._env()
     assert env["GH_PROMPT_DISABLED"] == "1"
     assert "--web" in ghauth.LOGIN_CMD
+
+
+def test_repo_list_is_cached(monkeypatch):
+    calls = []
+
+    def fake(args, timeout=20):
+        calls.append(args)
+        return "a/x\nb/y"
+
+    monkeypatch.setattr(gh, "_gh", fake)
+    assert gh.list_repos() == ["a/x", "b/y"] and gh.list_repos() == ["a/x", "b/y"]
+    assert len(calls) == 1
+    monkeypatch.setattr(gh, "_repos_cache", (gh._repos_cache[0] - gh.REPOS_TTL - 1, gh._repos_cache[1]))
+    gh.list_repos()
+    assert len(calls) == 2

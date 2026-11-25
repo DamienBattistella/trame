@@ -328,3 +328,14 @@ def test_selftest_reports_result(make_client):
 
     client, watcher, _driver = make_client(driver=Broken(interval=9999))
     assert client.post("/api/selftest").json() == {"ok": True, "selftest_ok": False} and watcher.state.selftest_ok is False
+
+
+def test_websocket_sends_only_on_change(make_client, monkeypatch):
+    import app as appmod
+    monkeypatch.setattr(appmod, "WS_POLL", 0.01)
+    client, watcher, _driver = make_client()
+    with client.websocket_connect("/ws") as ws:
+        first = ws.receive_text()
+        watcher.set_paused(True)
+        second = ws.receive_text()
+    assert '"paused":false' in first and '"paused":true' in second
