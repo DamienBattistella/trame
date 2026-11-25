@@ -1,6 +1,6 @@
 from __future__ import annotations
 import time
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 from models import IncomingMessage, Surface, WatchEntity
 from drivers.base import TeamsDriver
 
@@ -20,6 +20,7 @@ class WindowsUIADriver(TeamsDriver):
         self.poll = poll
         self._win = None
         self._fingerprints: dict[str, str] = {}
+        self._names: dict[str, str] = {}
 
     def _window(self):
         if self._win is None or not self._win.Exists(0, 0):
@@ -56,22 +57,89 @@ class WindowsUIADriver(TeamsDriver):
         tree = win.TreeControl(searchDepth=25, foundIndex=1)
         return tree if tree.Exists(0, 0) else None
 
+    def _rail_items(self, rail) -> list:
+        # A CALER: rail entries are expected as TreeItem/ListItem descendants of the rail.
+        out = []
+        for ctrl, _depth in self.auto.WalkControl(rail, includeTop=False, maxDepth=4):
+            if ctrl.ControlTypeName in ("TreeItemControl", "ListItemControl") and (ctrl.Name or "").strip():
+                out.append(ctrl)
+        return out
+
+    @staticmethod
+    def _display_name_of(item) -> str:
+        return (item.Name or "").strip()  # A CALER: Name may carry the last-message preview.
+
+    def _thread_id_of(self, item) -> str:
+        # Teams rail DOM id is "chat-list-item_19:...@thread.v2"; Chromium usually
+        # surfaces it as AutomationId. Fall back to the display name when absent.
+        auto_id = getattr(item, "AutomationId", "") or ""
+        return auto_id.replace("chat-list-item_", "") or f"name:{self._display_name_of(item)}"
+
     def list_conversations(self) -> list[WatchEntity]:
         win = self._window()
         rail = self._find_rail(win)
         out: list[WatchEntity] = []
         if rail is None:
             return out
-        for item in rail.GetChildren():
-            name = (item.Name or "").strip()
-            if not name:
-                continue
-            # Teams rail DOM id is "chat-list-item_19:...@thread.v2"; Chromium usually
-            # surfaces it as AutomationId. Fall back to the display name when absent.
-            auto_id = getattr(item, "AutomationId", "") or ""
-            thread_id = auto_id.replace("chat-list-item_", "") or f"name:{name}"
+        for item in self._rail_items(rail):
+            name = self._display_name_of(item)
+            thread_id = self._thread_id_of(item)
+            self._names[thread_id] = name
             out.append(WatchEntity(thread_id=thread_id, display_name=name, surface=Surface.dm))
         return out
+
+    def _rail_item_for(self, rail, thread_id: str):
+        items = self._rail_items(rail)
+        if not thread_id.startswith("name:"):
+            by_id = [i for i in items if thread_id in (getattr(i, "AutomationId", "") or "")]
+            if len(by_id) == 1:
+                return by_id[0]
+            if len(by_id) > 1:
+                return None
+        name = thread_id[5:] if thread_id.startswith("name:") else self._names.get(thread_id)
+        if not name:
+            return None
+        by_name = [i for i in items if self._display_name_of(i) == name]
+        return by_name[0] if len(by_name) == 1 else None
+
+    def _conversation_title(self, win) -> Optional[str]:
+        return None  # A CALER: header of the open conversation (title text node).
+
+    def _is_active(self, win, thread_id: str) -> bool:
+        rail = self._find_rail(win)
+        if rail is None:
+            return False
+        item = self._rail_item_for(rail, thread_id)
+        if item is None:
+            return False
+        try:
+            pattern = item.GetSelectionItemPattern()  # A CALER: selected state exposed on the rail item.
+            if pattern is None or not pattern.IsSelected:
+                return False
+        except Exception:
+            return False
+        title = self._conversation_title(win)
+        if title is not None and title.strip() != self._display_name_of(item):
+            return False
+        return self._find_compose(win) is not None
+
+    def open_thread(self, thread_id: str) -> bool:
+        try:
+            win = self._window()
+            if self._is_active(win, thread_id):
+                return True
+            rail = self._find_rail(win)
+            item = self._rail_item_for(rail, thread_id) if rail is not None else None
+            if item is None:
+                return False
+            item.Click(simulateMove=False, waitTime=0.1)  # A CALER: Click vs SelectionItemPattern.Select().
+            for _ in range(15):
+                if self._is_active(win, thread_id):
+                    return True
+                time.sleep(0.2)
+            return False
+        except Exception:
+            return False
 
     def is_screen_sharing(self) -> bool:
         win = self._window()
@@ -104,13 +172,15 @@ class WindowsUIADriver(TeamsDriver):
     def _sender_of(self, node) -> Optional[str]:
         return None  # A CALER: read the author sub-node when present.
 
-    def type_reply(self, thread_id: str, text: str, send: bool) -> None:
+    def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         win = self._window()
         box = self._find_compose(win)
         if box is None:
             raise RuntimeError("Zone de composition introuvable (sélecteur à caler).")
         box.SetFocus()
         time.sleep(0.15)
+        if not self._is_active(win, thread_id):
+            return False
         # Paste via clipboard: robust for arbitrary text (SendKeys would mangle
         # {}()+^%~). The compose box is a contenteditable, so ValuePattern is
         # unreliable; keyboard paste is the dependable path.
@@ -118,7 +188,37 @@ class WindowsUIADriver(TeamsDriver):
         self.auto.SendKeys("{Ctrl}v", waitTime=0.02)
         if send:
             time.sleep(0.2)
+            if not self._is_active(win, thread_id):
+                return False
             self.auto.SendKeys("{Enter}")  # A CALER: guard the "Enter sends" setting.
+        return True
+
+    def _is_unread(self, item) -> bool:
+        name = (item.Name or "").lower()
+        return "non lu" in name or "unread" in name  # A CALER: real unread badge node.
+
+    def _rail_preview(self, item) -> Optional[tuple[str, str]]:
+        return None  # A CALER: (sender, last message) read from the rail item without opening it.
+
+    def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
+        wanted = set(thread_ids) if thread_ids is not None else None
+        try:
+            rail = self._find_rail(self._window())
+            if rail is None:
+                return []
+            out: list[IncomingMessage] = []
+            for item in self._rail_items(rail):
+                thread_id = self._thread_id_of(item)
+                if (wanted is not None and thread_id not in wanted) or not self._is_unread(item):
+                    continue
+                preview = self._rail_preview(item)
+                if preview is None:
+                    continue
+                sender, text = preview
+                out.append(IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at="", surface=Surface.dm))
+            return out
+        except Exception:
+            return []
 
     def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:
         # Poll the rail unread state for cross-conversation detection; diff the open

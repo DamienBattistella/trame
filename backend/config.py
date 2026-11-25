@@ -52,3 +52,15 @@ def load_soul() -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return "Assistant Teams. Réponds brièvement, dans un ton cordial et professionnel."
+
+
+SOUL_MAX_BYTES = 64 * 1024
+
+
+def save_soul(content: str) -> Path:
+    path = HOME / "SOUL.md"
+    tmp = path.with_suffix(".md.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, path)
+    return path

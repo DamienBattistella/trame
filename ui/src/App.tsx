@@ -37,8 +37,15 @@ function WindowControls() {
 
 export default function App() {
   const [dark, setDark] = useState(true);
-  const [configured, setConfigured] = useState(false);
+  const [view, setView] = useState<"wizard" | "panel" | null>(null);
   const trame = useTrame();
+  const configured = view === "panel";
+
+  // Une fois le moteur joint, c'est lui qui dit si le wizard a déjà été fait ; hors ligne, wizard d'abord.
+  // L'activation du wizard fige le choix, pour qu'un onboarded=true reçu en cours de route ne l'interrompe pas.
+  useEffect(() => {
+    if (view === null && trame.connected && trame.state.onboarded) setView("panel");
+  }, [view, trame.connected, trame.state.onboarded]);
   const paused = trame.state.paused;
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
@@ -120,7 +127,7 @@ export default function App() {
             {configured && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" onClick={() => setConfigured(false)}>
+                  <Button variant="ghost" size="icon" onClick={() => setView("wizard")}>
                     <Settings2 className="size-4" />
                   </Button>
                 </TooltipTrigger>
@@ -157,7 +164,7 @@ export default function App() {
               <Splash key="splash" connected={trame.connected} />
             ) : (
               <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
-                {configured ? <Panel trame={trame} /> : <Wizard onFinish={() => { setConfigured(true); setAutostart(true); }} />}
+                {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); setAutostart(true); }} />}
               </motion.div>
             )}
           </AnimatePresence>

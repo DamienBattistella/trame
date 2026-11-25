@@ -1,21 +1,13 @@
 import { useId } from "react";
 import { motion } from "motion/react";
 
-/* Logo Trame : un T tissé. La trame du haut passe PAR-DESSUS la chaîne verticale,
-   une seconde trame plus claire passe PAR-DESSOUS — le dessus-dessous du tissage.
-   Les « halos » couleur de fond découpent les croisements pour lire l'entrelacs.
-   En mode `animated`, les fils se tracent l'un après l'autre (écran de chargement). */
+/* Logo Trame : le T de Trame tracé d'un seul fil, sur fond transparent.
+   Le dégradé suit le fil (bleu → cyan). Le cadre est recadré sur le dessin
+   pour qu'il reste lisible à 16 px. En mode `animated` (écran de chargement),
+   le fil s'écrit d'un seul geste puis son bout se tend et se pose. */
 
-const FROM = "#2563eb";
-const TO = "#38bdf8";
-
-type Strand = { d: string; width: number; opacity?: number; halo?: boolean; delay: number };
-
-const STRANDS: Strand[] = [
-  { d: "M18 41 H46", width: 5, opacity: 0.75, delay: 0.15 },
-  { d: "M32 23 V48", width: 7.5, halo: true, delay: 0.45 },
-  { d: "M16 23 H48", width: 7.5, halo: true, delay: 0.8 },
-];
+export const LOGO_PATH =
+  "M15 19.5 H43 C48.5 19.5 48.5 28.5 43 28.5 H37.5 C34.5 28.5 32 31 32 34 V44.5 C32 48.8 35.3 51 39.5 49.8";
 
 export function Logo({
   size = 32,
@@ -26,22 +18,13 @@ export function Logo({
   className?: string;
   animated?: boolean;
 }) {
-  const id = useId().replace(/:/g, "");
-  const grad = `trame-${id}`;
-  const draw = (delay: number) =>
-    animated
-      ? {
-          initial: { pathLength: 0, opacity: 0 },
-          animate: { pathLength: 1, opacity: 1 },
-          transition: { pathLength: { duration: 0.55, ease: "easeInOut" as const, delay }, opacity: { duration: 0.01, delay } },
-        }
-      : {};
+  const grad = `trame-${useId().replace(/:/g, "")}`;
 
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 64 64"
+      viewBox="9 13.5 44 44"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
@@ -49,29 +32,34 @@ export function Logo({
       className={className}
     >
       <defs>
-        <linearGradient id={grad} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop stopColor={FROM} />
-          <stop offset="1" stopColor={TO} />
+        <linearGradient id={grad} x1="15" y1="19" x2="40" y2="51" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#2563eb" />
+          <stop offset="1" stopColor="#38bdf8" />
         </linearGradient>
       </defs>
-      <motion.rect
-        width="64"
-        height="64"
-        rx="15"
-        fill={`url(#${grad})`}
+      <motion.g
         {...(animated
-          ? { initial: { scale: 0.6, opacity: 0 }, animate: { scale: 1, opacity: 1 }, transition: { type: "spring", stiffness: 260, damping: 20 } }
+          ? { animate: { y: [0, 0, 1.2, 0] }, transition: { duration: 1.6, times: [0, 0.76, 0.87, 1], ease: "easeOut" as const } }
           : {})}
-        style={{ transformOrigin: "32px 32px" }}
-      />
-      {STRANDS.map((s, i) => (
-        <g key={i}>
-          {s.halo && (
-            <motion.path d={s.d} stroke={`url(#${grad})`} strokeWidth={s.width + 3.5} strokeLinecap="round" {...draw(s.delay)} />
-          )}
-          <motion.path d={s.d} stroke="#fff" strokeOpacity={s.opacity ?? 1} strokeWidth={s.width} strokeLinecap="round" {...draw(s.delay)} />
-        </g>
-      ))}
+      >
+        <motion.path
+          d={LOGO_PATH}
+          stroke={`url(#${grad})`}
+          strokeWidth={7.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          {...(animated
+            ? {
+                initial: { pathLength: 0, opacity: 0 },
+                animate: { pathLength: 1, opacity: 1 },
+                transition: {
+                  pathLength: { duration: 1.15, ease: "easeInOut" as const, delay: 0.05 },
+                  opacity: { duration: 0.01, delay: 0.05 },
+                },
+              }
+            : {})}
+        />
+      </motion.g>
     </svg>
   );
 }

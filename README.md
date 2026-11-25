@@ -1,54 +1,123 @@
-# Trame
+<p align="center">
+  <img src="docs/logo-animated.svg" width="120" alt="Trame" />
+</p>
 
-Assistant Teams personnel. Il lit et rédige tes réponses **en pilotant le client
-Microsoft Teams natif** sur ton poste Windows (UI Automation), dans ta session
-Entra déjà ouverte — ni Graph, ni jeton emprunté, ni clone du client. Les
-réponses sont rédigées par Claude dans ta voix (persona `SOUL.md`), en brouillon
-à valider ou en auto selon la personne.
+<h1 align="center">Trame</h1>
 
-Nom de code du dépôt : `dedalus-teams-agent`. Produit : **Trame**.
+<p align="center"><strong>La trame de tes conversations.</strong><br/>
+Un assistant Windows qui veille sur tes conversations Microsoft Teams et te prépare des réponses, dans ta voix.</p>
 
-## Architecture
+<p align="center">
+  <a href="https://github.com/DamienBattistella/trame/actions/workflows/ci.yml"><img src="https://github.com/DamienBattistella/trame/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/DamienBattistella/trame/actions/workflows/build.yml"><img src="https://github.com/DamienBattistella/trame/actions/workflows/build.yml/badge.svg" alt="Build Windows" /></a>
+</p>
 
+<p align="center">
+  <img src="docs/screenshots/brouillons.png" width="820" alt="Trame — file de brouillons à relire" />
+</p>
+
+---
+
+## Ce que fait Trame
+
+Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que tu as choisi t'écrit sur Teams, Trame lit le message, rédige une réponse dans ton style et te la propose. Tu relis, tu ajustes, tu envoies — ou, pour les personnes de confiance, Trame envoie lui-même après un court délai que tu peux annuler.
+
+- **Il pilote l'application Teams que tu as déjà ouverte.** Aucune API Microsoft Graph, aucun jeton, aucune autorisation d'administrateur : Trame agit dans ta session, comme tu le ferais au clavier.
+- **Il écrit dans ta voix.** Ton style, ton rôle et ce qu'il doit refuser sont décrits dans un fichier `SOUL.md` que tu déposes dans l'application.
+- **Tu gardes la main.** Brouillon par défaut, envoi automatique seulement pour les conversations que tu désignes, pause en un clic.
+
+## Interfaces
+
+### Un démarrage en huit écrans
+
+| | |
+|:-:|:-:|
+| <img src="docs/screenshots/wizard-bienvenue.png" alt="Bienvenue" /> | <img src="docs/screenshots/wizard-cerveau.png" alt="Choix du cerveau" /> |
+| **Bienvenue** — Trame détecte Teams | **Cerveau** — Claude ou GitHub Copilot |
+| <img src="docs/screenshots/wizard-test.png" alt="Test de lecture" /> | <img src="docs/screenshots/wizard-watchlist.png" alt="Qui surveiller" /> |
+| **Test** — Trame vérifie qu'il sait lire et écrire | **Qui surveiller** — recherche et filtres, même avec des centaines de conversations |
+| <img src="docs/screenshots/wizard-modes.png" alt="Brouillon ou auto" /> | <img src="docs/screenshots/wizard-persona.png" alt="Ta voix" /> |
+| **Brouillon ou auto** — par conversation | **Ta voix** — dépose ton `SOUL.md` |
+
+### Au quotidien
+
+| | |
+|:-:|:-:|
+| <img src="docs/screenshots/brouillons.png" alt="Brouillons" /> | <img src="docs/screenshots/watchlist.png" alt="Watchlist" /> |
+| **Brouillons** — relire, modifier, envoyer ou ouvrir dans Teams | **Watchlist** — qui surveiller, et comment |
+| <img src="docs/screenshots/journal.png" alt="Journal" /> | <img src="docs/screenshots/reglages.png" alt="Réglages" /> |
+| **Journal** — tout ce que Trame a lu, proposé et envoyé | **Réglages** — cerveau, démarrage, GitHub, sécurité |
+
+<p align="center">
+  <img src="docs/screenshots/logo-animation.png" width="560" alt="Le logo se dessine au démarrage" /><br/>
+  <sub>Au démarrage, le fil du logo écrit le T de Trame pendant que le moteur se lance.</sub>
+</p>
+
+## Fonctionnalités
+
+- **Veille ciblée** : seulement les conversations que tu coches — messages privés, groupes, canaux. Dans un groupe ou un canal, Trame ne réagit que si l'on te mentionne, ou une personne que tu as nommée.
+- **Deux modes par conversation** : *Brouillon* (tu valides) ou *Auto* (envoi après un compte à rebours de 3, 5 ou 10 s, annulable par la pause).
+- **Brouillons éditables** : tu modifies le texte avant l'envoi, ou tu l'ouvres directement dans Teams pour le terminer toi-même.
+- **Rattrapage** : en un clic, les messages non lus deviennent des brouillons — jamais d'envoi automatique en rafale.
+- **Contexte GitHub** (lecture seule) : quand un message parle d'une PR ou d'une issue, Trame consulte tes dépôts pour répondre juste. Il n'écrit jamais sur GitHub.
+- **Application de bureau discrète** : icône dans la barre des tâches, démarrage avec Windows, fermer la fenêtre la réduit, instance unique, taille et position mémorisées.
+
+## Sécurité
+
+- **Jamais dans la mauvaise conversation.** Avant de taper quoi que ce soit, Trame ouvre la conversation visée et vérifie qu'elle est bien active ; s'il a le moindre doute, il refuse et garde le brouillon.
+- **Pause automatique pendant un partage d'écran**, pour qu'aucune réponse ne s'affiche devant toute une réunion.
+- **Mots bloquants** : si un message ou une réponse contient un terme sensible (RH, salaire, confidentiel…), l'envoi automatique repasse en brouillon.
+- **Auto-test au démarrage** : si Trame n'arrive pas à repérer les éléments de Teams, tout l'envoi automatique est suspendu.
+- **Ce qui sort de ton poste** : le contenu des messages traités est envoyé au cerveau que tu as choisi (Claude ou GitHub Copilot) pour rédiger la réponse. Rien d'autre ne quitte la machine. La configuration est stockée dans `%APPDATA%\Trame`.
+
+## Installer
+
+1. Télécharge l'installeur Windows (`.msi` ou `.exe`) depuis le dernier build : onglet **Actions** › *Build desktop (Windows)* › artefact **trame-windows**.
+2. Vérifie que la commande `claude` (Claude Code) est installée et connectée sur le poste — ou `gh` avec Copilot si tu choisis ce cerveau.
+3. Ouvre Teams, lance Trame et laisse-toi guider.
+
+## Comment c'est construit
+
+```mermaid
+flowchart LR
+  UI["Interface<br/>Tauri · React · shadcn/ui"] -- "WebSocket + REST<br/>127.0.0.1:8731" --> Engine["Moteur Python<br/>veille · règles · sécurité"]
+  Engine -- "UI Automation" --> Teams["Microsoft Teams<br/>(ta session)"]
+  Engine -- "rédaction" --> Brain["Claude Code<br/>ou GitHub Copilot"]
+  Engine -. "lecture seule" .-> GitHub["gh"]
 ```
-UI (Tauri + React/shadcn)  ──WebSocket/REST :8731──►  Backend (Python)
-  wizard + panneau                                      watcher + UIA Teams
-  fenêtre sans cadre                                    ↓
-                                                        Cerveau : claude -p / gh copilot
-```
 
-- **`backend/`** — watcher Python : détection, déclencheurs, modes, sécurité,
-  cerveau commutable, API locale (FastAPI + WebSocket). Driver Teams commutable :
-  `mock` (tout OS, dev) / `windows_uia` (réel, Windows — à caler, cf. DESIGN §9).
-- **`ui/`** — front React + Vite + Tailwind + shadcn/ui ; `src-tauri/` l'empaquette
-  en app desktop (fenêtre sans cadre + backend en sidecar).
-- **`DESIGN.md`** — spéc gelée et registre des décisions.
-- **`SOUL.md`** — persona (placeholder ; se dépose via l'appli).
+| Dossier | Rôle |
+|---|---|
+| `ui/` | Interface React (Vite, Tailwind v4, shadcn/ui, Motion) |
+| `ui/src-tauri/` | Application Windows : fenêtre, barre des tâches, démarrage auto, moteur embarqué |
+| `backend/` | Moteur : veille, règles de déclenchement, file de brouillons, API locale |
+| `backend/drivers/` | Pilotage de Teams : `windows_uia` (réel) et `mock` (développement) |
+| `tools/probe-teams.ps1` | Sonde UIA à lancer sur un poste avec Teams |
+| `DESIGN.md` | Spécification et registre des décisions |
 
-## Lancer en dev (ici, driver simulé)
+## Développer
 
-Backend :
+Moteur (driver simulé, utilisable sur n'importe quel OS) :
+
 ```bash
-cd backend && python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-TRAME_DRIVER=mock python run.py        # API sur 127.0.0.1:8731
+cd backend
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q tests
+TRAME_DRIVER=mock python run.py          # API sur 127.0.0.1:8731
 ```
 
-UI :
+Interface :
+
 ```bash
-cd ui && npm install && npm run dev     # http://localhost:5173
+cd ui
+npm install
+npm run dev                              # http://localhost:5173
+npm run tauri dev                        # application de bureau (Windows, Rust requis)
 ```
 
-L'UI se connecte au backend en WebSocket ; sans backend, elle retombe sur des
-données simulées. En l'état, le panneau affiche de vrais brouillons rédigés par
-`claude -p`.
+Sans moteur, l'interface fonctionne avec des données d'exemple. Le build de l'installeur Windows tourne dans GitHub Actions (`build.yml`, sur tag `v*` ou à la demande) ; voir `ui/src-tauri/README.md`.
 
-## Empaqueter (poste Windows)
+## État du projet
 
-Voir `ui/src-tauri/README.md` : Rust + Tauri CLI, backend en sidecar (PyInstaller),
-`npm run tauri build`. Non compilé dans l'environnement de dev (pas de Rust).
-
-## Reste à faire
-
-- Sonde UIA réelle sur le poste (phase 0, le seul go/no-go) — `backend/drivers/windows_uia.py`.
-- Build Tauri sur le poste.
+Le moteur, l'interface et l'application de bureau sont complets, testés (35 tests backend, CI verte) et le build Windows produit un installeur. Le pilotage réel de Teams (`backend/drivers/windows_uia.py`) doit encore être **calibré sur un poste Windows** : la nouvelle version de Teams change ses éléments d'interface d'une mise à jour à l'autre. La procédure est décrite dans [`docs/SONDE-UIA.md`](docs/SONDE-UIA.md). En attendant, toute étape incertaine échoue du côté sûr : Trame refuse d'écrire plutôt que de risquer la mauvaise conversation.

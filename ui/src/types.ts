@@ -27,3 +27,24 @@ export interface LogItem {
   level: "info" | "warn" | "sent" | "draft";
   text: string;
 }
+
+export type Brain = "claude" | "copilot";
+
+export interface Settings {
+  onboarded: boolean;
+  brain: Brain;
+  github: { enabled: boolean; allRepos: boolean };
+  safety: {
+    autoPauseOnScreenShare: boolean;
+    selftestGate: boolean;
+    countdownSeconds: number;
+    neverAutoSendIfMessageContains: string[];
+  };
+}
+
+export interface SettingsPatch {
+  onboarded?: boolean;
+  brain?: Brain;
+  github?: Partial<Settings["github"]>;
+  safety?: Partial<Settings["safety"]>;
+}

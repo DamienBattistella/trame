@@ -1,4 +1,5 @@
 {
+  "onboarded": false,
   "brain": {
     "provider": "claude",
     "_provider_options": [

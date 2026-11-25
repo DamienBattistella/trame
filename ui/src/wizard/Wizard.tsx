@@ -1,12 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { ArrowRight, Check, FileText, GitBranch, Loader2, UploadCloud } from "lucide-react";
+import { ArrowRight, Check, FileText, GitBranch, Loader2, RotateCcw, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
+import { SOUL_MAX_BYTES, Trame } from "@/api";
 import { mockConversations } from "@/mockData";
 import { WatchEntity } from "@/types";
 
@@ -19,25 +20,65 @@ const slide = {
   exit: (dir: number) => ({ x: dir * -48, opacity: 0 }),
 };
 
-export function Wizard({ onFinish }: { onFinish: () => void }) {
+type Soul = { name: string; content: string };
+type StepId = "settings" | "watchlist" | "soul";
+type ActivationStep = { id: StepId; label: string; status: Status };
+
+export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: () => void; onFinish: () => void }) {
+  const { connected } = trame;
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
-  const [brain, setBrain] = useState<BrainId>("claude");
+  const [brain, setBrain] = useState<BrainId>(trame.state.brain);
   const [probe, setProbe] = useState<"idle" | "running" | "ok">("idle");
   const [probeDone, setProbeDone] = useState(0);
-  const [convs, setConvs] = useState<WatchEntity[]>(mockConversations);
+  const source = connected ? trame.state.watchlist : mockConversations;
+  const [convs, setConvs] = useState<WatchEntity[]>(source);
+  const touched = useRef(false);
   const [github, setGithub] = useState(true);
-  const [activation, setActivation] = useState<"idle" | "run" | "ok">("idle");
+  const [soul, setSoul] = useState<Soul | null>(null);
+  const [activation, setActivation] = useState<"idle" | "run" | "ok" | "error">("idle");
+  const [steps, setSteps] = useState<ActivationStep[]>([]);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const activateCtl = useAnimationControls();
 
+  // Tant que l'utilisateur n'a rien coché, on suit la watchlist réelle du moteur.
+  useEffect(() => {
+    if (!touched.current) setConvs(source);
+  }, [source]);
+
+  useEffect(() => {
+    if (!connected) return;
+    let live = true;
+    trame.getSettings().then((res) => {
+      if (!live || !res.ok || touched.current) return;
+      setBrain(res.settings.brain);
+      setGithub(res.settings.github.enabled);
+    });
+    return () => {
+      live = false;
+    };
+  }, [connected]);
+
+  const edit = (fn: (cs: WatchEntity[]) => WatchEntity[]) => {
+    touched.current = true;
+    setConvs(fn);
+  };
   const watched = convs.filter((c) => c.watch);
-  const toggleWatch = (id: string) =>
-    setConvs((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: !c.watch } : c)));
+  const toggleWatch = (id: string) => edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: !c.watch } : c)));
   const setWatchMany = (ids: string[], watch: boolean) => {
     const set = new Set(ids);
-    setConvs((cs) => cs.map((c) => (set.has(c.threadId) ? { ...c, watch } : c)));
+    edit((cs) => cs.map((c) => (set.has(c.threadId) ? { ...c, watch } : c)));
   };
   const setMode = (id: string, mode: "draft" | "auto") =>
-    setConvs((cs) => cs.map((c) => (c.threadId === id ? { ...c, mode } : c)));
+    edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, mode } : c)));
+  const pickBrain = (b: BrainId) => {
+    touched.current = true;
+    setBrain(b);
+  };
+  const pickGithub = (v: boolean) => {
+    touched.current = true;
+    setGithub(v);
+  };
 
   const runProbe = () => {
     setProbe("running");
@@ -51,17 +92,57 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
   };
 
   const go = (delta: number) => {
+    if (activation === "error") {
+      setActivation("idle");
+      setSteps([]);
+      setActivationError(null);
+    }
     setDir(delta);
     setStep((n) => Math.min(TOTAL - 1, Math.max(0, n + delta)));
   };
 
-  const activate = () => {
-    setActivation("run");
-    setTimeout(() => setActivation("ok"), 900);
-    setTimeout(onFinish, 1500);
+  const plan = (): ActivationStep[] => [
+    { id: "settings", label: "Réglages enregistrés", status: "idle" },
+    { id: "watchlist", label: `${watched.length} conversation${watched.length > 1 ? "s" : ""} sous surveillance`, status: "idle" },
+    ...(soul ? [{ id: "soul" as const, label: `Ta voix importée (${soul.name})`, status: "idle" as Status }] : []),
+  ];
+
+  const runStep = async (id: StepId) => {
+    if (id === "settings") {
+      const cur = await trame.getSettings();
+      if (!cur.ok) return cur;
+      return trame.updateSettings({ brain, github: { ...cur.settings.github, enabled: github }, onboarded: true });
+    }
+    if (id === "watchlist") return trame.saveWatchlist(convs.map(({ threadId, watch, mode }) => ({ threadId, watch, mode })));
+    return trame.uploadSoul(soul!.name, soul!.content);
   };
 
-  const canContinue = (step !== 2 || probe === "ok") && activation === "idle";
+  /** Enchaîne les étapes ; une étape déjà réussie n'est pas rejouée au « Réessayer ». */
+  const activate = async () => {
+    onStart?.();
+    const todo = activation === "error" ? steps : plan();
+    setSteps(todo);
+    setActivation("run");
+    setActivationError(null);
+    for (const st of todo) {
+      if (st.status === "ok") continue;
+      const set = (status: Status) => setSteps((all) => all.map((x) => (x.id === st.id ? { ...x, status } : x)));
+      set("run");
+      const res = await runStep(st.id);
+      if (!res.ok) {
+        set("error");
+        setActivation("error");
+        setActivationError(res.error);
+        activateCtl.start(shake);
+        return;
+      }
+      set("ok");
+    }
+    setActivation("ok");
+    setTimeout(onFinish, 700);
+  };
+
+  const canContinue = (step !== 2 || probe === "ok") && (activation === "idle" || activation === "error");
   const last = step === TOTAL - 1;
 
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
@@ -82,7 +163,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
     {
       title: "Choisis le cerveau",
       sub: "Qui rédige tes réponses. Modifiable à tout moment.",
-      body: <BrainPicker value={brain} onChange={setBrain} />,
+      body: <BrainPicker value={brain} onChange={pickBrain} />,
     },
     {
       title: "Un petit test",
@@ -164,7 +245,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
     {
       title: "Ta voix",
       sub: "Dépose ton SOUL.md — ta façon d'écrire, ton rôle, ce que Trame refuse. Ou plus tard.",
-      body: <SoulDrop />,
+      body: <SoulDrop value={soul} onChange={setSoul} />,
     },
     {
       title: "Contexte GitHub",
@@ -174,7 +255,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
           <div className="flex items-center gap-3 px-4 py-3.5">
             <GitBranch className={cn("size-5 transition-colors", github ? "text-primary" : "text-muted-foreground")} />
             <span className="flex-1">Activer le contexte GitHub</span>
-            <Switch checked={github} onCheckedChange={setGithub} />
+            <Switch checked={github} onCheckedChange={pickGithub} />
           </div>
         </GroupList>
       ),
@@ -183,25 +264,73 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       title: "Tout est prêt",
       sub: "Trame veille sur tes conversations et te propose des réponses. Tu gardes la main.",
       body: (
-        <GroupList>
-          {[
-            ["Cerveau", brain === "claude" ? "Claude" : "Copilot"],
-            ["Surveillées", `${watched.length}`],
-            ["En auto", `${watched.filter((c) => c.mode === "auto").length}`],
-            ["GitHub", github ? "Activé" : "Désactivé"],
-          ].map(([label, value], i) => (
-            <motion.div
-              key={label}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 + i * 0.07 }}
-              className="flex items-center justify-between px-4 py-3"
-            >
-              <span className="text-muted-foreground">{label}</span>
-              <span className="font-medium">{value}</span>
-            </motion.div>
-          ))}
-        </GroupList>
+        <div className="flex w-full flex-col gap-3">
+          <GroupList>
+            {[
+              ["Cerveau", brain === "claude" ? "Claude" : "Copilot"],
+              ["Surveillées", `${watched.length}`],
+              ["En auto", `${watched.filter((c) => c.mode === "auto").length}`],
+              ["GitHub", github ? "Activé" : "Désactivé"],
+              ["Ta voix", soul ? soul.name : "Plus tard"],
+            ].map(([label, value], i) => (
+              <motion.div
+                key={label}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 + i * 0.07 }}
+                className="flex items-center justify-between px-4 py-3"
+              >
+                <span className="text-muted-foreground">{label}</span>
+                <span className="truncate pl-4 font-medium">{value}</span>
+              </motion.div>
+            ))}
+          </GroupList>
+          <AnimatePresence initial={false}>
+            {steps.length > 0 && (
+              <motion.div
+                key="activation"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <motion.div animate={activateCtl}>
+                  <GroupList>
+                    {steps.map((st) => (
+                      <div key={st.id} className="flex items-center gap-3 px-4 py-3">
+                        <StatusDot status={st.status} />
+                        <span
+                          className={cn(
+                            "flex-1 transition-colors duration-300",
+                            st.status === "idle" && "text-muted-foreground",
+                            st.status === "error" && "text-destructive"
+                          )}
+                        >
+                          {st.label}
+                        </span>
+                      </div>
+                    ))}
+                    <AnimatePresence initial={false}>
+                      {activationError && (
+                        <motion.div
+                          key="err"
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-4 py-3 text-sm text-destructive">
+                            {activationError} Rien n'est perdu : tes choix sont gardés, tu peux réessayer.
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </GroupList>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       ),
     },
   ];
@@ -259,6 +388,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
                 {last && activation === "idle" && "Activer Trame"}
                 {last && activation === "run" && <><Loader2 className="size-4 animate-spin" /> Activation…</>}
                 {last && activation === "ok" && <><Check className="size-4" strokeWidth={3} /> C'est parti</>}
+                {last && activation === "error" && <><RotateCcw className="size-4" /> Réessayer</>}
               </motion.span>
             </AnimatePresence>
           </Button>
@@ -277,7 +407,7 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
 
         <button
           onClick={() => go(-1)}
-          className={cn("text-sm text-muted-foreground transition-opacity hover:text-foreground", (step === 0 || activation !== "idle") && "pointer-events-none opacity-0")}
+          className={cn("text-sm text-muted-foreground transition-opacity hover:text-foreground", (step === 0 || activation === "run" || activation === "ok") && "pointer-events-none opacity-0")}
         >
           Retour
         </button>
@@ -286,21 +416,24 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
   );
 }
 
-function SoulDrop() {
-  const [state, setState] = useState<"idle" | "drag" | "ok" | "error">("idle");
-  const [file, setFile] = useState<{ name: string; lines: number } | null>(null);
+function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul) => void }) {
+  const [state, setState] = useState<"idle" | "drag" | "ok" | "error">(value ? "ok" : "idle");
+  const [error, setError] = useState("");
+  const file = value ? { name: value.name, lines: value.content.split("\n").length } : null;
   const input = useRef<HTMLInputElement>(null);
   const controls = useAnimationControls();
 
+  const reject = (msg: string) => {
+    setError(msg);
+    setState("error");
+    controls.start(shake);
+  };
+
   const accept = async (f: File | undefined) => {
     if (!f) return;
-    if (!/\.(md|txt)$/i.test(f.name)) {
-      setState("error");
-      controls.start(shake);
-      return;
-    }
-    const text = await f.text();
-    setFile({ name: f.name, lines: text.split("\n").length });
+    if (!/\.(md|txt)$/i.test(f.name)) return reject("Seuls les fichiers .md ou .txt sont acceptés");
+    if (f.size > SOUL_MAX_BYTES) return reject("Fichier trop lourd : 64 Ko maximum");
+    onChange({ name: f.name, content: await f.text() });
     setState("ok");
   };
 
@@ -348,7 +481,7 @@ function SoulDrop() {
                 <UploadCloud className={cn("size-7", state === "drag" && "text-primary")} />
               </motion.span>
               <span className="text-sm">
-                {state === "drag" ? "Lâche pour déposer" : state === "error" ? "Seuls les fichiers .md ou .txt sont acceptés" : "Glisse ton SOUL.md ici ou clique pour choisir"}
+                {state === "drag" ? "Lâche pour déposer" : state === "error" ? error : "Glisse ton SOUL.md ici ou clique pour choisir"}
               </span>
             </motion.div>
           )}

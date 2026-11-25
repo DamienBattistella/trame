@@ -1,0 +1,278 @@
+from __future__ import annotations
+import json
+
+from conftest import FakeBrain, RefusingDriver
+from models import IncomingMessage, Surface, WatchEntity
+
+DM_DRAFT = "19:bb22@thread.v2"
+DM_AUTO = "19:aa11@thread.v2"
+
+
+def _msg(thread_id: str, text: str = "Salut, tu as un moment ?", mentions=None, surface=Surface.dm):
+    return IncomingMessage(thread_id=thread_id, sender="Quelqu'un", text=text, received_at="10:00", surface=surface, mentions=mentions or [])
+
+
+def _queue(watcher, thread_id=DM_DRAFT, text="Salut, tu as un moment ?"):
+    assert watcher._process(_msg(thread_id, text), force_draft=True) == "draft"
+    return next(d for d in watcher.state.drafts if d.thread_id == thread_id)
+
+
+def test_one_draft_per_thread(make_client):
+    _client, watcher, _driver = make_client()
+    watcher._process(_msg(DM_DRAFT, "premier"))
+    watcher._process(_msg(DM_DRAFT, "second"))
+    drafts = [d for d in watcher.state.drafts if d.thread_id == DM_DRAFT]
+    assert len(drafts) == 1 and drafts[0].incoming == "second"
+
+
+def test_unwatched_and_group_without_mention_ignored(make_client):
+    _client, watcher, _driver = make_client()
+    assert watcher._process(_msg("19:dd44@thread.v2", surface=Surface.channel)) is None
+    assert watcher._process(_msg("19:cc33@thread.v2", surface=Surface.group)) is None
+    assert watcher._process(_msg("19:cc33@thread.v2", mentions=["Damien"], surface=Surface.group)) == "draft"
+
+
+def test_send_uses_edited_text(make_client):
+    client, watcher, driver = make_client()
+    d = _queue(watcher)
+    r = client.post(f"/api/drafts/{d.id}/send", json={"text": "  Texte modifié  "})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert driver.typed == [(DM_DRAFT, "Texte modifié", True)]
+    assert all(x.id != d.id for x in watcher.state.drafts)
+
+
+def test_send_without_body_uses_proposal(make_client):
+    client, watcher, driver = make_client()
+    d = _queue(watcher)
+    assert client.post(f"/api/drafts/{d.id}/send").json() == {"ok": True}
+    assert driver.typed == [(DM_DRAFT, "Réponse de test", True)]
+
+
+def test_send_blank_text_falls_back_to_proposal(make_client):
+    client, watcher, driver = make_client()
+    d = _queue(watcher)
+    assert client.post(f"/api/drafts/{d.id}/send", json={"text": "   "}).status_code == 200
+    assert driver.typed[0][1] == "Réponse de test"
+
+
+def test_send_unknown_draft(make_client):
+    client, _watcher, _driver = make_client()
+    r = client.post("/api/drafts/nope/send", json={"text": "x"})
+    assert r.status_code == 404 and r.json()["ok"] is False and r.json()["error"]
+
+
+def test_send_refused_when_thread_not_confirmed(make_client):
+    client, watcher, driver = make_client(driver=RefusingDriver(interval=9999))
+    d = _queue(watcher)
+    r = client.post(f"/api/drafts/{d.id}/send", json={"text": "Version éditée"})
+    assert r.status_code == 409 and r.json()["ok"] is False
+    assert driver.typed == []
+    kept = next(x for x in watcher.state.drafts if x.id == d.id)
+    assert kept.proposal == "Version éditée"
+    assert watcher.state.logs[0].level == "warn"
+
+
+def test_type_reply_guard_on_mock():
+    from drivers.mock import MockTeamsDriver
+    driver = MockTeamsDriver(interval=9999)
+    assert driver.type_reply("19:inconnu@thread.v2", "x", send=True) is False
+    assert driver.typed == []
+    driver.active_thread = DM_DRAFT
+    assert driver._type_into_active(DM_AUTO, "x", send=True) is False
+    assert driver.type_reply(DM_AUTO, "x", send=True) is True
+    assert driver.active_thread == DM_AUTO
+
+
+def test_auto_send_and_refusal(make_client):
+    _client, watcher, driver = make_client()
+    assert watcher._process(_msg(DM_AUTO)) == "sent"
+    assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
+
+    _client2, watcher2, driver2 = make_client(driver=RefusingDriver(interval=9999))
+    assert watcher2._process(_msg(DM_AUTO)) == "draft"
+    assert driver2.typed == []
+    assert any(d.thread_id == DM_AUTO for d in watcher2.state.drafts)
+
+
+def test_auto_forced_to_draft_by_filter_on_incoming(make_client):
+    _client, watcher, driver = make_client()
+    assert watcher._process(_msg(DM_AUTO, "Question sur mon salaire")) == "draft"
+    assert driver.typed == []
+
+
+def test_compose_types_without_sending(make_client):
+    client, watcher, driver = make_client()
+    d = _queue(watcher)
+    r = client.post(f"/api/drafts/{d.id}/compose", json={"text": "À finir dans Teams"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert driver.typed == [(DM_DRAFT, "À finir dans Teams", False)]
+    assert any(x.id == d.id for x in watcher.state.drafts)
+
+
+def test_compose_refused(make_client):
+    client, watcher, driver = make_client(driver=RefusingDriver(interval=9999))
+    d = _queue(watcher)
+    r = client.post(f"/api/drafts/{d.id}/compose")
+    assert r.status_code == 409 and r.json()["ok"] is False
+    assert driver.typed == []
+
+
+def test_catchup_forces_draft_mode(make_client):
+    client, watcher, driver = make_client()
+    r = client.post("/api/catchup")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["queued"] == 3
+    assert driver.typed == []
+    threads = {d.thread_id for d in watcher.state.drafts}
+    assert threads == {DM_AUTO, DM_DRAFT, "19:cc33@thread.v2"}
+    assert next(d for d in watcher.state.drafts if d.thread_id == DM_AUTO).mode == "auto"
+
+
+def test_catchup_respects_pause(make_client):
+    client, watcher, _driver = make_client()
+    client.post("/api/pause", json={"paused": True})
+    r = client.post("/api/catchup")
+    assert r.status_code == 409 and r.json()["ok"] is False
+    assert watcher.state.drafts == []
+
+
+def test_settings_get(make_client):
+    client, _watcher, _driver = make_client()
+    r = client.get("/api/settings").json()
+    assert r["ok"] is True
+    assert r["settings"] == {
+        "onboarded": False,
+        "brain": "claude",
+        "github": {"enabled": True, "all_repos": True},
+        "safety": {
+            "auto_pause_on_screen_share": True,
+            "selftest_gate": True,
+            "countdown_seconds": 0,
+            "never_auto_send_if_message_contains": ["mot de passe", "confidentiel", "RH", "salaire"],
+        },
+    }
+
+
+def test_settings_put_partial_hot_swap_and_persist(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    old_brain = watcher.brain
+    r = client.put("/api/settings", json={"brain": "copilot", "safety": {"countdown_seconds": 12}, "github": {"all_repos": False}})
+    assert r.status_code == 200
+    s = r.json()["settings"]
+    assert s["brain"] == "copilot" and s["safety"]["countdown_seconds"] == 12
+    assert s["safety"]["auto_pause_on_screen_share"] is True
+    assert s["github"] == {"enabled": True, "all_repos": False}
+    assert watcher.brain is not old_brain and isinstance(watcher.brain, FakeBrain) and watcher.brain.name == "copilot"
+    assert watcher.state.brain == "copilot"
+    assert watcher.cfg["reply"]["auto_send_countdown_seconds"] == 12
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["brain"]["provider"] == "copilot"
+    assert saved["brain"]["claude"]["command"] == "claude"
+    assert saved["reply"]["auto_send_countdown_seconds"] == 12
+    assert saved["context"]["github"]["repos"] == "allowlist"
+    assert client.get("/api/state").json()["brain"] == "copilot"
+
+
+def test_settings_put_same_brain_keeps_instance(make_client):
+    client, watcher, _driver = make_client()
+    old_brain = watcher.brain
+    client.put("/api/settings", json={"brain": "claude"})
+    assert watcher.brain is old_brain
+
+
+def test_settings_validation_errors(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    before = (fresh_home / "config.json").read_text(encoding="utf-8")
+    for body in (
+        {"safety": {"countdown_seconds": 61}},
+        {"safety": {"countdown_seconds": -1}},
+        {"brain": "gpt"},
+        {"inconnu": True},
+        {"safety": {"selftest_gate": "peut-être"}},
+    ):
+        r = client.put("/api/settings", json=body)
+        assert r.status_code == 422, body
+        assert r.json()["ok"] is False and r.json()["error"]
+    assert (fresh_home / "config.json").read_text(encoding="utf-8") == before
+    assert watcher.state.brain == "claude"
+
+
+def test_safety_settings_apply_live(make_client):
+    client, watcher, driver = make_client()
+    client.put("/api/settings", json={"safety": {"never_auto_send_if_message_contains": ["build"]}})
+    assert watcher._process(_msg(DM_AUTO, "Le build passe ?")) == "draft"
+    assert driver.typed == []
+
+
+def test_onboarded_in_state_and_persisted(make_client):
+    client, watcher, _driver = make_client()
+    assert client.get("/api/state").json()["onboarded"] is False
+    client.put("/api/settings", json={"onboarded": True})
+    assert client.get("/api/state").json()["onboarded"] is True
+    client2, _w2, _d2 = make_client()
+    assert client2.get("/api/state").json()["onboarded"] is True
+    assert client2.get("/api/settings").json()["settings"]["onboarded"] is True
+
+
+def test_state_keeps_alias_serialization(make_client):
+    client, watcher, _driver = make_client()
+    _queue(watcher)
+    state = client.get("/api/state").json()
+    assert "from" in state["drafts"][0] and "from_" not in state["drafts"][0]
+
+
+def test_watchlist_bulk(make_client, fresh_home):
+    client, watcher, driver = make_client()
+    driver._convs.append(WatchEntity(thread_id="19:ff66@thread.v2", display_name="Nouveau fil", surface=Surface.group))
+    r = client.put("/api/watchlist", json=[
+        {"thread_id": "19:dd44@thread.v2", "watch": True, "mode": "auto"},
+        {"thread_id": "19:ff66@thread.v2", "watch": True, "mode": "draft"},
+        {"thread_id": "19:inconnu@thread.v2", "watch": True, "mode": "auto"},
+    ])
+    assert r.status_code == 200 and r.json() == {"ok": True, "count": 2}
+    by_id = {w.thread_id: w for w in watcher.state.watchlist}
+    assert by_id["19:dd44@thread.v2"].watch and by_id["19:dd44@thread.v2"].mode == "auto"
+    assert by_id["19:ff66@thread.v2"].display_name == "Nouveau fil" and by_id["19:ff66@thread.v2"].watch
+    assert "19:inconnu@thread.v2" not in by_id
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert {w["thread_id"] for w in saved["watchlist"]} >= {"19:dd44@thread.v2", "19:ff66@thread.v2"}
+
+
+def test_watchlist_bulk_validation(make_client):
+    client, _watcher, _driver = make_client()
+    r = client.put("/api/watchlist", json=[{"thread_id": "19:aa11@thread.v2", "mode": "turbo"}])
+    assert r.status_code == 422 and r.json()["ok"] is False
+
+
+def test_per_thread_endpoints_still_work(make_client):
+    client, watcher, _driver = make_client()
+    assert client.post("/api/watch/19:ee55@thread.v2", json={"watch": True}).json() == {"ok": True}
+    assert client.post("/api/mode/19:ee55@thread.v2", json={"mode": "auto"}).json() == {"ok": True}
+    e = next(w for w in watcher.state.watchlist if w.thread_id == "19:ee55@thread.v2")
+    assert e.watch and e.mode == "auto"
+
+
+def test_soul_upload(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    r = client.post("/api/soul", json={"filename": "moi.md", "content": "# Moi\nTon direct."})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert (fresh_home / "SOUL.md").read_text(encoding="utf-8") == "# Moi\nTon direct."
+    assert watcher.soul == "# Moi\nTon direct."
+
+
+def test_soul_upload_validation(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    before = watcher.soul
+    cases = [
+        ({"filename": "moi.pdf", "content": "x"}, 422),
+        ({"filename": "moi.md", "content": "   "}, 422),
+        ({"filename": "moi.txt", "content": "é" * (40 * 1024)}, 413),
+        ({"filename": "moi.md"}, 422),
+    ]
+    for body, status in cases:
+        r = client.post("/api/soul", json=body)
+        assert r.status_code == status, body
+        assert r.json()["ok"] is False and r.json()["error"]
+    assert watcher.soul == before
+    assert (fresh_home / "SOUL.md").read_text(encoding="utf-8") == before

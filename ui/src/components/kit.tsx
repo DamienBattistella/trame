@@ -42,33 +42,40 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-2 ml-1 text-sm font-medium text-muted-foreground">{children}</h2>;
 }
 
-/** Brouillon / Auto : le curseur glisse sous l'option choisie. */
-export function Segment({
+const MODE_OPTIONS = [
+  { value: "draft", label: "Brouillon" },
+  { value: "auto", label: "Auto" },
+] as const;
+
+/** Choix segmenté (Brouillon / Auto par défaut) : le curseur glisse sous l'option choisie. */
+export function Segment<T extends string = "draft" | "auto">({
   value,
   onChange,
   disabled,
+  options = MODE_OPTIONS as unknown as readonly { value: T; label: string }[],
 }: {
-  value: "draft" | "auto";
-  onChange: (v: "draft" | "auto") => void;
+  value: T;
+  onChange: (v: T) => void;
   disabled?: boolean;
+  options?: readonly { value: T; label: string }[];
 }) {
   const id = useId();
   return (
     <div className={cn("flex rounded-full bg-secondary p-0.5 text-xs font-medium transition-opacity", disabled && "opacity-40")}>
-      {(["draft", "auto"] as const).map((v) => (
+      {options.map((o) => (
         <button
-          key={v}
+          key={o.value}
           disabled={disabled}
-          onClick={() => onChange(v)}
+          onClick={() => onChange(o.value)}
           className={cn(
             "relative rounded-full px-3 py-1 transition-colors",
-            value === v ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+            value === o.value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          {value === v && (
+          {value === o.value && (
             <motion.span layoutId={`segment-${id}`} transition={spring} className="absolute inset-0 rounded-full bg-background shadow-sm" />
           )}
-          <span className="relative">{v === "draft" ? "Brouillon" : "Auto"}</span>
+          <span className="relative">{o.label}</span>
         </button>
       ))}
     </div>

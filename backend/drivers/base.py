@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 from models import IncomingMessage, WatchEntity
 
 
@@ -25,8 +25,24 @@ class TeamsDriver(ABC):
         """Read the last N messages of a thread (sender carried forward across runs)."""
 
     @abstractmethod
-    def type_reply(self, thread_id: str, text: str, send: bool) -> None:
-        """Focus the compose box of thread_id, type text; send=True also presses Enter."""
+    def open_thread(self, thread_id: str) -> bool:
+        """Make thread_id the active conversation. True only once it is confirmed active."""
+
+    @abstractmethod
+    def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
+        """Type into the compose box of the active conversation, which must still be
+        thread_id (re-checked by the driver). False if it cannot confirm it."""
+
+    def type_reply(self, thread_id: str, text: str, send: bool) -> bool:
+        """Open thread_id, then type text (send=True also presses Enter). Refuses (False)
+        whenever the target conversation cannot be confirmed: never types blind."""
+        if not self.open_thread(thread_id):
+            return False
+        return self._type_into_active(thread_id, text, send)
+
+    @abstractmethod
+    def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
+        """Unread incoming messages, optionally restricted to thread_ids (catch-up)."""
 
     @abstractmethod
     def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:

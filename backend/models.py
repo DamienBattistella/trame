@@ -1,7 +1,7 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Surface(str, Enum):
@@ -42,8 +42,7 @@ class Draft(BaseModel):
     mode: Mode
     used_github: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class LogItem(BaseModel):
@@ -53,6 +52,7 @@ class LogItem(BaseModel):
 
 
 class AppState(BaseModel):
+    onboarded: bool = False
     paused: bool = False
     screen_sharing: bool = False
     brain: Literal["claude", "copilot"] = "claude"
