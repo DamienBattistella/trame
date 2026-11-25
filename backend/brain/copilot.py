@@ -1,6 +1,9 @@
 from __future__ import annotations
 import subprocess
 from brain.base import Brain, build_prompt
+from brain.isolation import sandbox_dir
+
+DEFAULT_ARGS = ["copilot", "--", "-p"]
 
 
 class CopilotBrain(Brain):
@@ -9,7 +12,9 @@ class CopilotBrain(Brain):
 
     def __init__(self, command: str = "gh", args: list[str] | None = None, timeout: float = 60.0):
         self.command = command
-        self.args = args or ["copilot", "-p"]
+        # `gh copilot suggest` (old extension) is an interactive shell-command helper that
+        # hangs until the timeout: older configs carrying it get the non-interactive form.
+        self.args = list(args) if args and "suggest" not in args else list(DEFAULT_ARGS)
         self.timeout = timeout
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
@@ -19,6 +24,8 @@ class CopilotBrain(Brain):
         proc = subprocess.run(
             [self.command, *self.args, prompt],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
+            cwd=sandbox_dir(),
             text=True,
             timeout=timeout or self.timeout,
         )

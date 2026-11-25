@@ -162,7 +162,7 @@ def _lookup(repo: str, num: int) -> Optional[GithubHit]:
 
 def _search(kind: str, query: str, filters: list[str], limit: int) -> list[GithubHit]:
     fields = "sha,commit,repository,url" if kind == "commits" else _SEARCH_FIELDS
-    data = _json(_gh(["search", kind, query, *filters, "--limit", str(limit), "--json", fields], timeout=CALL_TIMEOUT))
+    data = _json(_gh(["search", kind, *filters, "--limit", str(limit), "--json", fields, "--", query], timeout=CALL_TIMEOUT))
     if not isinstance(data, list):
         return []
     why = f"Recherche « {query} »"

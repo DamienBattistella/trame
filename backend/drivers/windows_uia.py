@@ -91,14 +91,11 @@ class WindowsUIADriver(TeamsDriver):
     def _rail_item_for(self, rail, thread_id: str):
         items = self._rail_items(rail)
         if not thread_id.startswith("name:"):
+            # A real id is matched by id only: the rail is virtualized, and falling back
+            # to the display name could pick another chat with the same name.
             by_id = [i for i in items if thread_id in (getattr(i, "AutomationId", "") or "")]
-            if len(by_id) == 1:
-                return by_id[0]
-            if len(by_id) > 1:
-                return None
-        name = thread_id[5:] if thread_id.startswith("name:") else self._names.get(thread_id)
-        if not name:
-            return None
+            return by_id[0] if len(by_id) == 1 else None
+        name = thread_id[5:]
         by_name = [i for i in items if self._display_name_of(i) == name]
         return by_name[0] if len(by_name) == 1 else None
 
@@ -190,23 +187,72 @@ class WindowsUIADriver(TeamsDriver):
     def _sender_of(self, node) -> Optional[str]:
         return None  # A CALER: read the author sub-node when present.
 
+    # Placeholder Teams shows in an empty compose box (A CALER per language/build).
+    _PLACEHOLDERS = ("", "tapez un message", "type a message", "écrivez un message", "envoyer un message")
+
+    def _compose_text(self, box) -> Optional[str]:
+        """Current content of the compose box, or None when it cannot be read."""
+        for getter in ("GetValuePattern", "GetLegacyIAccessiblePattern"):
+            try:
+                pattern = getattr(box, getter)()
+                if pattern is not None:
+                    return (pattern.Value or "").strip()
+            except Exception:
+                continue
+        return None
+
+    def _keyboard_goes_to(self, win, box) -> bool:
+        """Keystrokes are global: they reach the foreground window. Teams must be the
+        foreground window and its compose box must hold the keyboard focus."""
+        try:
+            import ctypes
+            if ctypes.windll.user32.GetForegroundWindow() != win.NativeWindowHandle:
+                return False
+            focused = self.auto.GetFocusedControl()
+            return focused is not None and focused.GetRuntimeId() == box.GetRuntimeId()
+        except Exception:
+            return False
+
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         win = self._window()
         box = self._find_compose(win)
         if box is None:
             raise RuntimeError("Zone de composition introuvable (sélecteur à caler).")
+        try:
+            win.SetActive()
+        except Exception:
+            pass
         box.SetFocus()
         time.sleep(0.15)
         if not self._is_active(win, thread_id):
             return False
+        existing = self._compose_text(box)
+        if existing is None or existing.lower() not in self._PLACEHOLDERS:
+            # Something is already typed (the user's own words, or an earlier draft):
+            # it would be sent along with the reply. Refuse rather than mix them.
+            return False
+        if not self._keyboard_goes_to(win, box):
+            return False
         # Paste via clipboard: robust for arbitrary text (SendKeys would mangle
         # {}()+^%~). The compose box is a contenteditable, so ValuePattern is
-        # unreliable; keyboard paste is the dependable path.
-        self.auto.SetClipboardText(text)
-        self.auto.SendKeys("{Ctrl}v", waitTime=0.02)
+        # unreliable for writing; keyboard paste is the dependable path.
+        try:
+            saved = self.auto.GetClipboardText()
+        except Exception:
+            saved = None
+        try:
+            self.auto.SetClipboardText(text)
+            self.auto.SendKeys("{Ctrl}v", waitTime=0.02)
+        finally:
+            time.sleep(0.1)
+            if saved is not None:
+                try:
+                    self.auto.SetClipboardText(saved)
+                except Exception:
+                    pass
         if send:
             time.sleep(0.2)
-            if not self._is_active(win, thread_id):
+            if not self._is_active(win, thread_id) or not self._keyboard_goes_to(win, box):
                 return False
             self.auto.SendKeys("{Enter}")  # A CALER: guard the "Enter sends" setting.
         return True

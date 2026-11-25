@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import PurePath
 from typing import Callable, Literal, Optional
@@ -42,6 +43,37 @@ def make_brain(cfg: dict) -> Brain:
         return CopilotBrain(command=c.get("command", "gh"), args=c.get("args"))
     c = cfg.get("brain", {}).get("claude", {})
     return ClaudeBrain(command=c.get("command", "claude"), args=c.get("args"))
+
+
+# Packaged app (Tauri) and the Vite dev / preview servers only.
+ALLOWED_ORIGIN = re.compile(r"^(https?://(localhost|127\.0\.0\.1):(517\d|4173)|tauri://localhost|https?://tauri\.localhost)$")
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "testserver"}
+
+
+class LocalOnly:
+    """The engine listens on loopback, but any web page the user opens can still reach
+    127.0.0.1 (no-cors POSTs, WebSockets, DNS rebinding). Only the Trame UI may talk to
+    it: the Host must be loopback and, when the browser sends an Origin, it must be the
+    Trame UI's. Requests without Origin come from local tools, not from web pages."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+            host = headers.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
+            origin = headers.get("origin")
+            if host not in ALLOWED_HOSTS or (origin is not None and not ALLOWED_ORIGIN.match(origin)):
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                    return
+                body = json.dumps({"ok": False, "error": "Origine non autorisée."}).encode()
+                await send({"type": "http.response.start", "status": 403,
+                            "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
 
 
 class PauseBody(BaseModel):
@@ -103,10 +135,12 @@ def create_app(
     # blocked by CORS in the installed app.
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https?://tauri\.localhost)$",
+        allow_origin_regex=ALLOWED_ORIGIN.pattern,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(LocalOnly)
 
     @app.exception_handler(ActionError)
     async def _action_error(_req: Request, exc: ActionError):
@@ -150,7 +184,7 @@ def create_app(
     @app.put("/api/watchlist")
     def put_watchlist(body: list[WatchlistItem]):
         count = watcher.upsert_watchlist((i.thread_id, i.watch, i.mode) for i in body)
-        return {"ok": True, "count": count}
+        return {"ok": True, "count": count, "missing": list(watcher._last_missing)}
 
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[TextBody] = None):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
 
+import pytest
+
 from conftest import FakeBrain, RefusingDriver
 from models import IncomingMessage, Surface, WatchEntity
 
@@ -231,7 +233,7 @@ def test_watchlist_bulk(make_client, fresh_home):
         {"thread_id": "19:ff66@thread.v2", "watch": True, "mode": "draft"},
         {"thread_id": "19:inconnu@thread.v2", "watch": True, "mode": "auto"},
     ])
-    assert r.status_code == 200 and r.json() == {"ok": True, "count": 2}
+    assert r.status_code == 200 and r.json() == {"ok": True, "count": 2, "missing": ["19:inconnu@thread.v2"]}
     by_id = {w.thread_id: w for w in watcher.state.watchlist}
     assert by_id["19:dd44@thread.v2"].watch and by_id["19:dd44@thread.v2"].mode == "auto"
     assert by_id["19:ff66@thread.v2"].display_name == "Nouveau fil" and by_id["19:ff66@thread.v2"].watch
@@ -277,3 +279,39 @@ def test_soul_upload_validation(make_client, fresh_home):
         assert r.json()["ok"] is False and r.json()["error"]
     assert watcher.soul == before
     assert (fresh_home / "SOUL.md").read_text(encoding="utf-8") == before
+
+
+def test_foreign_web_origin_is_refused(make_client):
+    client, watcher, driver = make_client()
+    draft_id = watcher.state.drafts[0].id if watcher.state.drafts else None
+    r = client.post("/api/pause", json={"paused": True}, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403 and r.json()["ok"] is False and watcher.state.paused is False
+    r = client.post("/api/catchup", headers={"Origin": "http://localhost:3000"})
+    assert r.status_code == 403
+    assert client.get("/api/state", headers={"Origin": "tauri://localhost"}).status_code == 200
+    assert client.get("/api/state", headers={"Origin": "http://localhost:5173"}).status_code == 200
+    assert client.get("/api/state", headers={"Host": "attacker.example:8731"}).status_code == 403
+
+
+def test_foreign_origin_websocket_is_closed(make_client):
+    from starlette.websockets import WebSocketDisconnect
+    client, _watcher, _driver = make_client()
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws", headers={"Origin": "https://evil.example"}) as ws:
+            ws.receive_text()
+    with client.websocket_connect("/ws", headers={"Origin": "tauri://localhost"}) as ws:
+        assert '"paused"' in ws.receive_text()
+
+
+def test_unknown_thread_watch_is_404(make_client):
+    client, _watcher, _driver = make_client()
+    r = client.post("/api/watch/name:Q%26A%20%23prod", json={"watch": True})
+    assert r.status_code == 404 and r.json()["ok"] is False
+
+
+def test_hand_edited_settings_do_not_break_api(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    watcher.cfg = {**watcher.cfg, "reply": {"auto_send_countdown_seconds": 120}, "brain": {"provider": "gpt"}}
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    assert r.json()["settings"]["safety"]["countdown_seconds"] == 60 and r.json()["settings"]["brain"] == "claude"

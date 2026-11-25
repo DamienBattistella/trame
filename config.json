@@ -16,7 +16,8 @@
       "command": "gh",
       "args": [
         "copilot",
-        "suggest"
+        "--",
+        "-p"
       ]
     }
   },

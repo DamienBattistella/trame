@@ -4,7 +4,8 @@ import threading
 import time
 import uuid
 from datetime import datetime
-from typing import Callable, Iterable, Optional
+from contextlib import contextmanager
+from typing import Iterator, Callable, Iterable, Optional
 
 import config as cfgmod
 import safety
@@ -50,6 +51,8 @@ class Watcher:
         self._ui_lock = threading.Lock()
         self._briefs: dict[str, Brief] = {}
         self._history: dict[str, tuple[float, str]] = {}
+        self._in_flight: set[str] = set()
+        self._sent_recent: dict[str, list[tuple[float, str]]] = {}
 
     # --- lifecycle ---
     def start(self) -> None:
@@ -88,6 +91,8 @@ class Watcher:
             return None
         triggers = cfg.get("triggers", {})
         self_names = triggers.get("self_names", ["Damien"])
+        if self._is_own_message(msg, self_names):
+            return None
         if not safety.should_react(entity.surface.value, msg.mentions, entity.named_people, triggers, self_names):
             return None
 
@@ -124,11 +129,11 @@ class Watcher:
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi auto annulé → gardé en brouillon ({msg.sender})")
                 return "draft"
-            if self._deliver(msg.thread_id, proposal, send=True, restore=True):
+            if self._deliver(msg.thread_id, proposal, send=True, restore=True, auto=True):
                 self.log("sent", f"Auto → {msg.sender} : « {proposal[:60]} »")
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
-            self.log("warn", f"Envoi auto refusé : conversation de {msg.sender} non confirmée → gardé en brouillon")
+            self.log("warn", f"Envoi auto non effectué → gardé en brouillon ({msg.sender})")
             return "draft"
         self._queue_draft(msg, proposal, entity.mode, gh_ref)
         self.log("draft", f"Brouillon déposé → {msg.sender}")
@@ -137,21 +142,55 @@ class Watcher:
     def _countdown_ok(self, seconds: float) -> bool:
         """Wait the cancelable window. Pausing (or stopping) during it cancels the send."""
         steps = max(1, int(seconds / 0.1))
-        for _ in range(steps):
+        for i in range(steps):
             if self._stop.is_set() or self.state.paused:
+                return False
+            if i % 10 == 0 and self._screen_share_guarded():
+                self.state.screen_sharing = True
                 return False
             threading.Event().wait(0.1)
         return not (self._stop.is_set() or self.state.paused)
 
-    def _deliver(self, thread_id: str, text: str, send: bool, restore: bool) -> bool:
+    SELF_ECHO_TTL = 600.0
+
+    def _is_own_message(self, msg: IncomingMessage, self_names: list[str]) -> bool:
+        """The user's own messages, and the replies Trame just sent, must never trigger
+        a reply (an auto-mode conversation would otherwise answer itself forever)."""
+        sender = (msg.sender or "").strip().casefold()
+        if sender and any(sender == n.strip().casefold() for n in self_names if n.strip()):
+            return True
+        now = time.monotonic()
+        with self._lock:
+            recent = [(t, x) for t, x in self._sent_recent.get(msg.thread_id, []) if now - t < self.SELF_ECHO_TTL]
+            self._sent_recent[msg.thread_id] = recent
+        text = msg.text.strip()
+        return any(text == x for _t, x in recent)
+
+    def _remember_sent(self, thread_id: str, text: str) -> None:
+        with self._lock:
+            self._sent_recent.setdefault(thread_id, []).append((time.monotonic(), text.strip()))
+            self._sent_recent[thread_id] = self._sent_recent[thread_id][-10:]
+
+    def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
-        restore=True puts the user's previous conversation back afterwards."""
+        restore=True puts the user's previous conversation back afterwards. Pause (for
+        automatic sends) and screen share are re-checked under the UI lock, right before
+        typing: either may have started during the LLM call, the countdown or the wait."""
         with self._ui_lock:
+            if auto and (self.state.paused or self._stop.is_set()):
+                self.log("warn", "Envoi auto annulé : Trame a été mis en pause.")
+                return False
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                self.log("warn", "Partage d'écran en cours : aucune saisie dans Teams.")
+                return False
             try:
                 focus = self.driver.type_focused(thread_id, text, send, restore)
             except Exception as e:
                 self.log("warn", f"Saisie impossible: {e}")
                 return False
+            if focus.ok and send:
+                self._remember_sent(thread_id, text)
         self._warn_if_not_restored(focus)
         return focus.ok
 
@@ -168,9 +207,14 @@ class Watcher:
     def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None) -> None:
         with self._lock:
             # One pending draft per thread: the latest message supersedes the older proposal.
-            drafts = [d for d in self.state.drafts if d.thread_id != msg.thread_id][: self.MAX_DRAFTS - 1]
+            # It keeps the previous draft's id so a card being edited in the UI is updated in
+            # place (and its send still resolves) — unless that draft is being sent right now.
+            previous = next((d for d in self.state.drafts if d.thread_id == msg.thread_id), None)
+            draft_id = previous.id if previous and previous.id not in self._in_flight else str(uuid.uuid4())[:8]
+            drafts = [d for d in self.state.drafts if d.thread_id != msg.thread_id or d.id in self._in_flight]
+            drafts = drafts[: self.MAX_DRAFTS - 1]
             drafts.insert(0, Draft(
-                id=str(uuid.uuid4())[:8], thread_id=msg.thread_id, **{"from": msg.sender},
+                id=draft_id, thread_id=msg.thread_id, **{"from": msg.sender},
                 surface=msg.surface, incoming=msg.text, proposal=proposal,
                 received_at=msg.received_at, mode=mode,  # type: ignore[arg-type]
                 used_github=gh_ref,
@@ -192,28 +236,42 @@ class Watcher:
             self.state.screen_sharing = True
             raise ActionError(409, "Partage d'écran en cours : aucune saisie dans Teams.")
 
-    def send_draft(self, draft_id: str, text: Optional[str] = None) -> None:
-        d = self._draft(draft_id)
-        body = text.strip() if text and text.strip() else d.proposal
-        self._typing_allowed()
-        if not self._deliver(d.thread_id, body, send=True, restore=True):
-            with self._lock:
-                d.proposal = body
-            self.log("warn", f"Envoi refusé : conversation de {d.from_} non confirmée → brouillon conservé")
-            raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été envoyé, le brouillon est conservé.")
+    @contextmanager
+    def _claim(self, draft_id: str) -> Iterator[Draft]:
+        """One action at a time per draft: a double click cannot send it twice."""
         with self._lock:
-            self.state.drafts = [x for x in self.state.drafts if x.id != draft_id]
+            d = self._draft(draft_id)
+            if draft_id in self._in_flight:
+                raise ActionError(409, "Ce brouillon est déjà en cours d'envoi.")
+            self._in_flight.add(draft_id)
+        try:
+            yield d
+        finally:
+            with self._lock:
+                self._in_flight.discard(draft_id)
+
+    def send_draft(self, draft_id: str, text: Optional[str] = None) -> None:
+        with self._claim(draft_id) as d:
+            body = text.strip() if text and text.strip() else d.proposal
+            self._typing_allowed()
+            if not self._deliver(d.thread_id, body, send=True, restore=True):
+                with self._lock:
+                    d.proposal = body
+                self.log("warn", f"Envoi refusé : conversation de {d.from_} non confirmée → brouillon conservé")
+                raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été envoyé, le brouillon est conservé.")
+            with self._lock:
+                self.state.drafts = [x for x in self.state.drafts if x is not d]
         self.log("sent", f"Envoyé à {d.from_}")
 
     def compose_draft(self, draft_id: str, text: Optional[str] = None) -> None:
-        d = self._draft(draft_id)
-        body = text.strip() if text and text.strip() else d.proposal
-        self._typing_allowed()
-        with self._lock:
-            d.proposal = body
-        if not self._deliver(d.thread_id, body, send=False, restore=False):
-            self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
-            raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été saisi.")
+        with self._claim(draft_id) as d:
+            body = text.strip() if text and text.strip() else d.proposal
+            self._typing_allowed()
+            with self._lock:
+                d.proposal = body
+            if not self._deliver(d.thread_id, body, send=False, restore=False):
+                self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
+                raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été saisi.")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
 
     def dismiss_draft(self, draft_id: str) -> None:
@@ -236,16 +294,20 @@ class Watcher:
     def set_paused(self, paused: bool) -> None:
         self.state.paused = paused
 
+    def _entity(self, thread_id: str) -> WatchEntity:
+        entity = next((w for w in self.state.watchlist if w.thread_id == thread_id), None)
+        if entity is None:
+            raise ActionError(404, "Conversation introuvable dans la watchlist.")
+        return entity
+
     def set_watch(self, thread_id: str, watch: bool) -> None:
-        for w in self.state.watchlist:
-            if w.thread_id == thread_id:
-                w.watch = watch
+        with self._lock:
+            self._entity(thread_id).watch = watch
         self._persist_watchlist()
 
     def set_mode(self, thread_id: str, mode: str) -> None:
-        for w in self.state.watchlist:
-            if w.thread_id == thread_id:
-                w.mode = mode  # type: ignore[assignment]
+        with self._lock:
+            self._entity(thread_id).mode = mode  # type: ignore[assignment]
         self._persist_watchlist()
 
     def upsert_watchlist(self, items: Iterable[tuple[str, Optional[bool], Optional[str]]]) -> int:
@@ -253,6 +315,7 @@ class Watcher:
         known: Optional[dict[str, WatchEntity]] = None
         count = 0
         with self._lock:
+            self._last_missing: list[str] = []
             by_id = {w.thread_id: w for w in self.state.watchlist}
             added: list[WatchEntity] = []
             for thread_id, watch, mode in items:
@@ -264,6 +327,7 @@ class Watcher:
                         except Exception:
                             known = {}
                     if thread_id not in known:
+                        self._last_missing.append(thread_id)
                         continue
                     entity = known[thread_id].model_copy()
                     by_id[thread_id] = entity

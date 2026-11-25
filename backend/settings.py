@@ -66,24 +66,35 @@ class SettingsPatch(_Patch):
     brief: Optional[BriefPatch] = None
 
 
+def _int(value, default: int, lo: int, hi: int) -> int:
+    try:
+        return min(hi, max(lo, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 def from_config(cfg: dict) -> Settings:
+    """Tolerates hand-edited config.json: out-of-range or wrong-typed values fall back
+    to safe values instead of breaking the settings API."""
     gh = cfg.get("context", {}).get("github", {})
     safety = cfg.get("safety", {})
     reply = cfg.get("reply", {})
     brief = cfg.get("brief", {})
     return Settings(
         onboarded=bool(cfg.get("onboarded", False)),
-        brain=cfg.get("brain", {}).get("provider", "claude"),
-        github=GithubSettings(enabled=gh.get("enabled", True), all_repos=gh.get("repos", "all") == "all"),
+        brain="copilot" if cfg.get("brain", {}).get("provider") == "copilot" else "claude",
+        github=GithubSettings(enabled=bool(gh.get("enabled", True)), all_repos=gh.get("repos", "all") == "all"),
         safety=SafetySettings(
-            auto_pause_on_screen_share=safety.get("auto_pause_on_screen_share", True),
-            selftest_gate=reply.get("selector_selftest_gate", True),
-            countdown_seconds=reply.get("auto_send_countdown_seconds", 5),
-            never_auto_send_if_message_contains=safety.get("never_auto_send_if_message_contains", []),
+            auto_pause_on_screen_share=bool(safety.get("auto_pause_on_screen_share", True)),
+            selftest_gate=bool(reply.get("selector_selftest_gate", True)),
+            countdown_seconds=_int(reply.get("auto_send_countdown_seconds", 5), 5, 0, 60),
+            never_auto_send_if_message_contains=[
+                t for t in safety.get("never_auto_send_if_message_contains", []) if isinstance(t, str)
+            ],
         ),
         brief=BriefSettings(
-            enabled=brief.get("enabled", True),
-            last_messages=min(100, max(10, int(brief.get("last_messages", 30)))),
+            enabled=bool(brief.get("enabled", True)),
+            last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
     )
 

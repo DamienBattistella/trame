@@ -1,6 +1,11 @@
 from __future__ import annotations
 import subprocess
 from brain.base import Brain, build_prompt
+from brain.isolation import sandbox_dir
+
+# Teams messages are untrusted input: the model only writes text. No tools, no MCP
+# server, no saved session, whatever the user's Claude Code settings allow.
+HARDENING = ["--tools", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"]
 
 
 class ClaudeBrain(Brain):
@@ -10,7 +15,10 @@ class ClaudeBrain(Brain):
 
     def __init__(self, command: str = "claude", args: list[str] | None = None, timeout: float = 60.0):
         self.command = command
-        self.args = args or ["-p"]
+        base = list(args or ["-p"])
+        if "-p" not in base and "--print" not in base:
+            base.insert(0, "-p")
+        self.args = base + [a for a in HARDENING if a not in base or a == ""]
         self.timeout = timeout
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
@@ -21,6 +29,7 @@ class ClaudeBrain(Brain):
             [self.command, *self.args],
             input=prompt,
             capture_output=True,
+            cwd=sandbox_dir(),
             text=True,
             timeout=timeout or self.timeout,
         )
