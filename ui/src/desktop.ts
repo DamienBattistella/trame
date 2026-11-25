@@ -30,3 +30,17 @@ export function onTrayTogglePause(cb: () => void): () => void {
   tauri()?.event?.listen("tray-toggle-pause", cb).then((u) => (unlisten = u));
   return () => unlisten?.();
 }
+
+/** Ouvre un lien dans le navigateur du système (plugin shell de Tauri), sinon dans un nouvel onglet. */
+export async function openExternal(url: string): Promise<void> {
+  const t = tauri();
+  if (t?.core) {
+    try {
+      await t.core.invoke("plugin:shell|open", { path: url });
+      return;
+    } catch {
+      /* permission shell:allow-open absente : repli navigateur */
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}

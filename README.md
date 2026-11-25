@@ -37,7 +37,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 | <img src="docs/screenshots/wizard-test.png" alt="Test de lecture" /> | <img src="docs/screenshots/wizard-watchlist.png" alt="Qui surveiller" /> |
 | **Test** — Trame vérifie qu'il sait lire et écrire | **Qui surveiller** — recherche et filtres, même avec des centaines de conversations |
 | <img src="docs/screenshots/wizard-modes.png" alt="Brouillon ou auto" /> | <img src="docs/screenshots/wizard-persona.png" alt="Ta voix" /> |
-| **Brouillon ou auto** — par conversation | **Ta voix** — dépose ton `SOUL.md` |
+| **Brouillon ou auto** — par conversation | **Ta voix** — dépose ton `SOUL.md`, avec une aide et un modèle à copier |
 
 <p align="center">
   <img src="docs/screenshots/ame-etats.png" width="760" alt="L'âme de Trame : attente, fichier au-dessus, accepté, refusé" /><br/>
@@ -53,6 +53,13 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 | <img src="docs/screenshots/journal.png" alt="Journal" /> | <img src="docs/screenshots/reglages.png" alt="Réglages" /> |
 | **Journal** — tout ce que Trame a lu, proposé et envoyé | **Réglages** — cerveau, démarrage, GitHub, sécurité |
 
+### Le brief d'une conversation
+
+<p align="center">
+  <img src="docs/screenshots/brief.png" width="760" alt="Brief de conversation : résumé, points ouverts, sujets et contexte GitHub" /><br/>
+  <sub>Depuis une conversation ou un brouillon, « Contexte » résume la discussion, liste les points ouverts et retrouve les PR, issues et commits liés sur GitHub.</sub>
+</p>
+
 <p align="center">
   <img src="docs/screenshots/logo-animation.png" width="560" alt="Le logo se dessine au démarrage" /><br/>
   <sub>Au démarrage, le fil du logo écrit le T de Trame pendant que le moteur se lance.</sub>
@@ -64,6 +71,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 - **Deux modes par conversation** : *Brouillon* (tu valides) ou *Auto* (envoi après un compte à rebours de 3, 5 ou 10 s, annulable par la pause).
 - **Brouillons éditables** : tu modifies le texte avant l'envoi, ou tu l'ouvres directement dans Teams pour le terminer toi-même.
 - **Rattrapage** : en un clic, les messages non lus deviennent des brouillons — jamais d'envoi automatique en rafale.
+- **Brief de conversation** : en un clic, un résumé de la discussion, les points ouverts, les sujets abordés et les PR, issues et commits GitHub liés, chacun avec la raison du lien. Activable et réglable (20, 30 ou 50 derniers messages) dans les réglages.
 - **Contexte GitHub** (lecture seule) : quand un message parle d'une PR ou d'une issue, Trame consulte tes dépôts pour répondre juste. Il n'écrit jamais sur GitHub.
 - **Application de bureau discrète** : icône dans la barre des tâches, démarrage avec Windows, fermer la fenêtre la réduit, instance unique, taille et position mémorisées.
 
@@ -110,7 +118,10 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q tests
 TRAME_DRIVER=mock python run.py          # API sur 127.0.0.1:8731
+TRAME_DRIVER=mock TRAME_BRAIN=mock python run.py   # démo hors ligne, sans appel à claude ni à Copilot
 ```
+
+`TRAME_BRAIN=mock` remplace le cerveau choisi (Claude ou Copilot, y compris après un changement dans les réglages) par un cerveau simulé et déterministe : brouillons plausibles et résumés de conversation (`POST /api/threads/{id}/brief`) construits à partir des conversations d'exemple, sans consommer d'abonnement. La recherche GitHub du résumé reste réelle (lecture seule, via `gh`) tant qu'elle est activée dans les réglages.
 
 Interface :
 
@@ -125,4 +136,4 @@ Sans moteur, l'interface fonctionne avec des données d'exemple. Le build de l'i
 
 ## État du projet
 
-Le moteur, l'interface et l'application de bureau sont complets, testés (35 tests backend, CI verte) et le build Windows produit un installeur. Le pilotage réel de Teams (`backend/drivers/windows_uia.py`) doit encore être **calibré sur un poste Windows** : la nouvelle version de Teams change ses éléments d'interface d'une mise à jour à l'autre. La procédure est décrite dans [`docs/SONDE-UIA.md`](docs/SONDE-UIA.md). En attendant, toute étape incertaine échoue du côté sûr : Trame refuse d'écrire plutôt que de risquer la mauvaise conversation.
+Le moteur, l'interface et l'application de bureau sont complets, testés (50 tests backend, CI verte) et le build Windows produit un installeur. Le pilotage réel de Teams (`backend/drivers/windows_uia.py`) doit encore être **calibré sur un poste Windows** : la nouvelle version de Teams change ses éléments d'interface d'une mise à jour à l'autre. La procédure est décrite dans [`docs/SONDE-UIA.md`](docs/SONDE-UIA.md). En attendant, toute étape incertaine échoue du côté sûr : Trame refuse d'écrire plutôt que de risquer la mauvaise conversation.

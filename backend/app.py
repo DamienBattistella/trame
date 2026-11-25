@@ -32,6 +32,9 @@ def make_driver() -> TeamsDriver:
 
 
 def make_brain(cfg: dict) -> Brain:
+    if os.environ.get("TRAME_BRAIN") == "mock":
+        from brain.mock import MockBrain
+        return MockBrain()
     prov = cfg.get("brain", {}).get("provider", "claude")
     if prov == "copilot":
         c = cfg["brain"].get("copilot", {})
@@ -60,6 +63,10 @@ class WatchlistItem(BaseModel):
     thread_id: str = Field(min_length=1)
     watch: Optional[bool] = None
     mode: Optional[Literal["draft", "auto"]] = None
+
+
+class BriefBody(BaseModel):
+    last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
 
 class SoulBody(BaseModel):
@@ -166,6 +173,15 @@ def create_app(
     @app.put("/api/settings")
     def put_settings(body: SettingsPatch):
         return {"ok": True, "settings": watcher.update_settings(body).model_dump()}
+
+    @app.post("/api/threads/{thread_id:path}/brief")
+    def post_brief(thread_id: str, body: Optional[BriefBody] = None):
+        brief = watcher.generate_brief(thread_id, body.last_messages if body else None)
+        return {"ok": True, "brief": brief.model_dump()}
+
+    @app.get("/api/threads/{thread_id:path}/brief")
+    def get_brief(thread_id: str):
+        return {"ok": True, "brief": watcher.cached_brief(thread_id).model_dump()}
 
     @app.post("/api/soul")
     def post_soul(body: SoulBody):

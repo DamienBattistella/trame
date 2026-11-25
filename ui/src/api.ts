@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, DraftItem, LogItem, Mode, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
-import { mockConversations, mockDrafts, mockLogs } from "@/mockData";
+import { Brain, Brief, DraftItem, LogItem, Mode, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
+import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 
 const HTTP = "http://127.0.0.1:8731";
 const WS = "ws://127.0.0.1:8731/ws";
@@ -17,7 +17,7 @@ export interface TrameState {
   logs: LogItem[];
 }
 
-export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string };
+export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
 
 export interface WatchlistEntry {
   threadId: string;
@@ -64,6 +64,7 @@ function mapState(s: any): TrameState {
 function mapSettings(s: any): Settings {
   const g = s?.github ?? {};
   const f = s?.safety ?? {};
+  const b = s?.brief ?? {};
   return {
     onboarded: Boolean(s?.onboarded),
     brain: s?.brain === "copilot" ? "copilot" : "claude",
@@ -76,6 +77,31 @@ function mapSettings(s: any): Settings {
         ? f.never_auto_send_if_message_contains
         : [],
     },
+    brief: {
+      enabled: b.enabled === undefined ? true : Boolean(b.enabled),
+      lastMessages: Number(b.last_messages ?? 30),
+    },
+  };
+}
+function mapBrief(b: any): Brief {
+  return {
+    threadId: b.thread_id,
+    displayName: b.display_name,
+    generatedAt: b.generated_at,
+    summary: b.summary ?? "",
+    openPoints: b.open_points ?? [],
+    topics: b.topics ?? [],
+    githubEnabled: Boolean(b.github_enabled),
+    github: (b.github ?? []).map((g: any) => ({
+      kind: g.kind,
+      repo: g.repo,
+      number: g.number ?? null,
+      title: g.title,
+      state: g.state ?? null,
+      url: g.url,
+      why: g.why ?? "",
+    })),
+    sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
 function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
@@ -97,6 +123,12 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
       f.never_auto_send_if_message_contains = p.safety.neverAutoSendIfMessageContains;
     out.safety = f;
   }
+  if (p.brief) {
+    const b: Record<string, unknown> = {};
+    if (p.brief.enabled !== undefined) b.enabled = p.brief.enabled;
+    if (p.brief.lastMessages !== undefined) b.last_messages = p.brief.lastMessages;
+    out.brief = b;
+  }
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -106,6 +138,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     ...(p.brain !== undefined && { brain: p.brain }),
     github: { ...s.github, ...p.github },
     safety: { ...s.safety, ...p.safety },
+    brief: { ...s.brief, ...p.brief },
   };
 }
 
@@ -133,7 +166,12 @@ let localSettings: Settings = {
     countdownSeconds: 5,
     neverAutoSendIfMessageContains: ["RH", "confidentiel", "salaire"],
   },
+  brief: { enabled: true, lastMessages: 30 },
 };
+const localBriefs = new Map<string, Brief>();
+
+export type BriefPrefs = Settings["brief"] & { github: boolean };
+const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.enabled });
 
 async function request<T = {}>(method: string, path: string, body?: unknown): Promise<Result<T>> {
   try {
@@ -150,7 +188,7 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
     }
     if (!res.ok || data?.ok === false) {
       const error = typeof data?.error === "string" && data.error ? data.error : `Le moteur Trame a répondu ${res.status}.`;
-      return { ok: false, error };
+      return { ok: false, error, status: res.status };
     }
     return { ...(data ?? {}), ok: true } as Result<T>;
   } catch {
@@ -169,6 +207,8 @@ export function useTrame() {
   connectedRef.current = connected;
   const stateRef = useRef(state);
   stateRef.current = state;
+  // Copie des réglages du brief, utile aux points d'entrée hors de l'onglet Réglages.
+  const [briefPrefs, setBriefPrefs] = useState<BriefPrefs>(prefsOf(localSettings));
 
   useEffect(() => {
     let closed = false;
@@ -268,21 +308,32 @@ export function useTrame() {
     connectedRef.current ? request<{ queued: number }>("POST", "/api/catchup") : demo(1200, { queued: 0 });
 
   const getSettings = async (): Promise<Result<{ settings: Settings }>> => {
-    if (!connectedRef.current) return { ok: true, settings: localSettings };
+    if (!connectedRef.current) {
+      setBriefPrefs(prefsOf(localSettings));
+      return { ok: true, settings: localSettings };
+    }
     const res = await request<{ settings: unknown }>("GET", "/api/settings");
-    return res.ok ? { ok: true, settings: mapSettings(res.settings) } : res;
+    if (!res.ok) return res;
+    const settings = mapSettings(res.settings);
+    setBriefPrefs(prefsOf(settings));
+    return { ok: true, settings };
   };
+  useEffect(() => {
+    getSettings();
+  }, [connected]);
   const updateSettings = async (patch: SettingsPatch): Promise<Result<{ settings: Settings }>> => {
     if (patch.brain) setState((s) => ({ ...s, brain: patch.brain! }));
     if (!connectedRef.current) {
       await wait(350);
       localSettings = mergeSettings(localSettings, patch);
+      setBriefPrefs(prefsOf(localSettings));
       return { ok: true, settings: localSettings };
     }
     const res = await request<{ settings: unknown }>("PUT", "/api/settings", settingsPatchToWire(patch));
     if (!res.ok) return res;
     const settings = mapSettings(res.settings);
     setState((s) => ({ ...s, brain: settings.brain, onboarded: settings.onboarded }));
+    setBriefPrefs(prefsOf(settings));
     return { ok: true, settings };
   };
 
@@ -299,6 +350,32 @@ export function useTrame() {
     if (!/\.(md|txt)$/i.test(filename)) return { ok: false, error: "Seuls les fichiers .md ou .txt sont acceptés." };
     if (new Blob([content]).size > SOUL_MAX_BYTES) return { ok: false, error: "Le fichier dépasse 64 Ko." };
     return connectedRef.current ? request("POST", "/api/soul", { filename, content }) : demo(500, {});
+  };
+
+  /** Dernier brief en cache ; `brief: null` s'il n'y en a pas encore. */
+  const getBrief = async (threadId: string): Promise<Result<{ brief: Brief | null }>> => {
+    if (!connectedRef.current) return { ok: true, brief: localBriefs.get(threadId) ?? null };
+    const res = await request<{ brief: unknown }>("GET", `/api/threads/${encodeURIComponent(threadId)}/brief`);
+    if (!res.ok) return res.status === 404 ? { ok: true, brief: null } : res;
+    return { ok: true, brief: mapBrief(res.brief) };
+  };
+  const generateBrief = async (threadId: string, lastMessages?: number): Promise<Result<{ brief: Brief }>> => {
+    if (!connectedRef.current) {
+      await wait(3600);
+      const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
+      const brief = mockBrief(threadId, conv?.displayName ?? "Conversation", {
+        lastMessages: lastMessages ?? localSettings.brief.lastMessages,
+        github: localSettings.github.enabled,
+      });
+      localBriefs.set(threadId, brief);
+      return { ok: true, brief };
+    }
+    const res = await request<{ brief: unknown }>(
+      "POST",
+      `/api/threads/${encodeURIComponent(threadId)}/brief`,
+      lastMessages !== undefined ? { last_messages: lastMessages } : {}
+    );
+    return res.ok ? { ok: true, brief: mapBrief(res.brief) } : res;
   };
 
   const toggleWatch = (threadId: string) => {
@@ -332,6 +409,9 @@ export function useTrame() {
     catchUp,
     getSettings,
     updateSettings,
+    briefPrefs,
+    getBrief,
+    generateBrief,
     saveWatchlist,
     uploadSoul,
     toggleWatch,

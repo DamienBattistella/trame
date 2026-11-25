@@ -22,14 +22,22 @@ from github import context as gh  # noqa: E402
 
 
 class FakeBrain(Brain):
-    def __init__(self, name: str = "claude", reply: str = "Réponse de test"):
+    def __init__(self, name: str = "claude", reply: str = "Réponse de test", completion: str = ""):
         self.name = name
         self.reply = reply
+        self.completion = completion
         self.calls: list[str] = []
+        self.prompts: list[str] = []
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
         self.calls.append(incoming)
         return self.reply
+
+    def complete(self, prompt: str, timeout: float | None = None) -> str:
+        self.prompts.append(prompt)
+        if isinstance(self.completion, Exception):
+            raise self.completion
+        return self.completion
 
 
 def fake_factory(cfg: dict) -> FakeBrain:
@@ -49,7 +57,7 @@ def fresh_home(monkeypatch):
     cfg["reply"]["auto_send_countdown_seconds"] = 0
     (home / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
     shutil.copyfile(REPO / "SOUL.md", home / "SOUL.md")
-    monkeypatch.setattr(gh, "_gh", lambda args: "")
+    monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: "")
     yield home
 
 

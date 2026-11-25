@@ -46,6 +46,10 @@
       "consult": "when_relevant"
     }
   },
+  "brief": {
+    "enabled": true,
+    "last_messages": 30
+  },
   "safety": {
     "global_pause": false,
     "auto_pause_on_screen_share": true,

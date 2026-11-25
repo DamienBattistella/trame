@@ -9,9 +9,10 @@ import config as cfgmod
 import safety
 import settings as settingsmod
 from github import context as gh
-from models import AppState, Draft, IncomingMessage, LogItem, WatchEntity
+from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
 from drivers.base import TeamsDriver
 from brain.base import Brain
+from brain.brief import BriefParseError, build_brief_prompt, parse_brief
 
 
 class ActionError(Exception):
@@ -29,6 +30,7 @@ class Watcher:
     cancelable countdown handled by the delivery layer."""
 
     MAX_DRAFTS = 50
+    BRIEF_TIMEOUT = 120.0
 
     def __init__(self, driver: TeamsDriver, brain: Brain, brain_factory: Optional[Callable[[dict], Brain]] = None):
         self.driver = driver
@@ -45,6 +47,7 @@ class Watcher:
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._ui_lock = threading.Lock()
+        self._briefs: dict[str, Brief] = {}
 
     # --- lifecycle ---
     def start(self) -> None:
@@ -271,6 +274,83 @@ class Watcher:
                 cfgmod.save(cfg)
             except Exception as e:
                 self.log("warn", f"Sauvegarde de la watchlist impossible: {e}")
+
+    # --- conversation brief ---
+    def _conversation(self, thread_id: str) -> WatchEntity:
+        entity = next((w for w in self.state.watchlist if w.thread_id == thread_id), None)
+        if entity is None:
+            try:
+                entity = next((c for c in self.driver.list_conversations() if c.thread_id == thread_id), None)
+            except Exception:
+                entity = None
+        if entity is None:
+            raise ActionError(404, "Conversation introuvable.")
+        return entity
+
+    def generate_brief(self, thread_id: str, last_messages: Optional[int] = None) -> Brief:
+        """Summarise one conversation with a single brain call, then look up related
+        GitHub items read-only. Cached in memory only on success."""
+        entity = self._conversation(thread_id)
+        prefs = self.get_settings()
+        if not prefs.brief.enabled:
+            raise ActionError(409, "Le résumé de conversation est désactivé dans les réglages.")
+        name = entity.display_name
+        try:
+            msgs = self.driver.read_context(thread_id, last_messages or prefs.brief.last_messages)
+        except Exception as e:
+            self.log("warn", f"Résumé impossible pour {name} : lecture de la conversation échouée ({e})")
+            raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
+        if not msgs:
+            self.log("warn", f"Résumé impossible pour {name} : aucun message lisible")
+            raise ActionError(502, "Aucun message lisible dans cette conversation : rien n'a été résumé.")
+        transcript = "\n".join(f"[{m.received_at}] {m.sender}: {m.text}" if m.received_at else f"{m.sender}: {m.text}" for m in msgs)
+
+        try:
+            raw = self.brain.complete(build_brief_prompt(name, transcript), timeout=self.BRIEF_TIMEOUT)
+        except Exception as e:
+            self.log("warn", f"Résumé impossible pour {name} : le cerveau a échoué ({str(e)[:120]})")
+            raise ActionError(502, "Le cerveau n'a pas pu produire le résumé. Rien n'a été perdu, tu peux réessayer.")
+        try:
+            digest = parse_brief(raw)
+        except BriefParseError as e:
+            self.log("warn", f"Résumé impossible pour {name} : {e}")
+            raise ActionError(502, "Réponse du cerveau inexploitable pour le résumé. Rien n'a été perdu, tu peux réessayer.")
+
+        hits: list = []
+        repos_searched = 0
+        if prefs.github.enabled:
+            numbers = gh.mentioned_numbers(transcript)
+            if numbers or digest.search_queries:
+                gh_cfg = self.cfg.get("context", {}).get("github", {})
+                try:
+                    repos = gh.scope(prefs.github.all_repos, gh_cfg.get("repos_allowlist", []))
+                    hits = gh.search(digest.search_queries, numbers, repos, prefs.github.all_repos)
+                    repos_searched = len(repos)
+                except Exception as e:
+                    self.log("warn", f"Recherche GitHub impossible pour le résumé de {name} : {e}")
+
+        brief = Brief(
+            thread_id=thread_id,
+            display_name=name,
+            generated_at=datetime.now().strftime("%H:%M"),
+            summary=digest.summary,
+            open_points=digest.open_points,
+            topics=digest.topics,
+            github_enabled=prefs.github.enabled,
+            github=hits,
+            sources=BriefSources(messages=len(msgs), repos_searched=repos_searched),
+        )
+        with self._lock:
+            self._briefs[thread_id] = brief
+        gh_part = f", {len(hits)} élément(s) GitHub" if prefs.github.enabled else ""
+        self.log("info", f"Résumé généré pour {name} ({len(msgs)} message(s){gh_part})")
+        return brief
+
+    def cached_brief(self, thread_id: str) -> Brief:
+        brief = self._briefs.get(thread_id)
+        if brief is None:
+            raise ActionError(404, "Aucun résumé disponible pour cette conversation.")
+        return brief
 
     # --- settings & persona ---
     def get_settings(self) -> settingsmod.Settings:

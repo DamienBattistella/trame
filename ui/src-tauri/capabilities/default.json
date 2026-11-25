@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions de Trame : contrôles fenêtre, démarrage auto, état de fenêtre, sidecar backend.",
-  "windows": ["main"],
+  "description": "Permissions de Trame : contrôles fenêtre, démarrage auto, état de fenêtre, sidecar backend, ouverture des liens.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -19,7 +21,13 @@
     "window-state:default",
     {
       "identifier": "shell:allow-execute",
-      "allow": [{ "name": "binaries/trame-backend", "sidecar": true }]
-    }
+      "allow": [
+        {
+          "name": "binaries/trame-backend",
+          "sidecar": true
+        }
+      ]
+    },
+    "shell:allow-open"
   ]
 }

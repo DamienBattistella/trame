@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
+import { SoulHelp } from "@/components/SoulHelp";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { SOUL_MAX_BYTES, Trame } from "@/api";
@@ -270,7 +271,12 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     {
       title: "Ta voix",
       sub: "Dépose ton SOUL.md — ta façon d'écrire, ton rôle, ce que Trame refuse. Ou plus tard.",
-      body: <SoulDrop value={soul} onChange={setSoul} />,
+      body: (
+        <div className="flex w-full flex-col items-center gap-3">
+          <SoulDrop value={soul} onChange={setSoul} />
+          <SoulHelp />
+        </div>
+      ),
     },
     {
       title: "Contexte GitHub",

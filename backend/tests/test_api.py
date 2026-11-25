@@ -151,6 +151,7 @@ def test_settings_get(make_client):
             "countdown_seconds": 0,
             "never_auto_send_if_message_contains": ["mot de passe", "confidentiel", "RH", "salaire"],
         },
+        "brief": {"enabled": True, "last_messages": 30},
     }
 
 

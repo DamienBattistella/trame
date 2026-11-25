@@ -24,11 +24,17 @@ class SafetySettings(BaseModel):
         return [t.strip() for t in v if t.strip()]
 
 
+class BriefSettings(BaseModel):
+    enabled: bool
+    last_messages: int = Field(ge=10, le=100)
+
+
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
     github: GithubSettings
     safety: SafetySettings
+    brief: BriefSettings
 
 
 class _Patch(BaseModel):
@@ -47,17 +53,24 @@ class SafetyPatch(_Patch):
     never_auto_send_if_message_contains: Optional[list[str]] = None
 
 
+class BriefPatch(_Patch):
+    enabled: Optional[bool] = None
+    last_messages: Optional[int] = Field(default=None, ge=10, le=100)
+
+
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
     github: Optional[GithubPatch] = None
     safety: Optional[SafetyPatch] = None
+    brief: Optional[BriefPatch] = None
 
 
 def from_config(cfg: dict) -> Settings:
     gh = cfg.get("context", {}).get("github", {})
     safety = cfg.get("safety", {})
     reply = cfg.get("reply", {})
+    brief = cfg.get("brief", {})
     return Settings(
         onboarded=bool(cfg.get("onboarded", False)),
         brain=cfg.get("brain", {}).get("provider", "claude"),
@@ -67,6 +80,10 @@ def from_config(cfg: dict) -> Settings:
             selftest_gate=reply.get("selector_selftest_gate", True),
             countdown_seconds=reply.get("auto_send_countdown_seconds", 5),
             never_auto_send_if_message_contains=safety.get("never_auto_send_if_message_contains", []),
+        ),
+        brief=BriefSettings(
+            enabled=brief.get("enabled", True),
+            last_messages=min(100, max(10, int(brief.get("last_messages", 30)))),
         ),
     )
 
@@ -94,4 +111,5 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety = out.setdefault("safety", {})
     safety["auto_pause_on_screen_share"] = merged.safety.auto_pause_on_screen_share
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
+    out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     return out, merged

@@ -60,3 +60,30 @@ class AppState(BaseModel):
     watchlist: list[WatchEntity] = Field(default_factory=list)
     drafts: list[Draft] = Field(default_factory=list)
     logs: list[LogItem] = Field(default_factory=list)
+
+
+class GithubHit(BaseModel):
+    kind: Literal["pr", "issue", "commit"]
+    repo: str
+    number: Optional[int] = None
+    title: str
+    state: Optional[Literal["open", "closed", "merged"]] = None
+    url: str
+    why: str
+
+
+class BriefSources(BaseModel):
+    messages: int
+    repos_searched: int
+
+
+class Brief(BaseModel):
+    thread_id: str
+    display_name: str
+    generated_at: str
+    summary: str
+    open_points: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+    github_enabled: bool
+    github: list[GithubHit] = Field(default_factory=list)
+    sources: BriefSources

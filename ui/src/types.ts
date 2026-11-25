@@ -40,6 +40,7 @@ export interface Settings {
     countdownSeconds: number;
     neverAutoSendIfMessageContains: string[];
   };
+  brief: { enabled: boolean; lastMessages: number };
 }
 
 export interface SettingsPatch {
@@ -47,4 +48,30 @@ export interface SettingsPatch {
   brain?: Brain;
   github?: Partial<Settings["github"]>;
   safety?: Partial<Settings["safety"]>;
+  brief?: Partial<Settings["brief"]>;
+}
+
+export type GithubKind = "pr" | "issue" | "commit";
+export type GithubState = "open" | "closed" | "merged";
+
+export interface BriefGithubItem {
+  kind: GithubKind;
+  repo: string;
+  number: number | null;
+  title: string;
+  state: GithubState | null;
+  url: string;
+  why: string;
+}
+
+export interface Brief {
+  threadId: string;
+  displayName: string;
+  generatedAt: string;
+  summary: string;
+  openPoints: string[];
+  topics: string[];
+  githubEnabled: boolean;
+  github: BriefGithubItem[];
+  sources: { messages: number; reposSearched: number };
 }

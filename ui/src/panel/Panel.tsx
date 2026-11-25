@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, Check, History, Loader2, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, History, Loader2, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BrainPicker } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
+import { BriefSheet, BriefTarget } from "@/components/BriefSheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -23,8 +25,36 @@ function SurfaceTag({ s }: { s: Surface }) {
   return <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">{SURFACE[s]}</span>;
 }
 
+type OpenBrief = (t: BriefTarget) => void;
+
+/** Point d'entrée du brief ; grisé avec explication quand la fonction est coupée. */
+function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; target: BriefTarget; onBrief: OpenBrief; compact?: boolean }) {
+  const enabled = trame.briefPrefs.enabled;
+  const button = compact ? (
+    <Button variant="ghost" size="icon" className="size-8 rounded-full" disabled={!enabled} aria-label="Contexte" onClick={() => onBrief(target)}>
+      <BookOpenText className="size-4" />
+    </Button>
+  ) : (
+    <Button variant="secondary" className="rounded-full" disabled={!enabled} onClick={() => onBrief(target)}>
+      <BookOpenText className="size-4" /> Contexte
+    </Button>
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {/* span : un bouton désactivé ne déclenche pas l'infobulle */}
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {enabled ? "Résumé et contexte GitHub" : "Brief de conversation désactivé dans Réglages"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function Panel({ trame }: { trame: Trame }) {
   const { state } = trame;
+  const [briefFor, setBriefFor] = useState<BriefTarget | null>(null);
 
   return (
     <div className="mx-auto flex h-full max-w-3xl flex-col overflow-hidden px-6 pt-5">
@@ -55,10 +85,10 @@ export function Panel({ trame }: { trame: Trame }) {
         </TabsList>
 
         <TabsContent value="drafts" className="flex-1 overflow-auto">
-          <Drafts trame={trame} />
+          <Drafts trame={trame} onBrief={setBriefFor} />
         </TabsContent>
         <TabsContent value="watchlist" className="flex-1 overflow-auto">
-          <Watchlist trame={trame} />
+          <Watchlist trame={trame} onBrief={setBriefFor} />
         </TabsContent>
         <TabsContent value="logs" className="flex-1 overflow-auto">
           <Logs logs={state.logs} />
@@ -67,11 +97,12 @@ export function Panel({ trame }: { trame: Trame }) {
           <SettingsView trame={trame} />
         </TabsContent>
       </Tabs>
+      <BriefSheet trame={trame} target={briefFor} onClose={() => setBriefFor(null)} />
     </div>
   );
 }
 
-function Drafts({ trame }: { trame: Trame }) {
+function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   const drafts = trame.state.drafts;
   const [catching, setCatching] = useState<"idle" | "run" | "done">("idle");
   const [added, setAdded] = useState(0);
@@ -136,14 +167,14 @@ function Drafts({ trame }: { trame: Trame }) {
           </motion.p>
         )}
         {drafts.map((d) => (
-          <DraftCard key={d.id} draft={d} trame={trame} />
+          <DraftCard key={d.id} draft={d} trame={trame} onBrief={onBrief} />
         ))}
       </AnimatePresence>
     </div>
   );
 }
 
-function DraftCard({ draft: d, trame }: { draft: DraftItem; trame: Trame }) {
+function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Trame; onBrief: OpenBrief }) {
   const [text, setText] = useState(d.proposal);
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [compose, setCompose] = useState<"idle" | "opening" | "open">("idle");
@@ -260,6 +291,14 @@ function DraftCard({ draft: d, trame }: { draft: DraftItem; trame: Trame }) {
               </motion.span>
             </AnimatePresence>
           </Button>
+          <ContextButton
+            trame={trame}
+            onBrief={onBrief}
+            target={{
+              threadId: d.threadId,
+              displayName: trame.state.watchlist.find((w) => w.threadId === d.threadId)?.displayName ?? d.from,
+            }}
+          />
           <div className="flex-1" />
           <Button variant="ghost" className="rounded-full" disabled={busy} onClick={dismiss}>
             <Trash2 className="size-4" /> Ignorer
@@ -270,7 +309,7 @@ function DraftCard({ draft: d, trame }: { draft: DraftItem; trame: Trame }) {
   );
 }
 
-function Watchlist({ trame }: { trame: Trame }) {
+function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   const report = (what: string) => (res: Result) => {
     if (!res.ok) toast.error(what, { description: `${res.error} La watchlist est revenue à son état précédent.` });
   };
@@ -295,6 +334,7 @@ function Watchlist({ trame }: { trame: Trame }) {
               )}
             </div>
             <SurfaceTag s={c.surface} />
+            <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
             <Segment
               value={c.mode}
               onChange={(v) => trame.setMode(c.threadId, v).then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
@@ -337,10 +377,11 @@ function Logs({ logs }: { logs: LogItem[] }) {
   );
 }
 
-type Section = "brain" | "github" | "safety";
+type Section = "brain" | "github" | "safety" | "brief";
 type SaveState = "idle" | "saving" | "saved";
 
 const COUNTDOWNS = [3, 5, 10];
+const BRIEF_DEPTHS = [20, 30, 50];
 
 /** Libellé de section + pastille d'état d'enregistrement (en cours → coche). */
 function SectionHeader({ children, state }: { children: React.ReactNode; state: SaveState }) {
@@ -376,13 +417,14 @@ function SectionHeader({ children, state }: { children: React.ReactNode; state: 
 function SettingsView({ trame }: { trame: Trame }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle" });
-  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0 });
+  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle" });
+  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0 });
   const timers = useRef<Partial<Record<Section, ReturnType<typeof setTimeout>>>>({});
   const brainCtl = useAnimationControls();
   const githubCtl = useAnimationControls();
   const safetyCtl = useAnimationControls();
-  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl };
+  const briefCtl = useAnimationControls();
+  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl };
 
   const load = async () => {
     setLoadError(null);
@@ -438,8 +480,9 @@ function SettingsView({ trame }: { trame: Trame }) {
     );
   }
 
-  const { github, safety } = settings;
+  const { github, safety, brief } = settings;
   const countdowns = Array.from(new Set([...COUNTDOWNS, safety.countdownSeconds])).sort((a, b) => a - b);
+  const depths = Array.from(new Set([...BRIEF_DEPTHS, brief.lastMessages])).sort((a, b) => a - b);
 
   return (
     <div className="flex max-w-xl flex-col gap-6 py-5">
@@ -477,6 +520,29 @@ function SettingsView({ trame }: { trame: Trame }) {
             onChange={(allRepos) => update("github", { github: { ...github, allRepos } })}
           />
           <div className="px-4 py-2.5 text-xs text-muted-foreground">Lecture seule · consulté seulement quand le message le justifie.</div>
+        </GroupList>
+      </motion.div>
+
+      <motion.div animate={briefCtl}>
+        <SectionHeader state={save.brief}>Brief de conversation</SectionHeader>
+        <GroupList>
+          <ToggleRow
+            label="Résumé et contexte GitHub"
+            checked={brief.enabled}
+            onChange={(enabled) => update("brief", { brief: { ...brief, enabled } })}
+          />
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className={cn("text-sm transition-colors", !brief.enabled && "text-muted-foreground")}>Messages lus pour le résumé</span>
+            <Segment
+              value={String(brief.lastMessages)}
+              disabled={!brief.enabled}
+              options={depths.map((n) => ({ value: String(n), label: String(n) }))}
+              onChange={(v) => update("brief", { brief: { ...brief, lastMessages: Number(v) } })}
+            />
+          </div>
+          <div className="px-4 py-2.5 text-xs text-muted-foreground">
+            Bouton « Contexte » sur chaque conversation · GitHub en lecture seule, selon le réglage ci-dessus.
+          </div>
         </GroupList>
       </motion.div>
 

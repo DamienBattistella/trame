@@ -7,6 +7,10 @@ class Brain(ABC):
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
         """Return the reply text only, in the persona's voice. No preamble, no quotes."""
 
+    def complete(self, prompt: str, timeout: float | None = None) -> str:
+        """Run a free-form prompt and return the raw text answer."""
+        raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
+
 
 def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str) -> str:
     parts = [
