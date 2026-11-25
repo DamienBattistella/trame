@@ -24,3 +24,4 @@ ui/gallery.html
 # os / editor
 .DS_Store
 *.local
+*.tsbuildinfo
