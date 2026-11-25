@@ -63,17 +63,20 @@ function mockState(): TrameState {
   };
 }
 
-async function post(path: string, body?: unknown) {
+async function post(path: string, body?: unknown): Promise<boolean> {
   try {
-    await fetch(HTTP + path, {
+    const res = await fetch(HTTP + path, {
       method: "POST",
       headers: body ? { "content-type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
+    return res.ok;
   } catch {
-    /* backend absent : on reste en optimiste local */
+    return false;
   }
 }
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Live state via WebSocket, with mock fallback when the backend is offline. */
 export function useTrame() {
@@ -131,10 +134,17 @@ export function useTrame() {
     setState((s) => ({ ...s, paused: p }));
     post("/api/pause", { paused: p });
   };
-  const sendDraft = (id: string) => {
-    setState((s) => ({ ...s, drafts: s.drafts.filter((d) => d.id !== id) }));
-    post(`/api/drafts/${id}/send`);
+  /** Résout true/false selon le résultat ; le retrait de la carte est fait par
+   *  l'UI après l'animation « Envoyé » (removeDraft). Hors backend : démo. */
+  const sendDraft = async (id: string): Promise<boolean> => {
+    if (!connected) {
+      await wait(700);
+      return true;
+    }
+    return post(`/api/drafts/${id}/send`);
   };
+  const removeDraft = (id: string) =>
+    setState((s) => ({ ...s, drafts: s.drafts.filter((d) => d.id !== id) }));
   const dismissDraft = (id: string) => {
     setState((s) => ({ ...s, drafts: s.drafts.filter((d) => d.id !== id) }));
     post(`/api/drafts/${id}/dismiss`);
@@ -146,6 +156,14 @@ export function useTrame() {
       if (now) post(`/api/watch/${threadId}`, { watch: now.watch });
       return { ...s, watchlist: next };
     });
+  const setWatchMany = (threadIds: string[], watch: boolean) => {
+    const ids = new Set(threadIds);
+    setState((s) => ({
+      ...s,
+      watchlist: s.watchlist.map((w) => (ids.has(w.threadId) ? { ...w, watch } : w)),
+    }));
+    threadIds.forEach((id) => post(`/api/watch/${id}`, { watch }));
+  };
   const setMode = (threadId: string, mode: "draft" | "auto") => {
     setState((s) => ({
       ...s,
@@ -154,5 +172,5 @@ export function useTrame() {
     post(`/api/mode/${threadId}`, { mode });
   };
 
-  return { state, connected, setPaused, sendDraft, dismissDraft, toggleWatch, setMode };
+  return { state, connected, setPaused, sendDraft, removeDraft, dismissDraft, toggleWatch, setWatchMany, setMode };
 }
