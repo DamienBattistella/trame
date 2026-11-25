@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
 import time
 from typing import Optional
 
@@ -63,8 +64,24 @@ def mentioned_numbers(text: str) -> list[int]:
     return seen[:MAX_NUMBERS]
 
 
-def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: bool) -> list[GithubHit]:
+def named_repos(repos: list[str], transcript: str) -> list[str]:
+    """Repos whose `owner/name` or bare name appears as a word in the transcript."""
+    low = transcript.lower()
+    out: list[str] = []
+    for repo in repos:
+        name = repo.rsplit("/", 1)[-1].lower()
+        if any(re.search(rf"(?<![\w.-]){re.escape(t)}(?![\w-])", low) for t in {repo.lower(), name} if t):
+            out.append(repo)
+    return out
+
+
+AMBIGUOUS_HITS = 2
+
+
+def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: bool, transcript: str = "") -> list[GithubHit]:
     """Read-only lookup: literal #N first, then PR / issue / commit search per query.
+    A #N is looked up first in repos named in the transcript; failing that, if it exists
+    in several repos, at most AMBIGUOUS_HITS are kept and flagged as ambiguous.
     Capped at MAX_HITS, de-duplicated, bounded by DEADLINE overall."""
     if not repos:
         return []
@@ -85,14 +102,37 @@ def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: 
     def full() -> bool:
         return len(hits) >= MAX_HITS or time.monotonic() > deadline
 
+    named = named_repos(repos, transcript)
+    others = [r for r in repos if r not in named]
     for num in numbers:
-        for repo in repos[:MAX_LOOKUP_REPOS]:
+        found: Optional[GithubHit] = None
+        for repo in named[:MAX_LOOKUP_REPOS]:
             if full():
                 return hits
+            found = _lookup(repo, num)
+            if found is not None:
+                break
+        if found is not None:
+            add(found)
+            continue
+        matches: list[GithubHit] = []
+        for repo in others[:MAX_LOOKUP_REPOS]:
+            if full():
+                break
             hit = _lookup(repo, num)
             if hit is not None:
-                add(hit)
-                break
+                matches.append(hit)
+                if len(matches) >= AMBIGUOUS_HITS:
+                    break
+        if len(matches) > 1:
+            for hit in matches:
+                hit.why = f"#{num} existe dans plusieurs dépôts — vérifie lequel est concerné"
+        for hit in matches:
+            add(hit)
+            if len(hits) >= MAX_HITS:
+                return hits
+        if full():
+            return hits
 
     if all_repos:
         owners = list(dict.fromkeys(r.split("/", 1)[0] for r in repos if "/" in r))[:MAX_OWNERS]
@@ -176,9 +216,47 @@ def _json(out: str):
         return None
 
 
+_SSO_RE = re.compile(r"SAML|\bSSO\b|single sign-on", re.IGNORECASE)
+_SSO_ORG_RE = re.compile(r"github\.com/orgs/([\w.-]+)/sso", re.IGNORECASE)
+_sso_blocked: set[str] = set()
+_sso_lock = threading.Lock()
+
+
+def sso_blocked() -> list[str]:
+    """Orgs whose last gh call failed on SAML/SSO enforcement (token not authorized)."""
+    with _sso_lock:
+        return sorted(_sso_blocked)
+
+
+def _owners(args: list[str]) -> list[str]:
+    out: list[str] = []
+    for flag, value in zip(args, args[1:]):
+        if flag in ("--repo", "-R", "--owner") and value:
+            owner = value.split("/", 1)[0].strip()
+            if owner and owner not in out:
+                out.append(owner)
+    return out
+
+
+def _track_sso(args: list[str], ok: bool, stderr: str) -> None:
+    owners = _owners(args)
+    with _sso_lock:
+        if ok:
+            _sso_blocked.difference_update(owners)
+        elif stderr and _SSO_RE.search(stderr):
+            orgs = _SSO_ORG_RE.findall(stderr) or (owners if len(owners) == 1 else [])
+            _sso_blocked.update(orgs)
+
+
+def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
 def _gh(args: list[str], timeout: float = 20) -> str:
     try:
-        proc = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
-        return proc.stdout.strip() if proc.returncode == 0 else ""
+        proc = _run(["gh", *args], timeout)
     except Exception:
         return ""
+    ok = proc.returncode == 0
+    _track_sso(args, ok, proc.stderr or "")
+    return (proc.stdout or "").strip() if ok else ""

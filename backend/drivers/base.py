@@ -1,7 +1,19 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Iterable, Optional
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Callable, Iterable, Iterator, Optional
 from models import IncomingMessage, WatchEntity
+
+
+@dataclass
+class Focus:
+    """Outcome of a temporary focus: whether the target was confirmed active, the
+    conversation that was open before, and whether it was put back (None: nothing to restore)."""
+
+    ok: bool
+    previous: Optional[str] = None
+    restored: Optional[bool] = None
 
 
 class TeamsDriver(ABC):
@@ -29,16 +41,50 @@ class TeamsDriver(ABC):
         """Make thread_id the active conversation. True only once it is confirmed active."""
 
     @abstractmethod
+    def active_thread(self) -> Optional[str]:
+        """Thread id of the conversation currently open in Teams, None if none or unknown."""
+
+    def _current(self) -> Optional[str]:
+        try:
+            return self.active_thread()
+        except Exception:
+            return None
+
+    @contextmanager
+    def focused(self, thread_id: str, restore: bool = True) -> Iterator[Focus]:
+        """Open thread_id for the duration of the block, then (restore=True) reopen the
+        conversation the user was looking at. Callers must check `focus.ok` before acting."""
+        previous = self._current()
+        focus = Focus(ok=False, previous=previous)
+        try:
+            focus.ok = bool(self.open_thread(thread_id))
+        except Exception:
+            focus.ok = False
+        try:
+            yield focus
+        finally:
+            if restore and previous is not None and previous != thread_id and self._current() != previous:
+                try:
+                    focus.restored = bool(self.open_thread(previous))
+                except Exception:
+                    focus.restored = False
+
+    @abstractmethod
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         """Type into the compose box of the active conversation, which must still be
         thread_id (re-checked by the driver). False if it cannot confirm it."""
 
-    def type_reply(self, thread_id: str, text: str, send: bool) -> bool:
+    def type_reply(self, thread_id: str, text: str, send: bool, restore: bool = False) -> bool:
         """Open thread_id, then type text (send=True also presses Enter). Refuses (False)
-        whenever the target conversation cannot be confirmed: never types blind."""
-        if not self.open_thread(thread_id):
-            return False
-        return self._type_into_active(thread_id, text, send)
+        whenever the target conversation cannot be confirmed: never types blind.
+        restore=True reopens the previously active conversation afterwards."""
+        return self.type_focused(thread_id, text, send, restore).ok
+
+    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool) -> Focus:
+        """Like type_reply but returns the Focus; `ok` is True only if the text was typed."""
+        with self.focused(thread_id, restore=restore) as focus:
+            focus.ok = focus.ok and bool(self._type_into_active(thread_id, text, send))
+        return focus
 
     @abstractmethod
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

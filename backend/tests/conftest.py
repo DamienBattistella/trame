@@ -19,6 +19,7 @@ import config as cfgmod  # noqa: E402
 from brain.base import Brain  # noqa: E402
 from drivers.mock import MockTeamsDriver  # noqa: E402
 from github import context as gh  # noqa: E402
+from github.auth import GithubAuth  # noqa: E402
 
 
 class FakeBrain(Brain):
@@ -44,6 +45,15 @@ def fake_factory(cfg: dict) -> FakeBrain:
     return FakeBrain(name=cfg.get("brain", {}).get("provider", "claude"))
 
 
+def _no_process(*_args, **_kwargs):
+    raise AssertionError("aucun vrai processus gh dans les tests")
+
+
+def offline_auth(**kwargs) -> GithubAuth:
+    """GithubAuth that can never start a real gh process (gh absent unless overridden)."""
+    return GithubAuth(**{"which": lambda _name: None, "run": _no_process, "spawn": _no_process, **kwargs})
+
+
 class RefusingDriver(MockTeamsDriver):
     def open_thread(self, thread_id: str) -> bool:
         return False
@@ -58,7 +68,10 @@ def fresh_home(monkeypatch):
     (home / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
     shutil.copyfile(REPO / "SOUL.md", home / "SOUL.md")
     monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: "")
+    monkeypatch.setattr(gh, "_run", _no_process)
+    gh._sso_blocked.clear()
     yield home
+    gh._sso_blocked.clear()
 
 
 @pytest.fixture
@@ -68,9 +81,10 @@ def make_client():
 
     clients = []
 
-    def _make(driver=None, brain=None):
+    def _make(driver=None, brain=None, github_auth=None):
         driver = driver or MockTeamsDriver(interval=9999)
-        app = create_app(driver=driver, brain=brain or FakeBrain(), brain_factory=fake_factory)
+        app = create_app(driver=driver, brain=brain or FakeBrain(), brain_factory=fake_factory,
+                         github_auth=github_auth or offline_auth())
         client = TestClient(app)
         client.__enter__()
         clients.append(client)

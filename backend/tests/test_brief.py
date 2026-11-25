@@ -156,7 +156,7 @@ def test_brief_unparsable_output(make_client, fake_gh, raw):
     r = client.post(f"/api/threads/{LUCAS}/brief")
     assert r.status_code == 502 and r.json()["ok"] is False
     assert "Rien n'a été perdu" in r.json()["error"]
-    assert client.get(f"/api/threads/{LUCAS}/brief").status_code == 404
+    assert client.get(f"/api/threads/{LUCAS}/brief").json() == {"ok": True, "brief": None}
     assert watcher.state.logs[0].level == "warn" and "Résumé impossible" in watcher.state.logs[0].text
     assert fake_gh.calls == []
 
@@ -170,7 +170,10 @@ def test_brief_brain_failure(make_client, fake_gh):
 def test_brief_cache_and_last_messages(make_client, fake_gh):
     brain = _brain()
     client, _watcher, _driver = make_client(brain=brain)
-    assert client.get(f"/api/threads/{LUCAS}/brief").status_code == 404
+    empty = client.get(f"/api/threads/{LUCAS}/brief")
+    assert empty.status_code == 200 and empty.json() == {"ok": True, "brief": None}
+    unknown = client.get("/api/threads/19:inconnu@thread.v2/brief")
+    assert unknown.status_code == 404 and unknown.json()["ok"] is False
     posted = client.post(f"/api/threads/{LUCAS}/brief", json={"last_messages": 10}).json()["brief"]
     assert posted["sources"]["messages"] == 10
     got = client.get(f"/api/threads/{LUCAS}/brief").json()
@@ -220,7 +223,8 @@ def test_mock_brain_via_env(monkeypatch, make_client, fake_gh):
     from fastapi.testclient import TestClient
     from app import create_app
 
-    app = create_app(driver=MockTeamsDriver(interval=9999))
+    from conftest import offline_auth
+    app = create_app(driver=MockTeamsDriver(interval=9999), github_auth=offline_auth())
     with TestClient(app) as client:
         watcher = app.state.watcher
         assert isinstance(watcher.brain, MockBrain)

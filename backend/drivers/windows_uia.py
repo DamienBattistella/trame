@@ -102,6 +102,28 @@ class WindowsUIADriver(TeamsDriver):
         by_name = [i for i in items if self._display_name_of(i) == name]
         return by_name[0] if len(by_name) == 1 else None
 
+    @staticmethod
+    def _is_selected(item) -> bool:
+        try:
+            pattern = item.GetSelectionItemPattern()  # A CALER: selected state exposed on the rail item.
+            return bool(pattern is not None and pattern.IsSelected)
+        except Exception:
+            return False
+
+    def active_thread(self) -> Optional[str]:
+        try:
+            rail = self._find_rail(self._window())
+            if rail is None:
+                return None
+            selected = [i for i in self._rail_items(rail) if self._is_selected(i)]
+            if len(selected) != 1:
+                return None
+            thread_id = self._thread_id_of(selected[0])
+            self._names[thread_id] = self._display_name_of(selected[0])
+            return thread_id
+        except Exception:
+            return None
+
     def _conversation_title(self, win) -> Optional[str]:
         return None  # A CALER: header of the open conversation (title text node).
 
@@ -110,13 +132,7 @@ class WindowsUIADriver(TeamsDriver):
         if rail is None:
             return False
         item = self._rail_item_for(rail, thread_id)
-        if item is None:
-            return False
-        try:
-            pattern = item.GetSelectionItemPattern()  # A CALER: selected state exposed on the rail item.
-            if pattern is None or not pattern.IsSelected:
-                return False
-        except Exception:
+        if item is None or not self._is_selected(item):
             return False
         title = self._conversation_title(win)
         if title is not None and title.strip() != self._display_name_of(item):
@@ -151,8 +167,10 @@ class WindowsUIADriver(TeamsDriver):
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         win = self._window()
-        msglist = self._find_message_list(win)
         out: list[IncomingMessage] = []
+        if not self._is_active(win, thread_id):
+            return out
+        msglist = self._find_message_list(win)
         if msglist is None:
             return out
         last_sender = ""

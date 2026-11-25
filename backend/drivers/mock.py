@@ -100,8 +100,9 @@ class MockTeamsDriver(TeamsDriver):
     def __init__(self, interval: float = 20.0):
         self.interval = interval
         self._convs = [c.model_copy() for c in _SEED]
-        self.active_thread: Optional[str] = None
+        self._active: Optional[str] = None
         self.typed: list[tuple[str, str, bool]] = []
+        self.opened: list[str] = []
 
     def selftest(self) -> bool:
         return True
@@ -123,11 +124,15 @@ class MockTeamsDriver(TeamsDriver):
     def open_thread(self, thread_id: str) -> bool:
         if not any(c.thread_id == thread_id for c in self._convs):
             return False
-        self.active_thread = thread_id
+        self._active = thread_id
+        self.opened.append(thread_id)
         return True
 
+    def active_thread(self) -> Optional[str]:
+        return self._active
+
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
-        if self.active_thread != thread_id:
+        if self._active != thread_id:
             return False
         self.typed.append((thread_id, text, send))
         action = "ENVOYÉ" if send else "SAISI"

@@ -102,11 +102,19 @@ export function BriefSheet({
     setPrevious(null);
     setPhase("loading");
     const n = ++seq.current;
+    trame.getGithubStatus();
     trame.getBrief(target.threadId).then((res) => {
       if (n !== seq.current) return;
       if (res.ok && res.brief) {
         setBrief(res.brief);
         setPhase("done");
+      } else if (!res.ok && res.status === 404) {
+        setSteps(["error", "idle", "idle"]);
+        setPhase("error");
+        progressCtl.start(shake);
+        toast.error(`Brief impossible pour « ${target.displayName} »`, {
+          description: `${res.error} Rien n'a été perdu.`,
+        });
       } else {
         generate(target, null);
       }
@@ -223,7 +231,7 @@ export function BriefSheet({
 
             {phase === "done" && brief && (
               <motion.div key={`done-${brief.generatedAt}`} exit={{ opacity: 0 }}>
-                <BriefResult brief={brief} />
+                <BriefResult brief={brief} githubConnected={trame.githubStatus?.loggedIn ?? true} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -262,7 +270,7 @@ export function BriefSheet({
 const list = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
 const item = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0, transition: spring } };
 
-function BriefResult({ brief }: { brief: Brief }) {
+function BriefResult({ brief, githubConnected }: { brief: Brief; githubConnected: boolean }) {
   return (
     <motion.div variants={list} initial="hidden" animate="show" className="flex flex-col gap-6 px-5 py-5">
       <motion.section variants={item}>
@@ -300,7 +308,11 @@ function BriefResult({ brief }: { brief: Brief }) {
         <SectionLabel>Sur GitHub</SectionLabel>
         {!brief.githubEnabled || brief.github.length === 0 ? (
           <GroupList className="px-4 py-3 text-sm text-muted-foreground">
-            {brief.githubEnabled ? "Rien trouvé sur GitHub pour ces sujets." : "Contexte GitHub désactivé dans les réglages."}
+            {!brief.githubEnabled
+              ? "Contexte GitHub désactivé dans les réglages."
+              : githubConnected
+                ? "Rien trouvé sur GitHub pour ces sujets."
+                : "Connecte GitHub dans Réglages pour chercher le contexte."}
           </GroupList>
         ) : (
           <GroupList>

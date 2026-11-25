@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, Brief, DraftItem, LogItem, Mode, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
+import {
+  Brain,
+  Brief,
+  DraftItem,
+  GithubLogin,
+  GithubStatus,
+  LogItem,
+  Mode,
+  Settings,
+  SettingsPatch,
+  Surface,
+  WatchEntity,
+} from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 
 const HTTP = "http://127.0.0.1:8731";
@@ -104,6 +116,16 @@ function mapBrief(b: any): Brief {
     sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
+function mapGithubStatus(g: any): GithubStatus {
+  return {
+    installed: Boolean(g?.installed),
+    loggedIn: Boolean(g?.logged_in),
+    account: typeof g?.account === "string" && g.account ? g.account : null,
+    scopes: Array.isArray(g?.scopes) ? g.scopes : [],
+    ssoBlocked: Array.isArray(g?.sso_blocked) ? g.sso_blocked : [],
+    loginPending: Boolean(g?.login_pending),
+  };
+}
 function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (p.onboarded !== undefined) out.onboarded = p.onboarded;
@@ -170,6 +192,31 @@ let localSettings: Settings = {
 };
 const localBriefs = new Map<string, Brief>();
 
+// GitHub du mode démo : non connecté au départ, connecté ~6 s après le début de la connexion.
+const DEMO_GITHUB_ACCOUNT = "Wifsimster";
+const DEMO_LOGIN_MS = 6000;
+let localGithub: GithubStatus = {
+  installed: true,
+  loggedIn: false,
+  account: null,
+  scopes: [],
+  ssoBlocked: [],
+  loginPending: false,
+};
+let localLoginStartedAt = 0;
+function demoGithubStatus(): GithubStatus {
+  if (localGithub.loginPending && Date.now() - localLoginStartedAt >= DEMO_LOGIN_MS) {
+    localGithub = {
+      ...localGithub,
+      loggedIn: true,
+      loginPending: false,
+      account: DEMO_GITHUB_ACCOUNT,
+      scopes: ["repo", "read:org"],
+    };
+  }
+  return localGithub;
+}
+
 export type BriefPrefs = Settings["brief"] & { github: boolean };
 const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.enabled });
 
@@ -209,6 +256,8 @@ export function useTrame() {
   stateRef.current = state;
   // Copie des réglages du brief, utile aux points d'entrée hors de l'onglet Réglages.
   const [briefPrefs, setBriefPrefs] = useState<BriefPrefs>(prefsOf(localSettings));
+  // Dernier état connu de la connexion GitHub (null tant qu'il n'a pas été vérifié).
+  const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
 
   useEffect(() => {
     let closed = false;
@@ -352,12 +401,12 @@ export function useTrame() {
     return connectedRef.current ? request("POST", "/api/soul", { filename, content }) : demo(500, {});
   };
 
-  /** Dernier brief en cache ; `brief: null` s'il n'y en a pas encore. */
+  /** Dernier brief en cache ; `brief: null` s'il n'y en a pas encore (404 : conversation inconnue). */
   const getBrief = async (threadId: string): Promise<Result<{ brief: Brief | null }>> => {
     if (!connectedRef.current) return { ok: true, brief: localBriefs.get(threadId) ?? null };
     const res = await request<{ brief: unknown }>("GET", `/api/threads/${encodeURIComponent(threadId)}/brief`);
-    if (!res.ok) return res.status === 404 ? { ok: true, brief: null } : res;
-    return { ok: true, brief: mapBrief(res.brief) };
+    if (!res.ok) return res;
+    return { ok: true, brief: res.brief ? mapBrief(res.brief) : null };
   };
   const generateBrief = async (threadId: string, lastMessages?: number): Promise<Result<{ brief: Brief }>> => {
     if (!connectedRef.current) {
@@ -367,6 +416,10 @@ export function useTrame() {
         lastMessages: lastMessages ?? localSettings.brief.lastMessages,
         github: localSettings.github.enabled,
       });
+      if (!demoGithubStatus().loggedIn) {
+        brief.github = [];
+        brief.sources = { ...brief.sources, reposSearched: 0 };
+      }
       localBriefs.set(threadId, brief);
       return { ok: true, brief };
     }
@@ -376,6 +429,45 @@ export function useTrame() {
       lastMessages !== undefined ? { last_messages: lastMessages } : {}
     );
     return res.ok ? { ok: true, brief: mapBrief(res.brief) } : res;
+  };
+
+  const getGithubStatus = async (): Promise<Result<{ github: GithubStatus }>> => {
+    if (!connectedRef.current) {
+      await wait(250);
+      const github = { ...demoGithubStatus() };
+      setGithubStatus(github);
+      return { ok: true, github };
+    }
+    const res = await request<{ github: unknown }>("GET", "/api/github/status");
+    if (!res.ok) return res;
+    const github = mapGithubStatus(res.github);
+    setGithubStatus(github);
+    return { ok: true, github };
+  };
+  useEffect(() => {
+    getGithubStatus();
+  }, [connected]);
+  /** Démarre la connexion par code (device flow) ; elle aboutit quand le code est saisi sur GitHub. */
+  const githubLogin = async (): Promise<Result<GithubLogin>> => {
+    if (!connectedRef.current) {
+      await wait(700);
+      const cur = demoGithubStatus();
+      if (cur.loggedIn) return { ok: false, error: "Tu es déjà connecté à GitHub.", status: 409 };
+      localGithub = { ...cur, loginPending: true };
+      localLoginStartedAt = Date.now();
+      return { ok: true, code: "8F3A-2C1D", verificationUrl: "https://github.com/login/device" };
+    }
+    const res = await request<{ code: string; verification_url: string }>("POST", "/api/github/login");
+    if (!res.ok) return res;
+    return { ok: true, code: res.code, verificationUrl: res.verification_url || "https://github.com/login/device" };
+  };
+  const cancelGithubLogin = async (): Promise<Result> => {
+    if (!connectedRef.current) {
+      await wait(300);
+      localGithub = { ...localGithub, loginPending: false };
+      return { ok: true };
+    }
+    return request("POST", "/api/github/login/cancel");
   };
 
   const toggleWatch = (threadId: string) => {
@@ -412,6 +504,10 @@ export function useTrame() {
     briefPrefs,
     getBrief,
     generateBrief,
+    githubStatus,
+    getGithubStatus,
+    githubLogin,
+    cancelGithubLogin,
     saveWatchlist,
     uploadSoul,
     toggleWatch,

@@ -75,3 +75,17 @@ export interface Brief {
   github: BriefGithubItem[];
   sources: { messages: number; reposSearched: number };
 }
+
+export interface GithubStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  account: string | null;
+  scopes: string[];
+  ssoBlocked: string[];
+  loginPending: boolean;
+}
+
+export interface GithubLogin {
+  code: string;
+  verificationUrl: string;
+}

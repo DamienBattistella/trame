@@ -7,6 +7,7 @@ import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
 import { SoulHelp } from "@/components/SoulHelp";
+import { GithubConnect } from "@/components/GithubConnect";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { SOUL_MAX_BYTES, Trame } from "@/api";
@@ -149,6 +150,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     setTimeout(onFinish, 700);
   };
 
+  // Statut inconnu (pas encore vérifié) : on ne présume pas d'une absence de connexion.
+  const githubConnected = trame.githubStatus ? trame.githubStatus.loggedIn : true;
   const canContinue = (step !== 2 || probe === "ok") && (activation === "idle" || activation === "error");
   const last = step === TOTAL - 1;
 
@@ -282,13 +285,33 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       title: "Contexte GitHub",
       sub: "En lecture seule, consulté quand un message parle code. Trame n'écrit jamais.",
       body: (
-        <GroupList>
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <GitBranch className={cn("size-5 transition-colors", github ? "text-primary" : "text-muted-foreground")} />
-            <span className="flex-1">Activer le contexte GitHub</span>
-            <Switch checked={github} onCheckedChange={pickGithub} />
-          </div>
-        </GroupList>
+        <div className="flex w-full flex-col">
+          <GroupList>
+            <div className="flex items-center gap-3 px-4 py-3.5">
+              <GitBranch className={cn("size-5 transition-colors", github ? "text-primary" : "text-muted-foreground")} />
+              <span className="flex-1">Activer le contexte GitHub</span>
+              <Switch checked={github} onCheckedChange={pickGithub} />
+            </div>
+          </GroupList>
+          <AnimatePresence initial={false}>
+            {github && (
+              <motion.div
+                key="connect"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-col gap-2 pt-3">
+                  <GithubConnect trame={trame} />
+                  {!trame.githubStatus?.loggedIn && (
+                    <span className="text-xs text-muted-foreground">Facultatif : tu pourras te connecter plus tard dans Réglages.</span>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       ),
     },
     {
@@ -297,13 +320,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       body: (
         <div className="flex w-full flex-col gap-3">
           <GroupList>
-            {[
+            {([
               ["Cerveau", brain === "claude" ? "Claude" : "Copilot"],
               ["Surveillées", `${watched.length}`],
               ["En auto", `${watched.filter((c) => c.mode === "auto").length}`],
-              ["GitHub", github ? "Activé" : "Désactivé"],
+              ["GitHub", github ? (githubConnected ? "Activé" : "non connecté") : "Désactivé", github && !githubConnected],
               ["Ta voix", soul ? soul.name : "Plus tard"],
-            ].map(([label, value], i) => (
+            ] as [string, string, boolean?][]).map(([label, value, muted], i) => (
               <motion.div
                 key={label}
                 initial={{ opacity: 0, y: 6 }}
@@ -312,7 +335,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
                 className="flex items-center justify-between px-4 py-3"
               >
                 <span className="text-muted-foreground">{label}</span>
-                <span className="truncate pl-4 font-medium">{value}</span>
+                <span className={cn("truncate pl-4", muted ? "text-muted-foreground" : "font-medium")}>{value}</span>
               </motion.div>
             ))}
           </GroupList>

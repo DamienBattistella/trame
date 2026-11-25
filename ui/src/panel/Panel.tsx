@@ -12,6 +12,7 @@ import { BrainPicker } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { BriefSheet, BriefTarget } from "@/components/BriefSheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { GithubConnect } from "@/components/GithubConnect";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -507,6 +508,7 @@ function SettingsView({ trame }: { trame: Trame }) {
 
       <motion.div animate={githubCtl}>
         <SectionHeader state={save.github}>Contexte GitHub</SectionHeader>
+        <GithubConnect trame={trame} className="mb-3" />
         <GroupList>
           <ToggleRow
             label="Activer le contexte GitHub"

@@ -10,7 +10,7 @@ import safety
 import settings as settingsmod
 from github import context as gh
 from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
-from drivers.base import TeamsDriver
+from drivers.base import Focus, TeamsDriver
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
 
@@ -122,7 +122,7 @@ class Watcher:
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi auto annulé → gardé en brouillon ({msg.sender})")
                 return "draft"
-            if self._deliver(msg.thread_id, proposal, send=True):
+            if self._deliver(msg.thread_id, proposal, send=True, restore=True):
                 self.log("sent", f"Auto → {msg.sender} : « {proposal[:60]} »")
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
@@ -141,14 +141,21 @@ class Watcher:
             threading.Event().wait(0.1)
         return not (self._stop.is_set() or self.state.paused)
 
-    def _deliver(self, thread_id: str, text: str, send: bool) -> bool:
-        """Type into thread_id through the driver's guard. False on any doubt or error."""
+    def _deliver(self, thread_id: str, text: str, send: bool, restore: bool) -> bool:
+        """Type into thread_id through the driver's guard. False on any doubt or error.
+        restore=True puts the user's previous conversation back afterwards."""
         with self._ui_lock:
             try:
-                return bool(self.driver.type_reply(thread_id, text, send=send))
+                focus = self.driver.type_focused(thread_id, text, send, restore)
             except Exception as e:
                 self.log("warn", f"Saisie impossible: {e}")
                 return False
+        self._warn_if_not_restored(focus)
+        return focus.ok
+
+    def _warn_if_not_restored(self, focus: Focus) -> None:
+        if focus.restored is False:
+            self.log("warn", "Impossible de rouvrir la conversation que tu regardais dans Teams.")
 
     def _screen_sharing(self) -> bool:
         try:
@@ -175,8 +182,11 @@ class Watcher:
             raise ActionError(404, "Brouillon introuvable.")
         return d
 
+    def _screen_share_guarded(self) -> bool:
+        return bool(self.cfg.get("safety", {}).get("auto_pause_on_screen_share", True) and self._screen_sharing())
+
     def _typing_allowed(self) -> None:
-        if self.cfg.get("safety", {}).get("auto_pause_on_screen_share", True) and self._screen_sharing():
+        if self._screen_share_guarded():
             self.state.screen_sharing = True
             raise ActionError(409, "Partage d'écran en cours : aucune saisie dans Teams.")
 
@@ -184,7 +194,7 @@ class Watcher:
         d = self._draft(draft_id)
         body = text.strip() if text and text.strip() else d.proposal
         self._typing_allowed()
-        if not self._deliver(d.thread_id, body, send=True):
+        if not self._deliver(d.thread_id, body, send=True, restore=True):
             with self._lock:
                 d.proposal = body
             self.log("warn", f"Envoi refusé : conversation de {d.from_} non confirmée → brouillon conservé")
@@ -199,7 +209,7 @@ class Watcher:
         self._typing_allowed()
         with self._lock:
             d.proposal = body
-        if not self._deliver(d.thread_id, body, send=False):
+        if not self._deliver(d.thread_id, body, send=False, restore=False):
             self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
             raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été saisi.")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
@@ -295,11 +305,7 @@ class Watcher:
         if not prefs.brief.enabled:
             raise ActionError(409, "Le résumé de conversation est désactivé dans les réglages.")
         name = entity.display_name
-        try:
-            msgs = self.driver.read_context(thread_id, last_messages or prefs.brief.last_messages)
-        except Exception as e:
-            self.log("warn", f"Résumé impossible pour {name} : lecture de la conversation échouée ({e})")
-            raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
+        msgs = self._read_focused(thread_id, name, last_messages or prefs.brief.last_messages)
         if not msgs:
             self.log("warn", f"Résumé impossible pour {name} : aucun message lisible")
             raise ActionError(502, "Aucun message lisible dans cette conversation : rien n'a été résumé.")
@@ -324,7 +330,7 @@ class Watcher:
                 gh_cfg = self.cfg.get("context", {}).get("github", {})
                 try:
                     repos = gh.scope(prefs.github.all_repos, gh_cfg.get("repos_allowlist", []))
-                    hits = gh.search(digest.search_queries, numbers, repos, prefs.github.all_repos)
+                    hits = gh.search(digest.search_queries, numbers, repos, prefs.github.all_repos, transcript)
                     repos_searched = len(repos)
                 except Exception as e:
                     self.log("warn", f"Recherche GitHub impossible pour le résumé de {name} : {e}")
@@ -346,11 +352,30 @@ class Watcher:
         self.log("info", f"Résumé généré pour {name} ({len(msgs)} message(s){gh_part})")
         return brief
 
-    def cached_brief(self, thread_id: str) -> Brief:
-        brief = self._briefs.get(thread_id)
-        if brief is None:
-            raise ActionError(404, "Aucun résumé disponible pour cette conversation.")
-        return brief
+    def _read_focused(self, thread_id: str, name: str, last_n: int) -> list[IncomingMessage]:
+        """Open the conversation just long enough to read it, then reopen the previous one."""
+        with self._ui_lock:
+            if self.driver._current() != thread_id and self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame n'ouvre pas d'autre conversation dans Teams.")
+            msgs: list[IncomingMessage] = []
+            try:
+                with self.driver.focused(thread_id, restore=True) as focus:
+                    if focus.ok:
+                        msgs = self.driver.read_context(thread_id, last_n)
+            except Exception as e:
+                self.log("warn", f"Résumé impossible pour {name} : lecture de la conversation échouée ({e})")
+                raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
+        self._warn_if_not_restored(focus)
+        if not focus.ok:
+            self.log("warn", f"Résumé impossible pour {name} : conversation non confirmée dans Teams")
+            raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams : rien n'a été résumé.")
+        return msgs
+
+    def cached_brief(self, thread_id: str) -> Optional[Brief]:
+        """Last brief of a known conversation, None if none was generated yet."""
+        self._conversation(thread_id)
+        return self._briefs.get(thread_id)
 
     # --- settings & persona ---
     def get_settings(self) -> settingsmod.Settings:

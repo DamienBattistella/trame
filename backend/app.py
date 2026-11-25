@@ -20,6 +20,7 @@ from brain.base import Brain
 from brain.claude import ClaudeBrain
 from brain.copilot import CopilotBrain
 from drivers.base import TeamsDriver
+from github.auth import GithubAuth
 
 
 def make_driver() -> TeamsDriver:
@@ -82,17 +83,21 @@ def create_app(
     driver: Optional[TeamsDriver] = None,
     brain: Optional[Brain] = None,
     brain_factory: Callable[[dict], Brain] = make_brain,
+    github_auth: Optional[GithubAuth] = None,
 ) -> FastAPI:
     watcher = Watcher(driver or make_driver(), brain or brain_factory(cfgmod.load()), brain_factory=brain_factory)
+    gh_auth = github_auth or GithubAuth()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         watcher.start()
         yield
         watcher.stop()
+        gh_auth.cancel()
 
     app = FastAPI(title="Trame", lifespan=lifespan)
     app.state.watcher = watcher
+    app.state.github_auth = gh_auth
     # Loopback-only server. Allow the dev origin (Vite) and the packaged Tauri origin
     # (tauri://localhost, http(s)://tauri.localhost) — otherwise POST actions are
     # blocked by CORS in the installed app.
@@ -181,7 +186,21 @@ def create_app(
 
     @app.get("/api/threads/{thread_id:path}/brief")
     def get_brief(thread_id: str):
-        return {"ok": True, "brief": watcher.cached_brief(thread_id).model_dump()}
+        brief = watcher.cached_brief(thread_id)
+        return {"ok": True, "brief": brief.model_dump() if brief else None}
+
+    @app.get("/api/github/status")
+    def github_status():
+        return {"ok": True, "github": gh_auth.status().model_dump()}
+
+    @app.post("/api/github/login")
+    def github_login():
+        return {"ok": True, **gh_auth.login()}
+
+    @app.post("/api/github/login/cancel")
+    def github_login_cancel():
+        gh_auth.cancel()
+        return {"ok": True}
 
     @app.post("/api/soul")
     def post_soul(body: SoulBody):

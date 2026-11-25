@@ -77,10 +77,10 @@ def test_type_reply_guard_on_mock():
     driver = MockTeamsDriver(interval=9999)
     assert driver.type_reply("19:inconnu@thread.v2", "x", send=True) is False
     assert driver.typed == []
-    driver.active_thread = DM_DRAFT
+    driver._active = DM_DRAFT
     assert driver._type_into_active(DM_AUTO, "x", send=True) is False
     assert driver.type_reply(DM_AUTO, "x", send=True) is True
-    assert driver.active_thread == DM_AUTO
+    assert driver.active_thread() == DM_AUTO
 
 
 def test_auto_send_and_refusal(make_client):
