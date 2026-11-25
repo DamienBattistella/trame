@@ -52,7 +52,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
         <span className="inline-flex">{button}</span>
       </TooltipTrigger>
       <TooltipContent>
-        {enabled ? "Résumé de la conversation et liens GitHub" : "Brief de conversation désactivé dans Réglages"}
+        {enabled ? "Résumé de la conversation et liens GitHub" : "Résumé désactivé dans les réglages"}
       </TooltipContent>
     </Tooltip>
   );
@@ -61,6 +61,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
 export function Panel({ trame }: { trame: Trame }) {
   const { state } = trame;
   const [briefFor, setBriefFor] = useState<BriefTarget | null>(null);
+  const [tab, setTab] = useState("drafts");
   // Le brief n'est chargé qu'à la première ouverture, puis reste monté pour ses animations.
   const [briefUsed, setBriefUsed] = useState(false);
   useEffect(() => {
@@ -101,7 +102,7 @@ export function Panel({ trame }: { trame: Trame }) {
         )}
       </AnimatePresence>
 
-      <Tabs defaultValue="drafts" className="flex min-h-0 flex-1 flex-col">
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="self-start rounded-full">
           <TabsTrigger value="drafts" className="rounded-full">
             Brouillons <CountBadge n={state.drafts.length} />
@@ -112,7 +113,7 @@ export function Panel({ trame }: { trame: Trame }) {
         </TabsList>
 
         <TabsContent value="drafts" className="flex-1 overflow-auto">
-          <Drafts trame={trame} onBrief={setBriefFor} />
+          <Drafts trame={trame} onBrief={setBriefFor} onChoose={() => setTab("watchlist")} />
         </TabsContent>
         <TabsContent value="watchlist" className="flex-1 overflow-auto">
           <Watchlist trame={trame} onBrief={setBriefFor} />
@@ -133,7 +134,7 @@ export function Panel({ trame }: { trame: Trame }) {
   );
 }
 
-function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
+function Drafts({ trame, onBrief, onChoose }: { trame: Trame; onBrief: OpenBrief; onChoose: () => void }) {
   const drafts = trame.state.drafts;
   const [catching, setCatching] = useState<"idle" | "run" | "done">("idle");
   const [added, setAdded] = useState(0);
@@ -167,9 +168,7 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
             exit={{ opacity: 0, y: -4 }}
             className="ml-1 text-sm text-muted-foreground"
           >
-            {drafts.length === 0
-              ? "Tout est à jour"
-              : `${drafts.length} réponse${drafts.length > 1 ? "s" : ""} à relire`}
+            {drafts.length > 0 && `${drafts.length} réponse${drafts.length > 1 ? "s" : ""} à relire`}
           </motion.p>
         </AnimatePresence>
         <motion.div animate={controls}>
@@ -204,7 +203,9 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
       </div>
 
       <AnimatePresence initial={false} mode="popLayout">
-        {drafts.length === 0 && <EmptyDrafts key="empty" />}
+        {drafts.length === 0 && (
+          <EmptyDrafts key="empty" following={trame.state.watchlist.filter((w) => w.watch).length} onChoose={onChoose} />
+        )}
         {drafts.map((d) => (
           <DraftCard key={d.id} draft={d} trame={trame} onBrief={onBrief} />
         ))}
@@ -213,7 +214,7 @@ function Drafts({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   );
 }
 
-function EmptyDrafts() {
+function EmptyDrafts({ following, onChoose }: { following: number; onChoose: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
@@ -229,10 +230,22 @@ function EmptyDrafts() {
       >
         <Check className="size-6" strokeWidth={3} />
       </motion.span>
-      <p className="font-medium">Rien à relire</p>
-      <p className="max-w-xs text-sm text-muted-foreground">
-        Quand quelqu'un que tu suis t'écrit, sa réponse proposée apparaît ici.
-      </p>
+      {following > 0 ? (
+        <>
+          <p className="font-medium">Rien à relire</p>
+          <p className="max-w-xs text-sm text-muted-foreground">
+            Trame suit {following} conversation{following > 1 ? "s" : ""}. Quand on t'y écrit, la réponse proposée apparaît ici.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="font-medium">Aucune conversation suivie</p>
+          <p className="max-w-xs text-sm text-muted-foreground">Trame ne lit que les conversations que tu choisis.</p>
+          <Button variant="secondary" className="rounded-full" onClick={onChoose}>
+            Choisir des conversations
+          </Button>
+        </>
+      )}
     </motion.div>
   );
 }
@@ -492,7 +505,11 @@ function Logs({ logs }: { logs: LogItem[] }) {
       <SectionLabel>Activité</SectionLabel>
       <GroupList>
         <ScrollArea className="h-[58vh]">
-          {logs.length === 0 && <div className="px-4 py-6 text-center text-sm text-muted-foreground">Aucune activité pour l'instant.</div>}
+          {logs.length === 0 && (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+              Aucune activité pour l'instant. Chaque message lu, réponse proposée ou envoi apparaîtra ici.
+            </div>
+          )}
           <AnimatePresence initial={false}>
             {logs.map((l) => (
               <motion.div

@@ -76,7 +76,7 @@ export function BriefSheet({
       setPhase("error");
       progressCtl.start(shake);
       toast.error(`Brief impossible pour « ${t.displayName} »`, {
-        description: `${res.error} Rien n'a été perdu${prev ? ", le brief précédent est conservé" : ""}.`,
+        description: `${res.error} Rien n'a été perdu${prev ? ", le résumé précédent est conservé" : ""}.`,
       });
       return;
     }

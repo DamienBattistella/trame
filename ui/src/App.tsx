@@ -197,16 +197,21 @@ function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolea
       <TooltipTrigger asChild>
         <div className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground">
           <span className="relative grid size-2 place-items-center">
-            {connected && (
-              <motion.span
-                className="absolute inset-0 rounded-full bg-success"
-                animate={{ scale: [1, 2.4], opacity: [0.6, 0] }}
-                transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
-              />
-            )}
+            {/* Une seule onde à la connexion : elle confirme le changement d'état, puis le point reste calme. */}
+            <AnimatePresence>
+              {connected && (
+                <motion.span
+                  key="ping"
+                  className="absolute inset-0 rounded-full bg-success"
+                  initial={{ scale: 1, opacity: 0.6 }}
+                  animate={{ scale: 2.4, opacity: 0 }}
+                  transition={{ duration: 1.2, ease: "easeOut" }}
+                />
+              )}
+            </AnimatePresence>
             <span className={cn("relative size-2 rounded-full transition-colors duration-300", connected ? "bg-success" : "bg-muted-foreground/50")} />
           </span>
-          <span className="hidden sm:inline">{connected ? "En direct" : "Hors ligne"}</span>
+          <span className="hidden sm:inline">{connected ? "En direct" : demo ? "Données d'exemple" : "Hors ligne"}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent>

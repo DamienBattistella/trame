@@ -127,8 +127,20 @@ export function ConversationList({
               </div>
             ))}
             {visible.length === 0 && (
-              <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+              <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
                 Aucune conversation ne correspond{query ? ` à « ${query} »` : ""}.
+                {(query || filter !== "all") && (
+                  <button
+                    type="button"
+                    className="font-medium text-link hover:underline"
+                    onClick={() => {
+                      setQuery("");
+                      setFilter("all");
+                    }}
+                  >
+                    Tout afficher
+                  </button>
+                )}
               </div>
             )}
           </div>

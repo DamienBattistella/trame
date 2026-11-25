@@ -21,7 +21,7 @@ const center = { transformBox: "fill-box", transformOrigin: "center" } as const;
 
 export function SoulGhost({ state, size = 76 }: { state: GhostState; size?: number }) {
   const body = {
-    idle: { y: [0, -4, 0], rotate: 0, scale: 1, transition: { y: { duration: 3, repeat: Infinity, ease: "easeInOut" as const } } },
+    idle: { y: [0, -4, 0], rotate: 0, scale: 1, transition: { y: { duration: 3, repeat: 2, ease: "easeInOut" as const } } },
     drag: { y: [-6, -10, -6], rotate: 0, scale: 1.12, transition: { y: { duration: 1.1, repeat: Infinity, ease: "easeInOut" as const }, scale: { type: "spring" as const, stiffness: 300, damping: 15 } } },
     ok: { y: [0, -12, 0, -3, 0], rotate: 0, scale: 1, transition: { y: { duration: 0.9, delay: 0.45, ease: "easeOut" as const } } },
     error: { y: 0, rotate: [0, -12, 10, -7, 4, 0], scale: 1, transition: { rotate: { duration: 0.6 } } },
@@ -61,7 +61,7 @@ export function SoulGhost({ state, size = 76 }: { state: GhostState; size?: numb
         strokeWidth={2.4}
         strokeLinejoin="round"
         animate={{ skewX: state === "error" ? 0 : [0, 2.5, 0, -2.5, 0] }}
-        transition={{ duration: state === "drag" ? 1.2 : 3.2, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: state === "drag" ? 1.2 : 3.2, repeat: state === "drag" ? Infinity : 2, ease: "easeInOut" }}
         style={{ transformBox: "fill-box", transformOrigin: "50% 0%" }}
       />
 
@@ -82,7 +82,7 @@ export function SoulGhost({ state, size = 76 }: { state: GhostState; size?: numb
                 transition={{
                   rx: { type: "spring", stiffness: 400, damping: 18 },
                   ry: { type: "spring", stiffness: 400, damping: 18 },
-                  scaleY: { duration: 4, times: [0, 0.9, 0.95, 1], repeat: Infinity },
+                  scaleY: { duration: 4, times: [0, 0.9, 0.95, 1], repeat: 2 },
                 }}
                 style={center}
               />

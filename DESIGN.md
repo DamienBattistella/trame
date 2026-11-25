@@ -219,3 +219,16 @@ couche UIA se cale sur la machine (phase 0, le vrai go/no-go).
 - **Accessibilité** : audit axe-core WCAG 2 AA sur les 12 écrans, sans violation (hors animations d'apparition). Chaque interrupteur et bouton-icône a un nom accessible.
 - **Vocabulaire** : on *suit* une conversation (jamais « surveiller », jamais « watchlist » à l'écran) ; « Résumé » pour le brief ; pas de jargon technique (sélecteurs, wizard) ; pas de flèches ni d'emoji dans les textes ; phrases courtes, deux-points plutôt que tirets.
 - **Parcours façon Apple** : une idée par écran, titre court + une phrase, bouton principal unique en bas, « Retour » en haut à gauche, étape facultative encore vide → bouton « Plus tard » en retrait, récapitulatif avant activation.
+
+### Passe anti-slop (skill `antislop-ui` + `antislop-copywriting`, miqdadbadjuber/anti-slop)
+
+Check-list UI appliquée écran par écran ; choix assumés, avec leur raison :
+
+- **Palette** : bleu Trame + neutres zinc + vert/orange/rouge d'état uniquement. Aucun dégradé, verre, lueur ni grille de fond. Le bleu est réservé à l'action principale et au texte d'accent.
+- **Rayons** : pilule pour les boutons, onglets et contrôles segmentés (convention macOS/iOS demandée : « style Apple ») ; cartes et listes en `rounded-2xl`. Pas de pilule sur les textes ni les blocs de contenu.
+- **Icônes** : Lucide, cohérent avec shadcn ; aucune icône « IA » générique (étoile, baguette). Les logos Claude, Copilot et GitHub sont les vrais logos (simple-icons). Le fantôme du dépôt de `SOUL.md` est une illustration liée au produit (l'« âme »), demandée explicitement.
+- **Police** : Segoe UI, police système de Windows, cible unique de l'application.
+- **Mouvement** : aucune boucle infinie au repos. Le point « En direct » émet une seule onde à la connexion ; le fantôme flotte et cligne quelques fois puis s'immobilise, et ne s'anime en continu que pendant un glisser-déposer. Seuls les indicateurs de chargement tournent tant qu'une action est en cours.
+- **États vides** : chacun dit pourquoi et quoi faire (« Aucune conversation suivie » → « Choisir des conversations » ; recherche sans résultat → « Tout afficher »).
+- **Données** : hors moteur, l'en-tête affiche « Données d'exemple » en clair, pas seulement dans une infobulle.
+- **Textes** : pas de tiret cadratin, d'emoji, de flèche, de majuscules d'emphase ni de synonymes en alternance (« résumé » partout, jamais « brief » à l'écran).
