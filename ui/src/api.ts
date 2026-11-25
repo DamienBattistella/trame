@@ -13,6 +13,7 @@ import {
   WatchEntity,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
+import { isDesktop } from "@/desktop";
 
 const HTTP = "http://127.0.0.1:8731";
 const WS = "ws://127.0.0.1:8731/ws";
@@ -243,15 +244,24 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
   }
 }
 
+const OFFLINE = "Le moteur Trame est injoignable : rien n'a été fait. Réessaie dans un instant.";
+
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Live state via WebSocket, with mock fallback when the backend is offline. */
 export function useTrame() {
   const [state, setState] = useState<TrameState>(mockState);
   const [connected, setConnected] = useState(false);
+  const [everConnected, setEverConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const connectedRef = useRef(false);
   connectedRef.current = connected;
+  // Démo (données d'exemple, actions simulées) : seulement dans un navigateur qui n'a
+  // jamais vu le moteur. Dans l'application, ou après une coupure, une action hors
+  // ligne échoue franchement : jamais de faux « Envoyé ».
+  const demoMode = !isDesktop() && !everConnected;
+  const demoRef = useRef(demoMode);
+  demoRef.current = demoMode;
   const stateRef = useRef(state);
   stateRef.current = state;
   // Copie des réglages du brief, utile aux points d'entrée hors de l'onglet Réglages.
@@ -273,7 +283,11 @@ export function useTrame() {
         return;
       }
       wsRef.current = ws;
-      ws.onopen = () => !closed && setConnected(true);
+      ws.onopen = () => {
+        if (closed) return;
+        setConnected(true);
+        setEverConnected(true);
+      };
       ws.onmessage = (e) => {
         if (closed) return;
         try {
@@ -304,8 +318,9 @@ export function useTrame() {
     };
   }, []);
 
-  /** Hors backend : succès simulé après un court délai, comme une vraie requête. */
+  /** Hors backend : succès simulé en démo, échec explicite sinon. */
   const demo = async <T,>(ms: number, data: T): Promise<Result<T>> => {
+    if (!demoRef.current) return { ok: false, error: OFFLINE };
     await wait(ms);
     return { ok: true, ...data } as Result<T>;
   };
@@ -329,6 +344,7 @@ export function useTrame() {
   /** Mise à jour optimiste de la watchlist, annulée si le moteur refuse. */
   const applyWatch = async (next: WatchlistEntry[], send: () => Promise<Result>): Promise<Result> => {
     const prev = snapshot(next.map((e) => e.threadId));
+    if (!connectedRef.current && !demoRef.current) return { ok: false, error: OFFLINE };
     patchWatch(next);
     if (!connectedRef.current) return { ok: true };
     const res = await send();
@@ -336,28 +352,47 @@ export function useTrame() {
     return res;
   };
 
-  const setPaused = (p: boolean) => {
+  /** Optimiste, mais annulé si le moteur ne confirme pas : la pause doit être réelle. */
+  const setPaused = async (p: boolean): Promise<Result> => {
+    if (!connectedRef.current && !demoRef.current) return { ok: false, error: OFFLINE };
     setState((s) => ({ ...s, paused: p }));
-    if (connectedRef.current) request("POST", "/api/pause", { paused: p });
+    if (!connectedRef.current) return { ok: true };
+    const res = await request("POST", "/api/pause", { paused: p });
+    if (!res.ok) setState((s) => ({ ...s, paused: !p }));
+    return res;
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
   const sendDraft = (id: string, text: string): Promise<Result> =>
-    connectedRef.current ? request("POST", `/api/drafts/${id}/send`, { text }) : demo(700, {});
+    connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text }) : demo(700, {});
   /** Ouvre la conversation dans Teams et tape le texte, sans envoyer. */
   const composeDraft = (id: string, text: string): Promise<Result> =>
-    connectedRef.current ? request("POST", `/api/drafts/${id}/compose`, { text }) : demo(900, {});
+    connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/compose`, { text }) : demo(900, {});
   const removeDraft = (id: string) =>
     setState((s) => ({ ...s, drafts: s.drafts.filter((d) => d.id !== id) }));
-  const dismissDraft = (id: string) => {
-    removeDraft(id);
-    if (connectedRef.current) request("POST", `/api/drafts/${id}/dismiss`);
+  const dismissDraft = async (id: string): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      removeDraft(id);
+      return { ok: true };
+    }
+    const res = await request("POST", `/api/drafts/${encodeURIComponent(id)}/dismiss`);
+    if (res.ok) {
+      removeDraft(id);
+      return res;
+    }
+    if (res.status === 404) {
+      removeDraft(id);
+      return { ok: true };
+    }
+    return res;
   };
   const catchUp = (): Promise<Result<{ queued: number }>> =>
     connectedRef.current ? request<{ queued: number }>("POST", "/api/catchup") : demo(1200, { queued: 0 });
 
   const getSettings = async (): Promise<Result<{ settings: Settings }>> => {
     if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
       setBriefPrefs(prefsOf(localSettings));
       return { ok: true, settings: localSettings };
     }
@@ -371,6 +406,7 @@ export function useTrame() {
     getSettings();
   }, [connected]);
   const updateSettings = async (patch: SettingsPatch): Promise<Result<{ settings: Settings }>> => {
+    if (!connectedRef.current && !demoRef.current) return { ok: false, error: OFFLINE };
     if (patch.brain) setState((s) => ({ ...s, brain: patch.brain! }));
     if (!connectedRef.current) {
       await wait(350);
@@ -386,14 +422,24 @@ export function useTrame() {
     return { ok: true, settings };
   };
 
-  const saveWatchlist = (entries: WatchlistEntry[]): Promise<Result<{ count: number }>> =>
-    connectedRef.current
-      ? request<{ count: number }>(
-          "PUT",
-          "/api/watchlist",
-          entries.map((e) => ({ thread_id: e.threadId, watch: e.watch, mode: e.mode }))
-        )
-      : demo(500, { count: entries.length });
+  /** Échoue si une conversation n'est plus connue de Teams : rien n'est « suivi » en silence. */
+  const saveWatchlist = async (entries: WatchlistEntry[]): Promise<Result<{ count: number }>> => {
+    if (!connectedRef.current) return demo(500, { count: entries.length });
+    const res = await request<{ count: number; missing?: string[] }>(
+      "PUT",
+      "/api/watchlist",
+      entries.map((e) => ({ thread_id: e.threadId, watch: e.watch, mode: e.mode }))
+    );
+    if (!res.ok) return res;
+    const missing = res.missing?.length ?? 0;
+    if (missing > 0) {
+      return {
+        ok: false,
+        error: `${missing} conversation${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""} dans Teams. Recharge la liste et réessaie.`,
+      };
+    }
+    return { ok: true, count: res.count };
+  };
 
   const uploadSoul = async (filename: string, content: string): Promise<Result> => {
     if (!/\.(md|txt)$/i.test(filename)) return { ok: false, error: "Seuls les fichiers .md ou .txt sont acceptés." };
@@ -403,13 +449,17 @@ export function useTrame() {
 
   /** Dernier brief en cache ; `brief: null` s'il n'y en a pas encore (404 : conversation inconnue). */
   const getBrief = async (threadId: string): Promise<Result<{ brief: Brief | null }>> => {
-    if (!connectedRef.current) return { ok: true, brief: localBriefs.get(threadId) ?? null };
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, brief: localBriefs.get(threadId) ?? null };
+    }
     const res = await request<{ brief: unknown }>("GET", `/api/threads/${encodeURIComponent(threadId)}/brief`);
     if (!res.ok) return res;
     return { ok: true, brief: res.brief ? mapBrief(res.brief) : null };
   };
   const generateBrief = async (threadId: string, lastMessages?: number): Promise<Result<{ brief: Brief }>> => {
     if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(3600);
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const brief = mockBrief(threadId, conv?.displayName ?? "Conversation", {
@@ -433,6 +483,7 @@ export function useTrame() {
 
   const getGithubStatus = async (): Promise<Result<{ github: GithubStatus }>> => {
     if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(250);
       const github = { ...demoGithubStatus() };
       setGithubStatus(github);
@@ -450,6 +501,7 @@ export function useTrame() {
   /** Démarre la connexion par code (device flow) ; elle aboutit quand le code est saisi sur GitHub. */
   const githubLogin = async (): Promise<Result<GithubLogin>> => {
     if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
       const cur = demoGithubStatus();
       if (cur.loggedIn) return { ok: false, error: "Tu es déjà connecté à GitHub.", status: 409 };
@@ -463,6 +515,7 @@ export function useTrame() {
   };
   const cancelGithubLogin = async (): Promise<Result> => {
     if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(300);
       localGithub = { ...localGithub, loginPending: false };
       return { ok: true };
@@ -470,12 +523,21 @@ export function useTrame() {
     return request("POST", "/api/github/login/cancel");
   };
 
+  /** Auto-test réel des repères de Teams (fenêtre, messages, zone de saisie). */
+  const selftest = async (): Promise<Result<{ selftestOk: boolean }>> => {
+    if (!connectedRef.current) return demo(1800, { selftestOk: true });
+    const res = await request<{ selftest_ok: boolean }>("POST", "/api/selftest");
+    if (!res.ok) return res;
+    setState((s) => ({ ...s, selftestOk: Boolean(res.selftest_ok) }));
+    return { ok: true, selftestOk: Boolean(res.selftest_ok) };
+  };
+
   const toggleWatch = (threadId: string) => {
     const cur = stateRef.current.watchlist.find((w) => w.threadId === threadId);
     if (!cur) return Promise.resolve<Result>({ ok: true });
     const watch = !cur.watch;
     return applyWatch([{ threadId, watch, mode: cur.mode }], () =>
-      request("POST", `/api/watch/${threadId}`, { watch })
+      request("POST", `/api/watch/${encodeURIComponent(threadId)}`, { watch })
     );
   };
   const setWatchMany = (threadIds: string[], watch: boolean) => {
@@ -486,13 +548,15 @@ export function useTrame() {
     const cur = stateRef.current.watchlist.find((w) => w.threadId === threadId);
     if (!cur) return Promise.resolve<Result>({ ok: true });
     return applyWatch([{ threadId, watch: cur.watch, mode }], () =>
-      request("POST", `/api/mode/${threadId}`, { mode })
+      request("POST", `/api/mode/${encodeURIComponent(threadId)}`, { mode })
     );
   };
 
   return {
     state,
     connected,
+    everConnected,
+    demoMode,
     setPaused,
     sendDraft,
     composeDraft,
@@ -510,6 +574,7 @@ export function useTrame() {
     cancelGithubLogin,
     saveWatchlist,
     uploadSoul,
+    selftest,
     toggleWatch,
     setWatchMany,
     setMode,

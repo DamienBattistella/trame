@@ -56,7 +56,10 @@ class Watcher:
 
     # --- lifecycle ---
     def start(self) -> None:
-        self.state.selftest_ok = self.driver.selftest()
+        try:
+            self.state.selftest_ok = bool(self.driver.selftest())
+        except Exception:
+            self.state.selftest_ok = False
         self.log("info", f"Auto-test des sélecteurs : {'OK' if self.state.selftest_ok else 'ÉCHEC → repli brouillon'}")
         try:
             self.state.watchlist = self._merge(self.driver.list_conversations())

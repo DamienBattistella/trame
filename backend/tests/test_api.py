@@ -315,3 +315,16 @@ def test_hand_edited_settings_do_not_break_api(make_client, fresh_home):
     r = client.get("/api/settings")
     assert r.status_code == 200
     assert r.json()["settings"]["safety"]["countdown_seconds"] == 60 and r.json()["settings"]["brain"] == "claude"
+
+
+def test_selftest_reports_result(make_client):
+    from conftest import RefusingDriver
+    client, watcher, _driver = make_client()
+    assert client.post("/api/selftest").json() == {"ok": True, "selftest_ok": True}
+
+    class Broken(RefusingDriver):
+        def selftest(self):
+            raise RuntimeError("UIA")
+
+    client, watcher, _driver = make_client(driver=Broken(interval=9999))
+    assert client.post("/api/selftest").json() == {"ok": True, "selftest_ok": False} and watcher.state.selftest_ok is False

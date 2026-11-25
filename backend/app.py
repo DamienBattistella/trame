@@ -250,8 +250,11 @@ def create_app(
 
     @app.post("/api/selftest")
     def selftest():
-        watcher.state.selftest_ok = watcher.driver.selftest()
-        return {"ok": watcher.state.selftest_ok}
+        try:
+            watcher.state.selftest_ok = bool(watcher.driver.selftest())
+        except Exception:
+            watcher.state.selftest_ok = False
+        return {"ok": True, "selftest_ok": watcher.state.selftest_ok}
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket):

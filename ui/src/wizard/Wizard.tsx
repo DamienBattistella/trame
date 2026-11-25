@@ -14,7 +14,7 @@ import { mockConversations } from "@/mockData";
 import { WatchEntity } from "@/types";
 
 const TOTAL = 8;
-const PROBE_CHECKS = ["Fenêtre Teams trouvée", "Dernier message lu", "Zone de saisie repérée"];
+const PROBE_CHECKS = ["Fenêtre Teams trouvée", "Liste des messages repérée", "Zone de saisie repérée"];
 
 const slide = {
   enter: (dir: number) => ({ x: dir * 48, opacity: 0 }),
@@ -27,11 +27,12 @@ type StepId = "settings" | "watchlist" | "soul";
 type ActivationStep = { id: StepId; label: string; status: Status };
 
 export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: () => void; onFinish: () => void }) {
-  const { connected } = trame;
+  const { connected, demoMode } = trame;
+  const live = connected || demoMode;
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const [brain, setBrain] = useState<BrainId>(trame.state.brain);
-  const [probe, setProbe] = useState<"idle" | "running" | "ok">("idle");
+  const [probe, setProbe] = useState<"idle" | "running" | "ok" | "fail">("idle");
   const [probeDone, setProbeDone] = useState(0);
   const source = connected ? trame.state.watchlist : mockConversations;
   const [convs, setConvs] = useState<WatchEntity[]>(source);
@@ -43,10 +44,23 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const [activationError, setActivationError] = useState<string | null>(null);
   const activateCtl = useAnimationControls();
 
-  // Tant que l'utilisateur n'a rien coché, on suit la watchlist réelle du moteur.
+  // Tant que l'utilisateur n'a rien coché, on suit la watchlist réelle du moteur. Ensuite
+  // on garde ses choix, mais seulement pour des conversations que le moteur connaît :
+  // jamais d'identifiants d'exemple envoyés au moteur.
   useEffect(() => {
-    if (!touched.current) setConvs(source);
-  }, [source]);
+    if (!touched.current) {
+      setConvs(source);
+      return;
+    }
+    if (!connected) return;
+    setConvs((prev) => {
+      const mine = new Map(prev.map((c) => [c.threadId, c]));
+      return source.map((w) => {
+        const c = mine.get(w.threadId);
+        return c ? { ...w, watch: c.watch, mode: c.mode } : w;
+      });
+    });
+  }, [source, connected]);
 
   useEffect(() => {
     if (!connected) return;
@@ -81,15 +95,27 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     setBrain(b);
   };
 
-  const runProbe = () => {
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const runProbe = async () => {
     setProbe("running");
     setProbeDone(0);
-    PROBE_CHECKS.forEach((_, i) =>
-      setTimeout(() => {
-        setProbeDone(i + 1);
-        if (i === PROBE_CHECKS.length - 1) setProbe("ok");
-      }, 600 * (i + 1))
-    );
+    setProbeError(null);
+    const res = await trame.selftest();
+    if (!res.ok) {
+      setProbe("fail");
+      setProbeError(res.error);
+      return;
+    }
+    if (!res.selftestOk) {
+      setProbe("fail");
+      setProbeError("Trame ne repère pas encore Teams. Ouvre Teams sur une conversation et relance. Tu peux continuer : tout restera en brouillon.");
+      return;
+    }
+    for (let i = 1; i <= PROBE_CHECKS.length; i++) {
+      setProbeDone(i);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    setProbe("ok");
   };
 
   const go = (delta: number) => {
@@ -102,17 +128,21 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     setStep((n) => Math.min(TOTAL - 1, Math.max(0, n + delta)));
   };
 
+  // « Réglages » (qui marque l'onboarding comme fait) passe en dernier : un échec avant
+  // laisse le wizard à refaire, jamais un panneau sans watchlist.
   const plan = (): ActivationStep[] => [
-    { id: "settings", label: "Réglages enregistrés", status: "idle" },
     { id: "watchlist", label: `${watched.length} conversation${watched.length > 1 ? "s" : ""} sous surveillance`, status: "idle" },
     ...(soul ? [{ id: "soul" as const, label: `Ta voix importée (${soul.name})`, status: "idle" as Status }] : []),
+    { id: "settings", label: "Réglages enregistrés", status: "idle" },
   ];
 
   const runStep = async (id: StepId) => {
     if (id === "settings") {
       const cur = await trame.getSettings();
       if (!cur.ok) return cur;
-      return trame.updateSettings({ brain, github: { ...cur.settings.github, enabled: githubConnected }, onboarded: true });
+      // GitHub n'est touché que si l'état de connexion est connu.
+      const github = trame.githubStatus ? { github: { ...cur.settings.github, enabled: githubConnected } } : {};
+      return trame.updateSettings({ brain, ...github, onboarded: true });
     }
     if (id === "watchlist") return trame.saveWatchlist(convs.map(({ threadId, watch, mode }) => ({ threadId, watch, mode })));
     return trame.uploadSoul(soul!.name, soul!.content);
@@ -120,6 +150,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   /** Enchaîne les étapes ; une étape déjà réussie n'est pas rejouée au « Réessayer ». */
   const activate = async () => {
+    if (!live) return;
     onStart?.();
     const todo = activation === "error" ? steps : plan();
     setSteps(todo);
@@ -143,9 +174,11 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     setTimeout(onFinish, 700);
   };
 
-  // Statut inconnu (pas encore vérifié) : on ne présume pas d'une absence de connexion.
   const githubConnected = trame.githubStatus?.loggedIn ?? false;
-  const canContinue = (step !== 2 || probe === "ok") && (activation === "idle" || activation === "error");
+  const canContinue =
+    (step !== 2 || probe === "ok" || probe === "fail") &&
+    (activation === "idle" || activation === "error") &&
+    (step !== TOTAL - 1 || live);
   const last = step === TOTAL - 1;
 
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
@@ -157,9 +190,18 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ ...pop, delay: 0.25 }}
-          className="flex items-center gap-2 rounded-full bg-success/10 px-3 py-1.5 text-sm text-success"
+          className={cn(
+            "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm",
+            !live ? "bg-muted text-muted-foreground" : trame.state.selftestOk ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+          )}
         >
-          <Check className="size-4" /> Microsoft Teams détecté
+          {!live ? (
+            <><Loader2 className="size-4 animate-spin" /> Démarrage du moteur…</>
+          ) : trame.state.selftestOk ? (
+            <><Check className="size-4" /> Microsoft Teams détecté</>
+          ) : (
+            <>Teams pas encore repéré — ouvre-le, on vérifie à l'étape 3</>
+          )}
         </motion.div>
       ),
     },
@@ -170,12 +212,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Un petit test",
-      sub: "Envoie-toi un message sur Teams, puis lance le test : Trame vérifie qu'il sait le lire et répondre.",
+      sub: "Ouvre Teams sur une conversation, puis lance le test : Trame vérifie qu'il repère la fenêtre, les messages et la zone de saisie.",
       body: (
         <div className="flex w-full flex-col items-center gap-4">
           <GroupList>
             {PROBE_CHECKS.map((label, i) => {
-              const status: Status = probeDone > i ? "ok" : probe === "running" && probeDone === i ? "run" : "idle";
+              const status: Status =
+                probeDone > i ? "ok" : probe === "fail" ? "error" : probe === "running" && probeDone === i ? "run" : "idle";
               return (
                 <div key={label} className="flex items-center gap-3 px-4 py-3.5">
                   <StatusDot status={status} />
@@ -184,25 +227,22 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               );
             })}
             <AnimatePresence initial={false}>
-              {probe === "ok" && (
+              {probe === "fail" && probeError && (
                 <motion.div
-                  key="preview"
+                  key="fail"
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden"
                 >
-                  <div className="px-4 py-3">
-                    <div className="text-xs text-muted-foreground">Ce que Trame a lu</div>
-                    <div className="mt-1 rounded-xl bg-muted/50 px-3 py-2 text-sm">« Test Trame 👋 »</div>
-                  </div>
+                  <p role="alert" className="px-4 py-3 text-sm text-muted-foreground">{probeError}</p>
                 </motion.div>
               )}
             </AnimatePresence>
           </GroupList>
           <Button variant="outline" className="rounded-full px-6" disabled={probe === "running"} onClick={runProbe}>
             {probe === "running" && <Loader2 className="size-4 animate-spin" />}
-            {probe === "ok" ? "Relancer le test" : probe === "running" ? "Test en cours…" : "Lancer le test"}
+            {probe === "ok" || probe === "fail" ? "Relancer le test" : probe === "running" ? "Test en cours…" : "Lancer le test"}
           </Button>
         </div>
       ),
@@ -411,7 +451,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
                 className="flex items-center gap-2"
               >
                 {!last && <>Continuer <ArrowRight className="size-4" /></>}
-                {last && activation === "idle" && "Activer Trame"}
+                {last && activation === "idle" && (live ? "Activer Trame" : <><Loader2 className="size-4 animate-spin" /> Démarrage du moteur…</>)}
                 {last && activation === "run" && <><Loader2 className="size-4 animate-spin" /> Activation…</>}
                 {last && activation === "ok" && <><Check className="size-4" strokeWidth={3} /> C'est parti</>}
                 {last && activation === "error" && <><RotateCcw className="size-4" /> Réessayer</>}

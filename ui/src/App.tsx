@@ -9,6 +9,7 @@ import { Logo } from "@/Logo";
 import { Wizard } from "@/wizard/Wizard";
 import { Panel } from "@/panel/Panel";
 import { useTrame } from "@/api";
+import { toast } from "sonner";
 import { onTrayTogglePause, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +51,15 @@ export default function App() {
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
-  useEffect(() => onTrayTogglePause(() => trame.setPaused(!pausedRef.current)), []);
+  const togglePause = async (next: boolean) => {
+    const res = await trame.setPaused(next);
+    if (!res.ok) toast.error(next ? "Pause impossible" : "Reprise impossible", { description: res.error });
+  };
+  const togglePauseRef = useRef(togglePause);
+  togglePauseRef.current = togglePause;
+  useEffect(() => onTrayTogglePause(() => togglePauseRef.current(!pausedRef.current)), []);
+  // Démarrage avec Windows activé au premier onboarding seulement, jamais en relançant le wizard.
+  const firstRun = useRef(true);
 
   const mountedAt = useRef(Date.now());
   const [booting, setBooting] = useState(true);
@@ -99,7 +108,7 @@ export default function App() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
-            <ConnectionBadge connected={trame.connected} />
+            <ConnectionBadge connected={trame.connected} demo={trame.demoMode} />
 
             {configured && (
               <div
@@ -120,14 +129,14 @@ export default function App() {
                   </motion.span>
                 </AnimatePresence>
                 <span className="w-14 text-xs">{paused ? "En pause" : "Actif"}</span>
-                <Switch checked={paused} onCheckedChange={trame.setPaused} />
+                <Switch checked={paused} onCheckedChange={togglePause} />
               </div>
             )}
 
             {configured && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" onClick={() => setView("wizard")}>
+                  <Button variant="ghost" size="icon" onClick={() => { firstRun.current = false; setView("wizard"); }}>
                     <Settings2 className="size-4" />
                   </Button>
                 </TooltipTrigger>
@@ -164,7 +173,7 @@ export default function App() {
               <Splash key="splash" connected={trame.connected} />
             ) : (
               <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
-                {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); setAutostart(true); }} />}
+                {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
               </motion.div>
             )}
           </AnimatePresence>
@@ -176,7 +185,7 @@ export default function App() {
   );
 }
 
-function ConnectionBadge({ connected }: { connected: boolean }) {
+function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolean }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -195,7 +204,11 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
         </div>
       </TooltipTrigger>
       <TooltipContent>
-        {connected ? "Connecté au moteur Trame" : "Moteur Trame injoignable — données d'exemple affichées"}
+        {connected
+          ? "Connecté au moteur Trame"
+          : demo
+            ? "Moteur Trame injoignable — données d'exemple affichées"
+            : "Moteur Trame injoignable — reconnexion en cours, aucune action possible"}
       </TooltipContent>
     </Tooltip>
   );

@@ -78,6 +78,22 @@ export function Panel({ trame }: { trame: Trame }) {
         )}
       </AnimatePresence>
 
+      <AnimatePresence initial={false}>
+        {!trame.connected && !trame.demoMode && (
+          <motion.div
+            key="offline"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="shrink-0 overflow-hidden"
+          >
+            <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm">
+              <Loader2 className="size-4 animate-spin text-destructive" /> Moteur injoignable — reconnexion… Rien ne peut être envoyé pour l'instant.
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <Tabs defaultValue="drafts" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="self-start rounded-full">
           <TabsTrigger value="drafts" className="rounded-full">
@@ -217,6 +233,21 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
   const [leaving, setLeaving] = useState<"sent" | "dismissed">("sent");
   const controls = useAnimationControls();
   const busy = status !== "idle" || compose === "opening";
+  // Un nouveau message met à jour le brouillon sur place (même id). Sans modification de
+  // ta part, la nouvelle proposition remplace l'ancienne ; sinon ton texte est gardé et
+  // la nouvelle proposition t'est proposée.
+  const base = useRef(d.proposal);
+  const [fresher, setFresher] = useState<string | null>(null);
+  useEffect(() => {
+    if (d.proposal === base.current) return;
+    if (text.trim() === base.current.trim()) {
+      setText(d.proposal);
+      setFresher(null);
+    } else {
+      setFresher(d.proposal);
+    }
+    base.current = d.proposal;
+  }, [d.proposal]);
   const edited = text.trim() !== d.proposal.trim();
   const conversation = trame.state.watchlist.find((w) => w.threadId === d.threadId)?.displayName;
   const place = d.surface !== "dm" && conversation && conversation !== d.from ? conversation : null;
@@ -252,9 +283,13 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
     toast.success("Réponse copiée dans Teams", { description: "Termine-la et envoie-la depuis Teams." });
   };
 
-  const dismiss = () => {
+  const dismiss = async () => {
     setLeaving("dismissed");
-    trame.dismissDraft(d.id);
+    const res = await trame.dismissDraft(d.id);
+    if (!res.ok) {
+      controls.start(shake);
+      toast.error("Impossible d'ignorer ce brouillon", { description: res.error });
+    }
   };
 
   return (
@@ -322,6 +357,30 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
             rows={1}
             className="field-sizing-content min-h-0 w-full max-w-[85%] resize-none rounded-2xl rounded-tr-md border-primary/30 bg-primary/10 px-3.5 py-2 text-sm leading-relaxed shadow-none focus-visible:border-primary/60 dark:bg-primary/15"
           />
+          <AnimatePresence initial={false}>
+            {fresher && fresher.trim() !== text.trim() && (
+              <motion.div
+                key="fresher"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="flex items-center gap-2 overflow-hidden text-xs text-muted-foreground"
+              >
+                Nouveau message : une autre réponse est proposée.
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 rounded-full text-primary"
+                  onClick={() => {
+                    setText(fresher);
+                    setFresher(null);
+                  }}
+                >
+                  Utiliser
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
           {d.usedGithub && (
             <span className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               <GithubLogo className="size-3.5" /> {d.usedGithub}

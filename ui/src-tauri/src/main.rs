@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -20,11 +20,29 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-fn quit(app: &AppHandle) {
-    let _ = app.save_window_state(StateFlags::all());
-    if let Some(child) = app.state::<Backend>().0.lock().unwrap().take() {
+/// The backend is a PyInstaller --onefile exe: a bootloader plus the real Python
+/// process. Killing the bootloader alone would leave the engine running (and acting
+/// on Teams), so the whole process tree goes. The engine also exits on its own when
+/// our end of its stdin closes, which covers a crash of this process.
+fn stop_backend(app: &AppHandle) {
+    let child = app.state::<Backend>().0.lock().ok().and_then(|mut c| c.take());
+    if let Some(child) = child {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &child.pid().to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
         let _ = child.kill();
     }
+}
+
+fn quit(app: &AppHandle) {
+    let _ = app.save_window_state(StateFlags::all());
+    stop_backend(app);
     app.exit(0);
 }
 
@@ -39,15 +57,34 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(Backend(Mutex::new(None)))
         .setup(|app| {
-            let (mut rx, child) = app.shell().sidecar("trame-backend")?.spawn()?;
-            *app.state::<Backend>().0.lock().unwrap() = Some(child);
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    if let CommandEvent::Stderr(line) = event {
-                        eprintln!("[backend] {}", String::from_utf8_lossy(&line));
-                    }
+            // A missing or quarantined engine must not take the window and tray down:
+            // the UI then shows the engine as unreachable.
+            let spawned = app
+                .shell()
+                .sidecar("trame-backend")
+                .map(|cmd| cmd.env("TRAME_EXIT_WITH_PARENT", "1"))
+                .and_then(|cmd| cmd.spawn());
+            match spawned {
+                Ok((mut rx, child)) => {
+                    *app.state::<Backend>().0.lock().unwrap() = Some(child);
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        while let Some(event) = rx.recv().await {
+                            match event {
+                                CommandEvent::Stderr(line) => {
+                                    eprintln!("[backend] {}", String::from_utf8_lossy(&line))
+                                }
+                                CommandEvent::Terminated(status) => {
+                                    eprintln!("[backend] arrêté : {:?}", status.code);
+                                    let _ = handle.emit("backend-exited", status.code);
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
                 }
-            });
+                Err(e) => eprintln!("[backend] lancement impossible : {e}"),
+            }
 
             let show = MenuItem::with_id(app, "show", "Ouvrir Trame", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause / reprise", true, None::<&str>)?;
@@ -94,6 +131,11 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("erreur au lancement de Trame");
+        .build(tauri::generate_context!())
+        .expect("erreur au lancement de Trame")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                stop_backend(app);
+            }
+        });
 }
