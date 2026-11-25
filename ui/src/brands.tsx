@@ -1,4 +1,4 @@
-import { siClaude, siGithubcopilot } from "simple-icons";
+import { siClaude, siGithub, siGithubcopilot } from "simple-icons";
 
 type Props = { className?: string };
 
@@ -16,6 +16,10 @@ export const ClaudeLogo = ({ className }: Props) => (
 
 export const CopilotLogo = ({ className }: Props) => (
   <Mark path={siGithubcopilot.path} title={siGithubcopilot.title} className={className} />
+);
+
+export const GithubLogo = ({ className }: Props) => (
+  <Mark path={siGithub.path} title={siGithub.title} className={className} />
 );
 
 export const BRAINS = [

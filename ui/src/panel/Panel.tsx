@@ -508,21 +508,33 @@ function SettingsView({ trame }: { trame: Trame }) {
 
       <motion.div animate={githubCtl}>
         <SectionHeader state={save.github}>Contexte GitHub</SectionHeader>
-        <GithubConnect trame={trame} className="mb-3" />
-        <GroupList>
-          <ToggleRow
-            label="Activer le contexte GitHub"
-            checked={github.enabled}
-            onChange={(enabled) => update("github", { github: { ...github, enabled } })}
-          />
-          <ToggleRow
-            label="Tous les repos par défaut"
-            checked={github.allRepos}
-            disabled={!github.enabled}
-            onChange={(allRepos) => update("github", { github: { ...github, allRepos } })}
-          />
-          <div className="px-4 py-2.5 text-xs text-muted-foreground">Lecture seule · consulté seulement quand le message le justifie.</div>
-        </GroupList>
+        <GithubConnect trame={trame} />
+        <AnimatePresence initial={false}>
+          {trame.githubStatus?.loggedIn && (
+            <motion.div
+              key="github-options"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <GroupList className="mt-3">
+                <ToggleRow
+                  label="Utiliser GitHub pour le contexte"
+                  checked={github.enabled}
+                  onChange={(enabled) => update("github", { github: { ...github, enabled } })}
+                />
+                <ToggleRow
+                  label="Chercher dans tous mes dépôts"
+                  checked={github.allRepos}
+                  disabled={!github.enabled}
+                  onChange={(allRepos) => update("github", { github: { ...github, allRepos } })}
+                />
+                <div className="px-4 py-2.5 text-xs text-muted-foreground">Lecture seule · consulté seulement quand le message le justifie.</div>
+              </GroupList>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
 
       <motion.div animate={briefCtl}>

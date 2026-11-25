@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { ArrowRight, Check, FileText, GitBranch, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
+import { ArrowRight, Check, FileText, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
@@ -37,7 +36,6 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const source = connected ? trame.state.watchlist : mockConversations;
   const [convs, setConvs] = useState<WatchEntity[]>(source);
   const touched = useRef(false);
-  const [github, setGithub] = useState(true);
   const [countdown, setCountdown] = useState(5);
   const [soul, setSoul] = useState<Soul | null>(null);
   const [activation, setActivation] = useState<"idle" | "run" | "ok" | "error">("idle");
@@ -56,7 +54,6 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     trame.getSettings().then((res) => {
       if (!live || !res.ok || touched.current) return;
       setBrain(res.settings.brain);
-      setGithub(res.settings.github.enabled);
       setCountdown(res.settings.safety.countdownSeconds);
     });
     return () => {
@@ -82,10 +79,6 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const pickBrain = (b: BrainId) => {
     touched.current = true;
     setBrain(b);
-  };
-  const pickGithub = (v: boolean) => {
-    touched.current = true;
-    setGithub(v);
   };
 
   const runProbe = () => {
@@ -119,7 +112,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     if (id === "settings") {
       const cur = await trame.getSettings();
       if (!cur.ok) return cur;
-      return trame.updateSettings({ brain, github: { ...cur.settings.github, enabled: github }, onboarded: true });
+      return trame.updateSettings({ brain, github: { ...cur.settings.github, enabled: githubConnected }, onboarded: true });
     }
     if (id === "watchlist") return trame.saveWatchlist(convs.map(({ threadId, watch, mode }) => ({ threadId, watch, mode })));
     return trame.uploadSoul(soul!.name, soul!.content);
@@ -151,7 +144,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   };
 
   // Statut inconnu (pas encore vérifié) : on ne présume pas d'une absence de connexion.
-  const githubConnected = trame.githubStatus ? trame.githubStatus.loggedIn : true;
+  const githubConnected = trame.githubStatus?.loggedIn ?? false;
   const canContinue = (step !== 2 || probe === "ok") && (activation === "idle" || activation === "error");
   const last = step === TOTAL - 1;
 
@@ -283,34 +276,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Contexte GitHub",
-      sub: "En lecture seule, consulté quand un message parle code. Trame n'écrit jamais.",
+      sub: "Pour retrouver les PR et issues dont on te parle. Lecture seule.",
       body: (
-        <div className="flex w-full flex-col">
-          <GroupList>
-            <div className="flex items-center gap-3 px-4 py-3.5">
-              <GitBranch className={cn("size-5 transition-colors", github ? "text-primary" : "text-muted-foreground")} />
-              <span className="flex-1">Activer le contexte GitHub</span>
-              <Switch checked={github} onCheckedChange={pickGithub} />
-            </div>
-          </GroupList>
-          <AnimatePresence initial={false}>
-            {github && (
-              <motion.div
-                key="connect"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="flex flex-col gap-2 pt-3">
-                  <GithubConnect trame={trame} />
-                  {!trame.githubStatus?.loggedIn && (
-                    <span className="text-xs text-muted-foreground">Facultatif : tu pourras te connecter plus tard dans Réglages.</span>
-                  )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        <div className="flex w-full flex-col gap-2">
+          <GithubConnect trame={trame} />
+          {!githubConnected && (
+            <span className="text-xs text-muted-foreground">Facultatif · modifiable dans Réglages</span>
+          )}
         </div>
       ),
     },
@@ -324,7 +296,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               ["Cerveau", brain === "claude" ? "Claude" : "Copilot"],
               ["Surveillées", `${watched.length}`],
               ["En auto", `${watched.filter((c) => c.mode === "auto").length}`],
-              ["GitHub", github ? (githubConnected ? "Activé" : "non connecté") : "Désactivé", github && !githubConnected],
+              ["GitHub", githubConnected ? `Connecté · ${trame.githubStatus?.account ?? ""}` : "Non connecté", !githubConnected],
               ["Ta voix", soul ? soul.name : "Plus tard"],
             ] as [string, string, boolean?][]).map(([label, value, muted], i) => (
               <motion.div

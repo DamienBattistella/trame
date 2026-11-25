@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { GroupList, Status, StatusDot, pop, shake } from "@/components/kit";
+import { GroupList, pop, shake } from "@/components/kit";
 import { openExternal } from "@/desktop";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { GithubLogin } from "@/types";
+import { GithubLogo } from "@/brands";
 
 const POLL_MS = 2000;
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
@@ -145,14 +146,16 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
           <motion.div key={view} {...rowMotion} className="overflow-hidden">
             {view === "checking" && (
               <Row>
+                <GithubMark />
+                <span className="flex-1 text-sm text-muted-foreground">Vérification…</span>
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                <span className="flex-1 text-sm text-muted-foreground">Vérification de la connexion GitHub…</span>
               </Row>
             )}
 
             {view === "unavailable" && (
               <Row>
-                <span className="flex-1 text-sm text-muted-foreground">Impossible de vérifier la connexion GitHub.</span>
+                <GithubMark />
+                <span className="flex-1 text-sm text-muted-foreground">Vérification impossible</span>
                 <Button size="sm" variant="ghost" className="rounded-full" onClick={check}>
                   Réessayer
                 </Button>
@@ -161,24 +164,27 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
 
             {view === "missing" && (
               <Row>
-                <span className="flex-1 text-sm">La commande gh n'est pas installée</span>
-                <Button size="sm" variant="link" className="h-auto px-0" onClick={() => openExternal(INSTALL_URL)}>
-                  Comment l'installer
+                <GithubMark />
+                <span className="flex-1 text-sm">gh non installé</span>
+                <Button size="sm" variant="outline" className="rounded-full" onClick={() => openExternal(INSTALL_URL)}>
+                  Installer
                 </Button>
               </Row>
             )}
 
             {view === "disconnected" && (
               <Row>
-                <span className="flex-1 text-sm text-muted-foreground">Non connecté</span>
-                <ConnectButton busy={busy} onClick={start} label="Se connecter à GitHub" />
+                <GithubMark />
+                <span className="flex-1 text-sm font-medium">GitHub</span>
+                <ConnectButton busy={busy} onClick={start} label="Se connecter" />
               </Row>
             )}
 
             {view === "expired" && (
               <Row>
-                <span className="flex-1 text-sm text-muted-foreground">Le code a expiré.</span>
-                <ConnectButton busy={busy} onClick={start} label="Réessayer" />
+                <GithubMark />
+                <span className="flex-1 text-sm text-muted-foreground">Code expiré</span>
+                <ConnectButton busy={busy} onClick={start} label="Nouveau code" />
               </Row>
             )}
 
@@ -187,7 +193,7 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
                 {login && <CodeRow login={login} />}
                 <Row>
                   <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                  <span className="flex-1 text-sm text-muted-foreground">En attente de validation dans le navigateur…</span>
+                  <span className="flex-1 text-sm text-muted-foreground">En attente…</span>
                   <Button size="sm" variant="ghost" className="rounded-full" disabled={busy} onClick={cancel}>
                     Annuler
                   </Button>
@@ -197,15 +203,14 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
 
             {view === "connected" && status && (
               <Row>
-                <ConnectedDot animate={justConnected} />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm">
-                    Connecté en tant que <span className="font-medium">{status.account ?? "ton compte"}</span>
-                  </span>
-                  {status.scopes.length > 0 && (
-                    <span className="truncate text-xs text-muted-foreground">Accès : {status.scopes.join(", ")}</span>
-                  )}
-                </div>
+                <GithubMark connected animate={justConnected} />
+                <span
+                  className="min-w-0 flex-1 truncate text-sm font-medium"
+                  title={status.scopes.length ? `Accès : ${status.scopes.join(", ")}` : undefined}
+                >
+                  @{status.account ?? "compte"}
+                </span>
+                <span className="text-xs text-success">Connecté</span>
               </Row>
             )}
           </motion.div>
@@ -214,21 +219,15 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
         <AnimatePresence initial={false}>
           {sso.length > 0 && (
             <motion.div key="sso" {...rowMotion} className="overflow-hidden">
-              <div className="flex items-start gap-3 px-4 py-3">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-sm text-warning">
-                    {sso.length > 1
-                      ? `Les organisations ${sso.join(", ")} demandent d'autoriser l'accès (SSO)`
-                      : `L'organisation ${sso[0]} demande d'autoriser l'accès (SSO)`}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Autorise GitHub CLI pour cette organisation, puis relance la recherche.
-                  </span>
-                </div>
-                <Button size="sm" variant="link" className="h-auto shrink-0 px-0 py-0.5" onClick={() => openExternal(SSO_URL)}>
+              <Row>
+                <AlertTriangle className="size-4 shrink-0 text-warning" />
+                <span className="min-w-0 flex-1 truncate text-sm" title="Autorise GitHub CLI pour cette organisation, puis relance la recherche.">
+                  SSO requis : <span className="font-medium">{sso.join(", ")}</span>
+                </span>
+                <Button size="sm" variant="outline" className="rounded-full" onClick={() => openExternal(SSO_URL)}>
                   Autoriser
                 </Button>
-              </div>
+              </Row>
             </motion.div>
           )}
         </AnimatePresence>
@@ -256,15 +255,26 @@ function ConnectButton({ busy, onClick, label }: { busy: boolean; onClick: () =>
   );
 }
 
-/** Coche verte : rebondit une fois juste après la connexion, statique sinon. */
-function ConnectedDot({ animate }: { animate: boolean }) {
-  const [s, setS] = useState<Status>(animate ? "idle" : "ok");
-  useEffect(() => {
-    if (!animate) return;
-    const t = setTimeout(() => setS("ok"), 120);
-    return () => clearTimeout(t);
-  }, []);
-  return <StatusDot status={s} />;
+/** Logo GitHub ; une fois connecté, une pastille verte qui rebondit juste après la connexion. */
+function GithubMark({ connected = false, animate = false }: { connected?: boolean; animate?: boolean }) {
+  return (
+    <span className="relative grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
+      <GithubLogo className="size-[18px]" />
+      <AnimatePresence initial={!animate ? false : true}>
+        {connected && (
+          <motion.span
+            key="ok"
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ ...pop, delay: animate ? 0.15 : 0 }}
+            className="absolute -right-0.5 -bottom-0.5 grid size-3.5 place-items-center rounded-full bg-success text-white ring-2 ring-card"
+          >
+            <Check className="size-2.5" strokeWidth={4} />
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </span>
+  );
 }
 
 function CodeRow({ login }: { login: GithubLogin }) {
@@ -287,7 +297,7 @@ function CodeRow({ login }: { login: GithubLogin }) {
 
   return (
     <div className="flex flex-col gap-3 px-4 py-4 text-left">
-      <span className="text-xs text-muted-foreground">Saisis ce code sur GitHub</span>
+      <span className="text-xs text-muted-foreground">Code GitHub</span>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="font-mono text-2xl font-semibold tracking-[0.2em] tabular-nums select-all">{login.code}</span>
         <div className="flex gap-2">
