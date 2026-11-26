@@ -12,13 +12,14 @@ import {
   Person,
   LogItem,
   Mode,
+  Notice,
   Settings,
   SettingsPatch,
   Surface,
   WatchEntity,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
-import { isDesktop } from "@/desktop";
+import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 
 const HTTP = "http://127.0.0.1:8731";
 const WS = "ws://127.0.0.1:8731/ws";
@@ -33,6 +34,7 @@ export interface TrameState {
   watchlist: WatchEntity[];
   drafts: DraftItem[];
   logs: LogItem[];
+  notices: Notice[];
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -81,6 +83,15 @@ function mapState(s: any): TrameState {
     watchlist: (s.watchlist ?? []).map(mapWatch),
     drafts: (s.drafts ?? []).map(mapDraft),
     logs: (s.logs ?? []) as LogItem[],
+    notices: (s.notices ?? []).map((n: any) => ({
+      id: n.id,
+      threadId: n.thread_id,
+      conversation: n.conversation,
+      from: n.from,
+      text: n.text,
+      at: n.at,
+      surface: n.surface as Surface,
+    })),
   };
 }
 function mapSettings(s: any): Settings {
@@ -262,7 +273,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [] };
   }
   return {
     paused: false,
@@ -273,6 +284,7 @@ function mockState(): TrameState {
     watchlist: mockConversations.map((c) => ({ ...c })),
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
+    notices: [],
   };
 }
 
@@ -376,6 +388,19 @@ export function useTrame() {
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let lastFrame = "";
+    // Les messages déjà annoncés. À la première trame après une connexion, tout ce qui
+    // est là est ancien : on le note sans le rejouer.
+    let announced: Set<string> | null = null;
+    const announce = (next: TrameState) => {
+      const fresh = announced ? next.notices.filter((n) => !announced!.has(n.id)) : [];
+      announced = new Set(next.notices.map((n) => n.id));
+      // Trame au premier plan : la liste montre déjà le message.
+      if (!fresh.length || !notificationsEnabled() || document.hasFocus()) return;
+      for (const n of fresh.reverse()) {
+        const title = n.conversation && n.conversation !== n.from ? `${n.from} · ${n.conversation}` : n.from;
+        notify(title, next.screenSharing ? "Nouveau message" : n.text);
+      }
+    };
 
     const connect = () => {
       if (closed) return;
@@ -398,7 +423,9 @@ export function useTrame() {
         if (e.data === lastFrame) return;
         lastFrame = e.data;
         try {
-          setState(mapState(JSON.parse(e.data)));
+          const next = mapState(JSON.parse(e.data));
+          announce(next);
+          setState(next);
         } catch {
           /* ignore malformed frame */
         }
@@ -406,6 +433,7 @@ export function useTrame() {
       ws.onclose = () => {
         if (closed) return;
         lastFrame = "";
+        announced = null;
         setConnected(false);
         retry = setTimeout(connect, 2000); // reconnect if the backend restarts
       };

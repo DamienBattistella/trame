@@ -53,6 +53,20 @@ class Draft(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class Notice(BaseModel):
+    """A message just received, whatever the conversation: the UI turns it into a
+    Windows notification."""
+    id: str
+    thread_id: str
+    conversation: str
+    from_: str = Field(alias="from")
+    text: str
+    at: str
+    surface: Surface
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class LogItem(BaseModel):
     at: str
     level: Literal["info", "warn", "sent", "draft"]
@@ -68,6 +82,7 @@ class AppState(BaseModel):
     watchlist: list[WatchEntity] = Field(default_factory=list)
     drafts: list[Draft] = Field(default_factory=list)
     logs: list[LogItem] = Field(default_factory=list)
+    notices: list[Notice] = Field(default_factory=list)
 
 
 class GithubHit(BaseModel):

@@ -34,7 +34,7 @@ import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shak
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
-import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
+import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
 import { DraftItem, LogItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
 
 
@@ -385,6 +385,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         <GroupList>
           <UpdatesRow />
           <ChangelogRow />
+          <NotificationsRow />
           <AutostartRow />
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
             Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
@@ -864,6 +865,32 @@ function ToggleRow({
     <div className="flex items-center justify-between px-4 py-3">
       <Label htmlFor={id} className={cn("font-normal transition-colors", disabled && "text-muted-foreground")}>{label}</Label>
       <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function NotificationsRow() {
+  const [on, setOn] = useState(notificationsEnabled);
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="flex min-w-0 flex-col">
+        <Label htmlFor="notifications" className="font-normal">Notification Windows à chaque message reçu</Label>
+        <span className="text-xs text-muted-foreground">
+          Pour toutes les conversations, suivies ou non. Rien quand Trame est au premier plan.
+        </span>
+      </div>
+      <Switch
+        id="notifications"
+        checked={on && isDesktop()}
+        disabled={!isDesktop()}
+        onCheckedChange={async (v) => {
+          setOn(v);
+          setNotificationsEnabled(v);
+          if (v && !(await notify("Trame", "Les notifications sont activées."))) {
+            toast.error("Notification non affichée", { description: "Windows a refusé la notification. Vérifie Paramètres › Système › Notifications." });
+          }
+        }}
+      />
     </div>
   );
 }

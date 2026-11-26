@@ -134,3 +134,34 @@ export async function openExternal(url: string): Promise<void> {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+const NOTIFY_KEY = "trame.notifications";
+
+/** Notifications Windows à l'arrivée d'un message : activées sauf choix contraire. */
+export function notificationsEnabled(): boolean {
+  try {
+    return localStorage.getItem(NOTIFY_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function setNotificationsEnabled(on: boolean): void {
+  try {
+    localStorage.setItem(NOTIFY_KEY, on ? "on" : "off");
+  } catch {
+    /* stockage indisponible : le réglage vaut pour la session */
+  }
+}
+
+/** Affiche une notification Windows. Sans effet hors de l'application installée. */
+export async function notify(title: string, body: string): Promise<boolean> {
+  try {
+    const t = tauri();
+    if (!t?.core) return false;
+    await t.core.invoke("notify", { title, body });
+    return true;
+  } catch {
+    return false;
+  }
+}
