@@ -31,6 +31,11 @@ class Brain(ABC):
         """Run a free-form prompt and return the raw text answer."""
         raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
 
+    def correct(self, text: str) -> str:
+        """Spelling, grammar and typography fixed; tone and wording untouched."""
+        from brain.correct import build_correct_prompt, parse_correction
+        return parse_correction(self.complete(build_correct_prompt(text)), text)
+
 
 def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "") -> str:
     parts = [

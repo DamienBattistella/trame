@@ -3,6 +3,7 @@ import json
 import re
 
 from brain.base import Brain
+from brain.correct import mock_correct
 
 
 class MockBrain(Brain):
@@ -19,6 +20,9 @@ class MockBrain(Brain):
         if "latence" in low:
             return "Je regarde les traces du connecteur et je reviens vers vous rapidement."
         return "Bien reçu, je regarde et je te reviens vite."
+
+    def correct(self, text: str) -> str:
+        return mock_correct(text)
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         if "Message à vérifier :" in prompt:

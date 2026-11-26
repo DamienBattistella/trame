@@ -124,6 +124,10 @@ class ReactBody(BaseModel):
     reaction: Reaction = "like"
 
 
+class CorrectBody(BaseModel):
+    text: str = ""
+
+
 class SuggestBody(BaseModel):
     # Proposer une réponse à ce message précis plutôt qu'au dernier reçu.
     message: Optional[MessageRef] = None
@@ -336,6 +340,11 @@ def create_app(
     @app.post("/api/threads/{thread_id:path}/check")
     def thread_check(thread_id: str, body: CheckBody):
         return {"ok": True, "check": watcher.fact_check(thread_id, body.text, body.message).model_dump()}
+
+    @app.post("/api/correct")
+    def correct_text(body: CorrectBody):
+        text = watcher.correct_text(body.text)
+        return {"ok": True, "text": text, "changed": text != body.text.strip()}
 
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):
