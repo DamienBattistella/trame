@@ -8,6 +8,7 @@ import {
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
+  ThreadActivity,
   ThreadMessage,
   PeopleSearch,
   PeopleSummary,
@@ -870,6 +871,17 @@ export function useTrame() {
     );
     return res.ok ? { ...res, top: Boolean(res.top) } : res;
   };
+  /** Quelqu'un écrit, ton dernier message est vu : ce que montre la liste que le moteur
+   *  interroge déjà (rien n'est ouvert dans Teams). Démo : rien à signaler. */
+  const threadActivity = async (threadId: string): Promise<Result<ThreadActivity>> => {
+    if (!connectedRef.current) return demoRef.current ? { ok: true, typing: false, typingText: null, seen: null } : { ok: false, error: OFFLINE };
+    const res = await request<{ typing?: boolean; typing_text?: string | null; seen?: boolean | null }>(
+      "GET",
+      `/api/threads/${encodeURIComponent(threadId)}/activity`
+    );
+    if (!res.ok) return res;
+    return { ok: true, typing: Boolean(res.typing), typingText: res.typing_text || null, seen: typeof res.seen === "boolean" ? res.seen : null };
+  };
   /** Recherche dans les messages déjà lus par le moteur (rien n'est relu dans Teams). */
   const searchMessages = async (q: string): Promise<Result<{ results: MessageHit[]; scope: SearchScope }>> => {
     if (!connectedRef.current) {
@@ -1218,6 +1230,7 @@ export function useTrame() {
     getSoulTemplate,
     factoryReset,
     threadMessages,
+    threadActivity,
     searchMessages,
     searchTeams,
     reactInThread,

@@ -58,6 +58,8 @@ class IncomingMessage(BaseModel):
     # Pièces jointes reçues : fichiers (nom et lien Teams/SharePoint) et images (aperçu).
     files: list["FileRef"] = Field(default_factory=list)
     images: list["ImageRef"] = Field(default_factory=list)
+    # Accusé de lecture d'un de tes messages : True « Vu », False « Envoyé », None inconnu.
+    seen: Optional[bool] = None
 
 
 class FileRef(BaseModel):

@@ -331,6 +331,11 @@ def create_app(
         messages, top = watcher.thread_history(thread_id, max(5, min(500, last)), fresh)
         return {"ok": True, "messages": messages, "top": top}
 
+    @app.get("/api/threads/{thread_id:path}/activity")
+    def thread_activity(thread_id: str):
+        # typing / typing_text: someone is writing; seen: your last message was read.
+        return {"ok": True, **watcher.thread_activity(thread_id)}
+
     @app.get("/api/search")
     def search_messages(q: str = "", limit: int = 50):
         return {"ok": True, **watcher.search_messages(q, max(1, min(200, limit)))}

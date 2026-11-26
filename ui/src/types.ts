@@ -153,6 +153,18 @@ export interface ThreadMessage {
   images?: ReceivedImage[];
   /** Message auquel celui-ci répond (affiché en citation). */
   replyTo?: MessageRef | null;
+  /** Tes messages : true « Vu », false « Envoyé », absent ou null si Teams ne le dit pas. */
+  seen?: boolean | null;
+}
+
+/** Activité d'une conversation, lue dans la liste que Trame interroge déjà. */
+export interface ThreadActivity {
+  /** Quelqu'un est en train d'écrire. */
+  typing: boolean;
+  /** « Ana est en train d'écrire », seulement pour la conversation ouverte dans la fenêtre Teams de Trame. */
+  typingText: string | null;
+  /** Ton dernier message vu, en direct ; null si la fenêtre Teams de Trame montre une autre conversation. */
+  seen: boolean | null;
 }
 
 /** Un message trouvé : dans l'historique déjà lu par Trame, ou par la recherche de Teams. */

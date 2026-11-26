@@ -146,6 +146,40 @@ class TeamsDriver(ABC):
         now = time.monotonic()
         return {tid: value for tid, (at, value) in list(cache.items()) if now - at <= self.PRESENCE_TTL}
 
+    # --- activity: someone typing, your last message seen ---
+    TYPING_TTL = 12.0
+    """« En train d'écrire » read longer ago than this is dropped: the chat list is
+    polled every few seconds, a missed poll must not leave the dots on for good."""
+
+    def _note_activity(self, thread_id: str, typing: bool, typing_text: Optional[str] = None,
+                       seen: Optional[bool] = None) -> None:
+        """Record what Teams shows for thread_id right now. typing_text and seen come
+        only from the conversation open in Teams' window (None for the others): a read
+        receipt is kept only while that conversation stays open there."""
+        cache = self.__dict__.setdefault("_activity_cache", {})
+        now = time.monotonic()
+        if typing:
+            cache[("typing", thread_id)] = (now, (typing_text or "").strip() or None)
+        else:
+            cache.pop(("typing", thread_id), None)
+        if seen is not None:
+            for key in [k for k in cache if k[0] == "seen" and k[1] != thread_id]:
+                cache.pop(key, None)
+            cache[("seen", thread_id)] = (now, seen)
+
+    def activity(self, thread_id: str) -> dict:
+        """What the chat list already polled says about thread_id (no extra reading of
+        Teams): typing (bool), typing_text (« Ana est en train d'écrire », only for the
+        conversation open in Teams' window), seen (your last message read: True / False,
+        None when Teams' window shows another conversation)."""
+        cache = self.__dict__.get("_activity_cache", {})
+        now = time.monotonic()
+        typing = cache.get(("typing", thread_id))
+        seen = cache.get(("seen", thread_id))
+        live = typing is not None and now - typing[0] <= self.TYPING_TTL
+        return {"typing": live, "typing_text": typing[1] if live else None,
+                "seen": seen[1] if seen is not None and now - seen[0] <= self.TYPING_TTL else None}
+
     # --- new conversation: someone who is not in the list yet ---
     can_start_chat: bool = False
     """True when the driver can open a private chat with someone by name."""

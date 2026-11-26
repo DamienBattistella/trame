@@ -26,13 +26,51 @@
     }
     return out.slice(0, 8);
   };
-  const railItems = () =>
-    items().map((el) => ({
+  // « En train d'écrire » : dans la liste, Teams remplace l'aperçu de la ligne par trois
+  // points animés (data-testid typing-indicator), pour toute conversation sauf celle
+  // ouverte. Celle-ci l'écrit en toutes lettres sous le fil : « Ana est en train
+  // d’écrire… », « Ana and Marc are typing… ».
+  const TYPING_ROW = '[data-testid="typing-indicator"]';
+  const TYPING_TEXT = /\b(est|sont) en train d.\s?[eé]crire|\b(is|are) typing\b/i;
+  const paneTyping = () => {
+    const main = document.querySelector('[role="main"]');
+    if (!main) return "";
+    const walk = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (!TYPING_TEXT.test(n.data)) continue;
+      const el = n.parentElement;
+      // Un message qui contient ces mots n'est pas l'indicateur.
+      if (!el || el.closest(MSGS) || el.closest('[contenteditable="true"]') || !visible(el)) continue;
+      return flat(el.innerText || n.data).replace(/[.…\s]+$/, "").slice(0, 120);
+    }
+    return "";
+  };
+  // Accusé de lecture : l'icône d'état de ton dernier message (« Envoyé », « Vu »,
+  // « Sent », « Seen », « Lu par… »). Teams ne la met que sous ton dernier message.
+  const SEEN = /^(vu|seen|lu|read)\b/i;
+  const statusOf = (el) => {
+    const icon = el.querySelector('[id^="read-status-icon-"]');
+    const l = (icon?.getAttribute("aria-label") || "").trim();
+    return !l ? "" : SEEN.test(l) ? "seen" : "sent";
+  };
+  const lastStatus = () => {
+    const icons = Array.from(document.querySelectorAll(`${MSGS} [id^="read-status-icon-"]`));
+    const last = icons[icons.length - 1];
+    return last ? statusOf(last.closest(MSGS) || last.parentElement) : "";
+  };
+  const railItems = () => {
+    const open = titleName();
+    const openEl = open ? findItem(open) : null;
+    return items().map((el) => ({
       label: label(el),
       aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
       id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
       presence: presenceOf(el),
+      typing: Boolean(el.querySelector(TYPING_ROW)),
+      // La conversation ouverte dans cette fenêtre : ce que montre son fil.
+      ...(el === openEl ? { open: true, typing_text: paneTyping(), status: lastStatus() } : {}),
     }));
+  };
   const railScroller = () => {
     for (let el = rail(); el && el !== document.body; el = el.parentElement) {
       if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
@@ -883,6 +921,7 @@
             text,
             at,
             mid: msgId(el),
+            status: statusOf(el),
             reactions: myReactions(el),
             files,
             images,
@@ -933,7 +972,7 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        out.push({ sender, text: m.text, at: m.at, id: m.mid, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
       }
       const shown = out.slice(-last);
       await thumbnails(shown);

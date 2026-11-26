@@ -528,9 +528,14 @@ class Watcher:
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
                 "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
-                "images": [i.model_dump() for i in m.images]} for m in msgs]
+                "images": [i.model_dump() for i in m.images], "seen": m.seen} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
+
+    def thread_activity(self, thread_id: str) -> dict:
+        """Someone typing in thread_id, and whether your last message there was seen, as
+        the chat list Trame already polls shows it: nothing is opened or read in Teams."""
+        return self.driver.activity(thread_id)
 
     def search_messages(self, query: str, limit: int = 50) -> dict:
         """Messages already read by Trame that contain `query` (case and accents ignored).
