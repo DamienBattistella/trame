@@ -23,6 +23,10 @@
     });
     return exact.sort((a, b) => label(a).length - label(b).length)[0] || null;
   };
+  const sendReady = () => {
+    const btn = sendButton();
+    return Boolean(btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true");
+  };
   const visible = (el) => Boolean(el && el.getClientRects().length);
   const editor = () => {
     const picks = [
@@ -52,8 +56,44 @@
     }
     return check();
   };
-  const flat = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  // U+2060 / U+200B : caract\u00e8res de remplissage que CKEditor glisse apr\u00e8s un saut de ligne.
+  const flat = (s) => (s || "").replace(/[\u2060\u200b]/g, "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  // La zone de saisie de Teams est un CKEditor 5 : son élément éditable porte l'instance.
+  // Un texte posé dans le DOM sans passer par son modèle n'existe pas pour Teams
+  // (Envoyer reste inactif, puis l'éditeur se redessine vide) : on écrit dans le modèle.
+  const cke = (box) => {
+    for (let el = box; el; el = el.parentElement) if (el.ckeditorInstance) return el.ckeditorInstance;
+    return null;
+  };
+  // Texte du modèle de l'éditeur, null quand il est illisible (pas d'instance, autre version).
+  const modelText = (box) => {
+    try {
+      const ed = cke(box);
+      if (!ed) return null;
+      let out = "";
+      for (const step of ed.model.createRangeIn(ed.model.document.getRoot())) {
+        out += typeof step.item.data === "string" ? step.item.data : " ";
+      }
+      return flat(out);
+    } catch {
+      return null;
+    }
+  };
+  const typeInModel = (box, text) => {
+    const ed = cke(box);
+    if (!ed) throw new Error("pas d'instance CKEditor");
+    text.split(/\r?\n/).forEach((line, i) => {
+      if (i) ed.execute(ed.commands.get("shiftEnter") ? "shiftEnter" : "enter");
+      if (line) ed.model.change((writer) => ed.model.insertContent(writer.createText(line), ed.model.document.selection));
+    });
+  };
   const clear = (box) => {
+    try {
+      const ed = cke(box);
+      if (ed) return void ed.setData("");
+    } catch {
+      /* repli sur le DOM */
+    }
     box.focus();
     document.execCommand("selectAll", false);
     document.execCommand("delete", false);
@@ -71,8 +111,15 @@
   // rien. Le collage simulé puis l'événement beforeinput passent par l'éditeur de
   // Teams lui-même, sans focus.
   const insert = async (box, text) => {
-    const ok = () => flat(box.innerText).includes(flat(text).slice(0, 20));
+    const key = flat(text).slice(0, 20);
+    // Visible dans la zone ET connu de l'éditeur, quand son modèle est lisible.
+    const ok = () => {
+      if (!flat(box.innerText).includes(key)) return false;
+      const known = modelText(box);
+      return known === null || known.includes(key);
+    };
     const tries = [
+      ["ckeditor", () => typeInModel(box, text)],
       ["execCommand", () => document.execCommand("insertText", false, text)],
       [
         "paste",
@@ -174,15 +221,19 @@
       if (late()) return fail("délai dépassé avant l'envoi");
       const key = flat(text).slice(0, 40);
       const before = lastMessages(3).filter((t) => t.includes(key)).length;
+      // Teams active Envoyer une fois le texte pris en compte : lui laisser le temps.
+      await waitFor(sendReady, 1500);
       const btn = sendButton();
-      if (btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") btn.click();
+      const via = sendReady() ? "bouton" : "Entrée";
+      if (via === "bouton") btn.click();
       else box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+      const trace = `saisie : ${how}, envoi : ${via}`;
       // Envoyé seulement si le message apparaît dans la conversation : une zone de saisie
       // vidée ne prouve rien (page gelée, éditeur réinitialisé).
       const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, 6000);
       if (shown) return { ok: true };
-      if (box.innerText.trim()) return fail("envoi refusé par Teams (bouton Envoyer inactif ?)");
-      return { ok: false, uncertain: true, error: "message non visible dans la conversation, vérifie dans Teams" };
+      if (box.innerText.trim() || modelText(box)) return fail(`envoi refusé par Teams (${trace})`);
+      return { ok: false, uncertain: true, error: `message non visible dans la conversation, vérifie dans Teams (${trace})` };
     },
     diagnose: () => ({
       url: location.href,
@@ -200,6 +251,13 @@
       has_focus: document.hasFocus(),
       visibility: document.visibilityState,
       send_button: Boolean(sendButton()),
+      send_ready: sendReady(),
+      ckeditor: Boolean(editor() && cke(editor())),
+      editor_model: (() => {
+        const e = editor();
+        const known = e ? modelText(e) : null;
+        return known === null ? "illisible" : known ? "rempli" : "vide";
+      })(),
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
     }),
   };

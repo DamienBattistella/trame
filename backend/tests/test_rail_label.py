@@ -78,3 +78,5 @@ def test_teams_web_label_without_prefix_or_marker():
     assert not parse("Romain CUREAU 25/11 je vais préparer ça").unread
     from drivers.rail_label import is_structural
     assert is_structural("Enregistré")
+    assert is_structural("3 3") and is_structural("99+")
+    assert not is_structural("Hexagone 10") and not is_structural("DX")
