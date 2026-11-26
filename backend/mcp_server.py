@@ -69,7 +69,7 @@ TOOLS: list[dict] = [
     _tool("get_settings", "Réglages", "Réglages de Trame (cerveau, sécurité, résumé, GitHub, télémétrie). Sans le jeton MCP."),
     # --- lecture ---
     _tool("list_conversations", "Discussions",
-          "Discussions Teams connues de Trame : nom, type, suivie, favorite, mode, non-lu, dernière activité, réponse à relire. "
+          "Discussions Teams connues de Trame : nom, type, suivie, favorite, archivée, mode, non-lu, dernière activité, réponse à relire. "
           "Les favorites (épinglées par l'utilisateur) viennent en premier, dans son ordre. " + UNTRUSTED,
           {"status": {"type": "string", "enum": ["all", "review", "unread", "followed"], "default": "all"},
            "query": {"type": "string", "description": "Filtre sur le nom"},
@@ -308,7 +308,7 @@ def make_router(watcher: Watcher) -> APIRouter:
             if q and q not in w.display_name.casefold():
                 continue
             out.append({"thread_id": w.thread_id, "name": w.display_name, "type": w.surface.value, "followed": w.watch,
-                        "favorite": w.thread_id in favorites, "mode": w.mode, "unread": w.unread, "last_activity": w.last_activity, "reply_to_review": review})
+                        "favorite": w.thread_id in favorites, "archived": w.thread_id in watcher.state.archived, "mode": w.mode, "unread": w.unread, "last_activity": w.last_activity, "reply_to_review": review})
         return out[: int(args.get("limit", 200))]
 
     def tool_read(args: dict) -> Any:

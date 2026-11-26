@@ -56,6 +56,7 @@ def factory_reset() -> dict:
     cfg["onboarded"] = False
     cfg["watchlist"] = []
     cfg["favorites"] = []
+    cfg["archived"] = {}
     save(cfg)
     source, target = BUNDLE / "SOUL.md", HOME / "SOUL.md"
     if source.exists() and source.resolve() != target.resolve():

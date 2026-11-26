@@ -69,7 +69,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: [["Alt", "F"]], label: "Épingler ou retirer la conversation des favoris" },
       { keys: [["Ctrl", "Maj", "↑"], ["Ctrl", "Maj", "↓"]], label: "Monter / descendre le favori (dans la liste)" },
-      { keys: [["Maj", "F10"]], label: "Menu de la conversation : favoris, déplacer vers Suivies ou Autres" },
+      { keys: [["Maj", "F10"]], label: "Menu de la conversation : favoris, suivre, marquer comme lu, archiver" },
     ],
   },
   {
