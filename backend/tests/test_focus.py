@@ -308,4 +308,6 @@ def test_teams_web_is_the_default_driver_on_windows(monkeypatch):
     from drivers.web_bridge import WebBridgeDriver
     monkeypatch.delenv("TRAME_DRIVER", raising=False)
     monkeypatch.setattr(appmod.os, "name", "nt")
-    assert isinstance(appmod.make_driver(), WebBridgeDriver)
+    d = appmod.make_driver()
+    # Microsoft Graph in front (when signed in), Teams web underneath for the rest.
+    assert type(d).__name__ == "GraphDriver" and isinstance(d.inner, WebBridgeDriver)
