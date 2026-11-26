@@ -11,6 +11,12 @@ from models import IncomingMessage, Surface
     ("Reply:\nSure, on it.", "Sure, on it."),
     ("« Oui, je regarde. »", "Oui, je regarde."),
     ('"Ok pour demain"', "Ok pour demain"),
+    # The model reasons first, then labels its answer: only the answer is the message.
+    ("Hugo me demande qui est assigné sur la PR. Je ne peux pas consulter GitHub d'ici, donc je ne "
+     "propose pas de réponse inventée.\n\nRéponse suggérée :\n\nJe regarde et je reviens vers toi 😉",
+     "Je regarde et je reviens vers toi 😉"),
+    ("Le ton est familier.\n**Message proposé :**\nOk pour moi.", "Ok pour moi."),
+    ("Voici ma proposition :\nV1\n\nVersion finale :\nV2", "V1\n\nVersion finale :\nV2"),
 ])
 def test_announcing_line_and_quotes_are_removed(raw, expected):
     assert clean_reply(raw) == expected
@@ -23,6 +29,9 @@ def test_announcing_line_and_quotes_are_removed(raw, expected):
     "Deux points :\n- la MR\n- le déploiement",
     'Il a dit "non" puis "oui"',
     "Réponse :",
+    "Hello\nMessage reçu : je regarde ça.",
+    "Avant de livrer :\n- la MR\n- le déploiement",
+    "Ok.\n\nRéponse :",
 ])
 def test_a_real_message_is_left_alone(text):
     assert clean_reply(text) == text
