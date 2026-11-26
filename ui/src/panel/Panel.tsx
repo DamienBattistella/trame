@@ -144,7 +144,7 @@ export function Panel({
         <TabsContent value="meetings" className="flex-1 overflow-auto">
           <Meetings trame={trame} />
         </TabsContent>
-        <TabsContent value="logs" className="flex-1 overflow-auto">
+        <TabsContent value="logs" className="min-h-0 flex-1 overflow-auto">
           <ActivityLog logs={state.logs} trame={trame} />
         </TabsContent>
         <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
