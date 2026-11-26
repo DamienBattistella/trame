@@ -147,6 +147,78 @@ def test_deep_list_asks_the_page_for_everything_and_drops_duplicates():
     assert calls[-1] == ("list", {})
 
 
+def test_page_fetch_sends_webfetch_and_returns_only_the_body():
+    """L'appel API est une commande envoyée à la page ; le moteur ne récupère que le corps
+    métier parsé, jamais d'en-tête de réponse."""
+    d = WebBridgeDriver()
+    calls = []
+
+    def rpc(op, **kw):
+        calls.append((op, kw))
+        return {"ok": True, "status": 200, "contentType": "application/json",
+                "json": {"conversations": [{"id": "19:x@thread.v2"}]}}
+
+    d._rpc = rpc
+    out = d.page_fetch("https://teams.microsoft.com/api/csa/v1/conversations")
+    assert out == {"status": 200, "contentType": "application/json",
+                   "json": {"conversations": [{"id": "19:x@thread.v2"}]}, "text": None}
+    assert calls[0][0] == "webfetch"
+    assert calls[0][1]["url"].endswith("/conversations") and calls[0][1]["method"] == "GET"
+
+
+def test_page_fetch_never_forwards_auth_headers_to_the_page():
+    """Le jeton reste dans la page : tout en-tête d'auth passé au moteur est retiré avant
+    d'atteindre la commande webfetch."""
+    d = WebBridgeDriver()
+    sent = {}
+    d._rpc = lambda op, **kw: sent.update(kw) or {"ok": True, "status": 204, "contentType": "", "text": ""}
+    d.page_fetch("https://teams.microsoft.com/api/csa/v1/x", method="POST", body={"a": 1},
+                 headers={"Authorization": "Bearer SECRET", "x-skypetoken": "SECRET2",
+                          "X-Trame-Request": "ok", "Content-Type": "application/json"})
+    # Seuls les en-têtes métier survivent ; aucun en-tête d'auth n'est transmis.
+    assert sent["headers"] == {"X-Trame-Request": "ok", "Content-Type": "application/json"}
+    assert "Authorization" not in sent["headers"] and "x-skypetoken" not in sent["headers"]
+
+
+def test_page_fetch_refuses_non_teams_hosts_without_calling_the_page():
+    d = WebBridgeDriver()
+    calls = []
+    d._rpc = lambda op, **kw: calls.append(op)
+    for bad in ("https://evil.example.com/steal", "https://teams.microsoft.com.evil.com/x",
+                "http://teams.microsoft.com/api/x"):
+        try:
+            d.page_fetch(bad)
+            assert False, f"hôte accepté à tort : {bad}"
+        except WebBridgeDriver.ApiError:
+            pass
+    assert calls == []  # la page n'est jamais sollicitée pour un hôte refusé
+
+
+def test_page_fetch_raises_on_http_error_so_caller_can_fall_back_to_dom():
+    d = WebBridgeDriver()
+    d._rpc = lambda op, **kw: {"ok": False, "status": 401, "error": "appel API refusé (HTTP 401)"}
+    try:
+        d.page_fetch("https://teams.microsoft.com/api/csa/v1/x")
+        assert False, "une réponse non 2xx doit lever ApiError"
+    except WebBridgeDriver.ApiError as e:
+        assert e.status == 401
+
+
+def test_api_capture_returns_only_structure_from_diagnose():
+    d = WebBridgeDriver()
+    d._rpc = lambda op, **kw: {"api_capture": {"count": 1, "byService": {"chatsvc": 1},
+                                               "endpoints": [{"method": "GET", "service": "chatsvc",
+                                                              "host": "teams.microsoft.com",
+                                                              "path": "/api/csa/v1/conversations",
+                                                              "type": "application/json", "status": 200,
+                                                              "count": 3, "auth": ["authorization"]}]}}
+    cap = d.api_capture()
+    assert cap["count"] == 1 and cap["byService"] == {"chatsvc": 1}
+    ep = cap["endpoints"][0]
+    # Noms d'en-têtes d'auth seulement, jamais de valeur.
+    assert ep["auth"] == ["authorization"] and ep["path"] == "/api/csa/v1/conversations"
+
+
 def test_connection_reads_the_whole_list_and_keeps_known_conversations(make_client, monkeypatch):
     """After a restart Teams draws only the top of its list: the conversations known
     from before must not vanish while the full read is on its way."""
