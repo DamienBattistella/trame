@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   Brief,
+  FactCheck,
   DraftItem,
   Effort,
   GithubLogin,
@@ -149,6 +150,34 @@ function mapSettings(s: any): Settings {
     teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
   };
 }
+function mapCheck(c: any): FactCheck {
+  return {
+    threadId: c.thread_id,
+    checkedAt: c.checked_at,
+    claims: (c.claims ?? []).map((x: any) => ({ excerpt: x.excerpt, verdict: x.verdict, source: x.source ?? "", fix: x.fix ?? null })),
+    sources: { messages: c.sources?.messages ?? 0, people: c.sources?.people ?? 0, github: c.sources?.github ?? 0 },
+  };
+}
+
+/** Démo : relit le message contre le fil de démonstration (PR #214, « avant ce soir »). */
+function demoCheck(threadId: string, who: string, text: string): FactCheck {
+  const asked = `${who}, 10:02 : « Tu peux relire la PR #214 avant ce soir ? »`;
+  const claims: FactCheck["claims"] = [];
+  for (const m of text.matchAll(/#\d+/g)) {
+    claims.push(m[0] === "#214"
+      ? { excerpt: m[0], verdict: "ok", source: asked, fix: null }
+      : { excerpt: m[0], verdict: "contredit", source: asked, fix: "#214" });
+  }
+  for (const m of text.matchAll(/\b\d{1,2} ?h(?: ?\d{2})?\b/gi)) {
+    claims.push({ excerpt: m[0], verdict: "non_verifiable", source: asked, fix: "ce soir" });
+  }
+  const order = { contredit: 0, non_verifiable: 1, ok: 2 } as const;
+  claims.sort((a, b) => order[a.verdict] - order[b.verdict]);
+  const now = new Date();
+  const at = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return { threadId, checkedAt: at, claims, sources: { messages: 3, people: 1, github: 0 } };
+}
+
 function mapBrief(b: any): Brief {
   return {
     threadId: b.thread_id,
@@ -862,6 +891,19 @@ export function useTrame() {
     }
     return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`, target ? { message: messageRef(target) } : undefined);
   };
+  /** Vérifie les faits d'un message prêt à partir (fil, entourage, GitHub). N'envoie jamais rien. */
+  const checkInThread = async (threadId: string, text: string, target?: MessageRef | null): Promise<Result<{ check: FactCheck }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const who = stateRef.current.watchlist.find((w) => w.threadId === threadId)?.displayName ?? "Quelqu'un";
+      return demo(1200, { check: demoCheck(threadId, who, text) });
+    }
+    const res = await request<{ check: any }>("POST", `/api/threads/${encodeURIComponent(threadId)}/check`, {
+      text,
+      message: target ? messageRef(target) : null,
+    });
+    return res.ok ? { ok: true, check: mapCheck(res.check) } : res;
+  };
   /** Réaction en un clic sur un message précis. Réussie seulement si Teams l'affiche. */
   const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction): Promise<Result> => {
     if (!connectedRef.current) {
@@ -1124,6 +1166,7 @@ export function useTrame() {
     reactInThread,
     sendInThread,
     suggestInThread,
+    checkInThread,
     showInTeams,
     markRead,
     diagnoseTeams,

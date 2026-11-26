@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, ExternalLink, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, X } from "lucide-react";
+import { BookOpenText, ExternalLink, ListChecks, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
+import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { DraftItem, MessageHit, MessageRef, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
+import { DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -182,6 +183,9 @@ export function DiscussionView({
   const loading = useRef(false);
   // Réponse à un message précis (citation Teams), et réaction en cours d'envoi.
   const [replyTo, setReplyTo] = useState<MessageRef | null>(null);
+  // Vérification des faits : à part de `busy`, elle ne bloque jamais l'envoi.
+  const [check, setCheck] = useState<{ result: FactCheck; text: string } | null>(null);
+  const [checking, setChecking] = useState(false);
   const [reacting, setReacting] = useState<{ index: number; reaction: Reaction } | null>(null);
   const caps = trame.state.capabilities;
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -235,6 +239,7 @@ export function DiscussionView({
     base.current = draft?.proposal ?? "";
     setFresher(null);
     setReplyTo(null);
+    setCheck(null);
     setReacting(null);
     setEdge(null);
     want.current = PAGE;
@@ -348,6 +353,7 @@ export function DiscussionView({
     setText("");
     setReplyTo(null);
     setChosen([]);
+    setCheck(null);
     base.current = "";
   };
 
@@ -385,6 +391,21 @@ export function DiscussionView({
     setBusy("idle");
     if (!res.ok) return fail("Proposition impossible", res.error);
     setText(res.text);
+  };
+
+  const verify = async () => {
+    const body = text.trim();
+    if (!body || checking) return;
+    setChecking(true);
+    const res = await trame.checkInThread(c.threadId, body, replyTo);
+    setChecking(false);
+    if (!res.ok) return toast.error("Vérification impossible", { description: res.error });
+    setCheck({ result: res.check, text: body });
+  };
+
+  const applyFix = (claim: FactClaim) => {
+    if (!claim.fix || !text.includes(claim.excerpt)) return;
+    setText(text.replace(claim.excerpt, claim.fix));
   };
 
   const openInTeams = async () => {
@@ -607,6 +628,17 @@ export function DiscussionView({
               </motion.div>
             )}
           </AnimatePresence>
+          <AnimatePresence initial={false}>
+            {check && (
+              <FactCheckPanel
+                check={check.result}
+                text={text}
+                stale={text.trim() !== check.text}
+                onFix={applyFix}
+                onClose={() => setCheck(null)}
+              />
+            )}
+          </AnimatePresence>
           <div className="relative">
             <AnimatePresence>
               {mentioning && suggestions.length > 0 && (
@@ -680,6 +712,15 @@ export function DiscussionView({
                   Ignorer
                 </Button>
               )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle" || checking || !text.trim()} onClick={verify}>
+                    {checking ? <Loader2 className="size-4 animate-spin" /> : <ListChecks className="size-4" />}
+                    Vérifier
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Relire les dates, chiffres, noms et engagements contre le fil, l'entourage et GitHub. N'envoie rien.</TooltipContent>
+              </Tooltip>
               <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle"} onClick={suggest}>
                 {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
                 {replyTo ? "Proposer une réponse" : draft ? "Autre proposition" : "Proposer"}

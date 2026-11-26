@@ -98,6 +98,23 @@ class Directory:
                 return self._index[k]
         return None
 
+    def mentioned(self, text: str) -> list[Person]:
+        """People named in full (name or alias) in a text: « Lucas Bernard », « BERNARD Lucas »."""
+        if not self.data:
+            return []
+        hay = f" {_key(text)} "
+        out: list[Person] = []
+        for p in self.data.people:
+            for alias in [p.name, *p.aliases]:
+                k = _key(alias)
+                if k and (" " in k or alias in p.aliases) and \
+                        (f" {k} " in hay or f" {' '.join(reversed(k.split()))} " in hay):
+                    out.append(p)
+                    break
+            if len(out) >= MAX_IN_PROMPT:
+                break
+        return out
+
     def search(self, query: str, limit: int = 8) -> list[Person]:
         """People whose name or alias starts with every word typed ("luc ber", "bernard"),
         names before aliases, then those whose role or team words start the same way."""

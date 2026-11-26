@@ -1,7 +1,7 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from presence import Presence
 
@@ -152,3 +152,46 @@ class Brief(BaseModel):
     github_enabled: bool
     github: list[GithubHit] = Field(default_factory=list)
     sources: BriefSources
+
+
+# --- vérification des faits d'un message avant envoi ---
+Verdict = Literal["contredit", "non_verifiable", "ok"]
+
+
+class Claim(BaseModel):
+    excerpt: str = Field(min_length=1)
+    verdict: Verdict
+    source: str = ""
+    fix: Optional[str] = None
+
+    @field_validator("excerpt")
+    @classmethod
+    def _excerpt(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("extrait vide")
+        return v
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _source(cls, v) -> str:
+        return " ".join(str(v or "").split())[:400]
+
+    @field_validator("fix", mode="before")
+    @classmethod
+    def _fix(cls, v) -> Optional[str]:
+        v = str(v or "").strip()
+        return v or None
+
+
+class FactCheckSources(BaseModel):
+    messages: int
+    people: int
+    github: int
+
+
+class FactCheck(BaseModel):
+    thread_id: str
+    checked_at: str
+    claims: list[Claim] = Field(default_factory=list)
+    sources: FactCheckSources

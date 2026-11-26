@@ -21,6 +21,8 @@ class MockBrain(Brain):
         return "Bien reçu, je regarde et je te reviens vite."
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
+        if "Message à vérifier :" in prompt:
+            return _fact_check(prompt)
         marker = "Conversation (du plus ancien au plus récent) :"
         transcript = prompt.split(marker, 1)[1] if marker in prompt else prompt
         low = transcript.lower()
@@ -66,3 +68,36 @@ class MockBrain(Brain):
             "search_queries": list(dict.fromkeys(queries))[:5],
         }
         return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
+
+
+_HOUR = re.compile(r"\b\d{1,2} ?h ?(?:\d{2})?\b", re.IGNORECASE)
+_DAY = re.compile(r"\b(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b", re.IGNORECASE)
+_NUM = re.compile(r"#\d+")
+_LINE = re.compile(r"^\[([^\]]*)\] ([^:]+): (.*)$")
+
+
+def _fact_check(prompt: str) -> str:
+    """Compares hours, weekdays and #numbers of the message with the thread: enough to
+    show every state of the check offline (contradicted with a fix, confirmed)."""
+    message = prompt.rsplit("<<<\n", 1)[-1].rsplit("\n>>>", 1)[0]
+    thread = prompt.split("Fil de la conversation (du plus ancien au plus récent) :\n", 1)[-1].split("\n\n", 1)[0]
+    lines = []
+    for raw in thread.splitlines():
+        m = _LINE.match(raw)
+        lines.append((m.group(1), m.group(2), m.group(3)) if m else ("", "", raw))
+    claims: list[dict] = []
+    for pattern, norm in ((_HOUR, lambda t: t.lower().replace(" ", "")), (_DAY, str.lower), (_NUM, str)):
+        said = [(at, who, text, x.group(0)) for at, who, text in lines for x in pattern.finditer(text)]
+        for found in pattern.finditer(message):
+            excerpt = found.group(0)
+            same = next((s for s in reversed(said) if norm(s[3]) == norm(excerpt)), None)
+            hit = same or (said[-1] if said else None)
+            if hit is None:
+                continue
+            at, who, text, value = hit
+            source = f"{who}, {at} : « {text} »" if who else f"« {text} »"
+            claims.append({"excerpt": excerpt, "verdict": "ok" if same else "contredit", "source": source,
+                           "fix": "" if same else value})
+    return "```json\n" + json.dumps({"claims": claims}, ensure_ascii=False, indent=2) + "\n```"
+
+
