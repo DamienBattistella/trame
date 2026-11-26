@@ -18,9 +18,11 @@ class Focus:
     ok: bool
     previous: Optional[str] = None
     restored: Optional[bool] = None
+    reason: Optional[str] = None
 
 
 class TeamsDriver(ABC):
+    last_error: Optional[str] = None
     """Abstraction over the Teams client. Implemented by MockTeamsDriver (any OS,
     for development) and WindowsUIADriver (real UIA driving, Windows only)."""
 
@@ -60,10 +62,14 @@ class TeamsDriver(ABC):
         conversation the user was looking at. Callers must check `focus.ok` before acting."""
         previous = self._current()
         focus = Focus(ok=False, previous=previous)
+        self.last_error = None
         try:
             focus.ok = bool(self.open_thread(thread_id))
-        except Exception:
+        except Exception as e:
             focus.ok = False
+            self.last_error = str(e)
+        if not focus.ok:
+            focus.reason = self.last_error or "conversation pas ouverte ou pas confirmée dans Teams"
         try:
             yield focus
         finally:
@@ -96,7 +102,15 @@ class TeamsDriver(ABC):
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool) -> Focus:
         """Like type_reply but returns the Focus; `ok` is True only if the text was typed."""
         with self.focused(thread_id, restore=restore) as focus:
-            focus.ok = focus.ok and bool(self._type_into_active(thread_id, text, send))
+            if focus.ok:
+                try:
+                    focus.ok = bool(self._type_into_active(thread_id, text, send))
+                    if not focus.ok:
+                        focus.reason = "texte non saisi dans Teams"
+                except SendUncertain:
+                    raise
+                except Exception as e:
+                    focus.ok, focus.reason = False, str(e)
         return focus
 
     @abstractmethod

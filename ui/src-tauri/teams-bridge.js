@@ -22,9 +22,22 @@
     });
     return exact.sort((a, b) => label(a).length - label(b).length)[0] || null;
   };
-  const editor = () =>
-    document.querySelector('[data-tid="ckeditor"] [contenteditable="true"]') ||
-    document.querySelector('[role="textbox"][contenteditable="true"]');
+  const visible = (el) => Boolean(el && el.getClientRects().length);
+  const editor = () => {
+    const picks = [
+      '[data-tid="ckeditor"][contenteditable="true"]',
+      '[data-tid="ckeditor"] [contenteditable="true"]',
+      '[data-tid="message-compose"] [contenteditable="true"]',
+      '[role="main"] [role="textbox"][contenteditable="true"]',
+      '[role="textbox"][contenteditable="true"]',
+    ];
+    for (const sel of picks) {
+      const el = Array.from(document.querySelectorAll(sel)).find(visible);
+      if (el) return el;
+    }
+    return null;
+  };
+  const REACTIONS = /^\s*\d+\s+(réactions?|reactions?)\b.*$/gim;
   const sendButton = () =>
     document.querySelector('[data-tid="newMessageCommands-send"]') ||
     document.querySelector('button[aria-label^="Send"], button[aria-label^="Envoyer"]');
@@ -79,7 +92,7 @@
           el.querySelector('[id^="content-"]')?.innerText ||
           "";
         const time = el.querySelector("time");
-        const text = body.replace(/\s+\n/g, "\n").trim();
+        const text = body.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim();
         if (text) out.push({ sender, text, at: time?.innerText?.trim() || time?.getAttribute("datetime") || "" });
       }
       return out;
@@ -114,6 +127,11 @@
       items: items().length,
       sample: items().slice(0, 6).map((el) => label(el).split(/\s+/).slice(0, 3).join(" ")),
       editor: Boolean(editor()),
+      editor_info: (() => {
+        const e = editor();
+        return e ? { tag: e.tagName, tid: e.getAttribute("data-tid") || "", role: e.getAttribute("role") || "", filled: Boolean(e.innerText.trim()) } : null;
+      })(),
+      textboxes: document.querySelectorAll('[contenteditable="true"]').length,
       send_button: Boolean(sendButton()),
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
     }),

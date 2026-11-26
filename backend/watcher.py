@@ -45,6 +45,7 @@ class Watcher:
         self.cfg = cfgmod.load()
         self.soul = cfgmod.load_soul()
         self.people = peoplemod.Directory.load()
+        self._why = threading.local()
         self.telemetry_error = telemetry.configure(self.cfg.get("telemetry"))
         self.state = AppState(
             onboarded=bool(self.cfg.get("onboarded", False)),
@@ -207,11 +208,16 @@ class Watcher:
             self._sent_recent.setdefault(thread_id, []).append((time.monotonic(), text.strip()))
             self._sent_recent[thread_id] = self._sent_recent[thread_id][-10:]
 
+    def _because(self) -> str:
+        reason = getattr(self._why, "reason", None)
+        return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
+
     def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
         restore=True puts the user's previous conversation back afterwards. Pause (for
         automatic sends) and screen share are re-checked under the UI lock, right before
         typing: either may have started during the LLM call, the countdown or the wait."""
+        self._why.reason = None
         with self._ui_lock:
             if auto and (self.state.paused or self._stop.is_set()):
                 self.log("warn", "Envoi auto annulé : Trame a été mis en pause.")
@@ -232,8 +238,13 @@ class Watcher:
                     return False
                 raise ActionError(409, "Envoi non confirmé : le message est peut-être parti. Vérifie dans Teams avant de renvoyer.")
             except Exception as e:
+                self._why.reason = str(e)
                 self.log("warn", f"Saisie impossible: {e}")
                 return False
+            if not focus.ok:
+                self._why.reason = focus.reason
+                if focus.reason:
+                    self.log("warn", f"Saisie refusée : {focus.reason}")
             if focus.ok and send:
                 self._remember_sent(thread_id, text)
         self._warn_if_not_restored(focus)
@@ -303,7 +314,7 @@ class Watcher:
                 with self._lock:
                     d.proposal = body
                 self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
-                raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été envoyé, le brouillon est conservé.")
+                raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
         self.log("sent", f"Envoyé à {d.from_}")
@@ -316,7 +327,7 @@ class Watcher:
                 d.proposal = body
             if not self._deliver(d.thread_id, body, send=False, restore=False):
                 self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
-                raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été saisi.")
+                raise ActionError(409, f"Rien n'a été saisi dans Teams.{self._because()}")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
 
     # --- manual mode: read a conversation, reply by hand, or ask for a proposal ---
@@ -344,7 +355,7 @@ class Watcher:
             raise ActionError(422, "Le message est vide.")
         self._typing_allowed()
         if not self._deliver(thread_id, body, send=True, restore=True):
-            raise ActionError(409, f"Impossible de confirmer « {entity.display_name} » dans Teams : rien n'a été envoyé.")
+            raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)
         self._thread_cache.pop(thread_id, None)
         self.log("sent", f"Envoyé à {entity.display_name} : « {body[:60]} »")

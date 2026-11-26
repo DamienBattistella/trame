@@ -140,12 +140,18 @@ class WebBridgeDriver(TeamsDriver):
         return f"name:{title}"
 
     def open_thread(self, thread_id: str) -> bool:
+        name = self._name(thread_id)
         try:
-            res = self._rpc("open", name=self._name(thread_id), id=thread_id if not thread_id.startswith("name:") else "")
-        except Exception:
+            res = self._rpc("open", name=name, id=thread_id if not thread_id.startswith("name:") else "")
+        except Exception as e:
+            self.last_error = str(e)
             return False
-        return bool(res and res.get("ok") and rail_label.same_name(rail_label.title_conversation(res.get("title") or "") or "",
-                                                                 self._name(thread_id)))
+        shown = rail_label.title_conversation((res or {}).get("title") or "") or ""
+        if res and res.get("ok") and rail_label.same_name(shown, name):
+            return True
+        self.last_error = (f"Teams intégré : « {name} » pas ouverte"
+                           f" ({(res or {}).get('error') or 'titre affiché : ' + (shown or 'aucun')})")
+        return False
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         surface = self._kinds.get(thread_id, Surface.dm)
@@ -163,7 +169,9 @@ class WebBridgeDriver(TeamsDriver):
             raise
         if send and res and res.get("uncertain"):
             raise SendUncertain(res.get("error") or "envoi non confirmé")
-        return bool(res and res.get("ok"))
+        if not (res and res.get("ok")):
+            raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'saisie refusée'}")
+        return True
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
         wanted = set(thread_ids) if thread_ids is not None else None
