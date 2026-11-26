@@ -158,6 +158,206 @@
   }
   if (window.__trame) return;
   if (!/(^|\.)teams\.(microsoft|cloud\.microsoft)\.com$|^teams\.cloud\.microsoft$/.test(location.hostname)) return;
+
+  // --- Hôtes des API Teams ---------------------------------------------------
+  // Les seuls hôtes que le pont appelle (webfetch) et retient (capture) : ceux que le
+  // client Teams interroge déjà. Jamais un tiers : l'appel se fait avec les credentials
+  // de la page, il ne doit sortir ni vers un autre domaine ni (pour l'auth) vers le moteur.
+  const API_HOSTS =
+    /(^|\.)(teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|msg\.teams\.microsoft\.com|asyncgw\.teams\.microsoft\.com|presence\.teams\.microsoft\.com|substrate\.office\.com|graph\.microsoft\.com|outlook\.office365\.com|teams\.events\.data\.microsoft\.com)$/i;
+  // En-têtes d'authentification : on note leur PRÉSENCE, jamais leur valeur, et webfetch
+  // refuse de les poser (c'est la page, pas le moteur, qui porte l'auth).
+  const AUTH_HEADER = /^(authorization|authentication|cookie|x-skypetoken|x-ms-\S*token|.*[-_]?token|.*bearer.*)$/i;
+
+  // --- Capture réseau en lecture seule --------------------------------------
+  // Sert UNIQUEMENT à découvrir quelles API internes Teams appelle et comment. On ne
+  // garde que la STRUCTURE : méthode, hôte, gabarit de chemin (segments opaques masqués),
+  // type de réponse, statut, et la PRÉSENCE (jamais la valeur) d'en-têtes d'auth. Aucun
+  // jeton, cookie, en-tête d'autorisation, paramètre de requête ni corps de message n'est
+  // lu ni conservé. Le résumé (structure seule) sort via l'op `diagnose`.
+  const apiCapture = (() => {
+    const MAX = 150;
+    const seen = new Map(); // clé -> { method, host, path, type, status, count, auth, first, last }
+    const tmpl = (path) =>
+      (path || "/")
+        .split("/")
+        .map((seg) =>
+          !seg
+            ? seg
+            : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)
+              ? "{guid}"
+              : /^(19|8|48):/.test(seg) || /@thread\.|@unq\.gbl|@eu\.teams/.test(seg)
+                ? "{thread}"
+                : /^\d{6,}$/.test(seg)
+                  ? "{n}"
+                  : /^[A-Za-z0-9_%.-]{20,}$/.test(seg)
+                    ? "{id}"
+                    : seg,
+        )
+        .join("/");
+    // Famille de service, pour regrouper la lecture : rien de sensible.
+    const service = (host, path) =>
+      /msg\.teams/.test(host) ? "chatsvc"
+      : /presence\.teams/.test(host) ? "presence"
+      : /asyncgw\.teams/.test(host) ? "asyncgw"
+      : /substrate\.office/.test(host) ? "substrate"
+      : /graph\.microsoft/.test(host) ? "graph"
+      : /(^|\.)teams\.(microsoft|cloud\.microsoft|live)/.test(host)
+        ? (/\/api\//.test(path) ? "middletier" : "teams")
+        : "autre";
+    // Noms (jamais valeurs) des en-têtes d'auth présents sur une requête Teams.
+    const authNames = (headers) => {
+      const out = new Set();
+      try {
+        const push = (k) => AUTH_HEADER.test(String(k)) && out.add(String(k).toLowerCase());
+        if (!headers) return out;
+        if (typeof headers.forEach === "function") headers.forEach((_v, k) => push(k));
+        else if (Array.isArray(headers)) headers.forEach(([k]) => push(k));
+        else Object.keys(headers).forEach(push);
+      } catch {}
+      return out;
+    };
+    const note = (method, rawUrl, status, authSet, contentType) => {
+      let u;
+      try {
+        u = new URL(rawUrl, location.origin);
+      } catch {
+        return;
+      }
+      // On ne retient que les API : hôtes de service Teams/Microsoft, et sur l'hôte de la
+      // page seulement les chemins d'API (jamais les assets statiques ou la navigation).
+      if (!API_HOSTS.test(u.hostname)) return;
+      if (u.hostname === location.hostname && !/\/api\/|\/csa\/|\/middletier\//.test(u.pathname)) return;
+      const path = tmpl(u.pathname);
+      const key = `${(method || "GET").toUpperCase()} ${u.hostname} ${path}`;
+      const auth = Array.from(authSet || []);
+      const now = Date.now();
+      const prev = seen.get(key);
+      if (prev) {
+        prev.count++;
+        prev.last = now;
+        prev.status = status || prev.status;
+        if ((contentType || "").length) prev.type = contentType;
+        for (const a of auth) if (!prev.auth.includes(a)) prev.auth.push(a);
+      } else {
+        if (seen.size >= MAX) {
+          // Évince le plus ancien pour rester borné.
+          let oldestKey, oldest = Infinity;
+          for (const [k, v] of seen) if (v.last < oldest) ((oldest = v.last), (oldestKey = k));
+          if (oldestKey) seen.delete(oldestKey);
+        }
+        seen.set(key, {
+          method: (method || "GET").toUpperCase(),
+          service: service(u.hostname, u.pathname),
+          host: u.hostname,
+          path,
+          type: contentType || "",
+          status: status || 0,
+          count: 1,
+          hasQuery: Boolean(u.search),
+          auth,
+          first: now,
+          last: now,
+        });
+      }
+    };
+    const summary = () => {
+      const rows = Array.from(seen.values()).sort((a, b) => b.last - a.last);
+      const byService = {};
+      for (const r of rows) byService[r.service] = (byService[r.service] || 0) + 1;
+      return {
+        count: rows.length,
+        byService,
+        // Chaque entrée : structure seule, aucune valeur d'auth ni paramètre de requête.
+        endpoints: rows.slice(0, 80).map((r) => ({
+          method: r.method,
+          service: r.service,
+          host: r.host,
+          path: r.path,
+          type: r.type,
+          status: r.status,
+          count: r.count,
+          hasQuery: r.hasQuery,
+          auth: r.auth.slice(0, 6), // noms d'en-têtes seulement
+        })),
+      };
+    };
+    return { note, authNames, summary };
+  })();
+
+  // Pose les hooks passifs. On ne lit jamais la VALEUR d'un en-tête ni un corps : pour
+  // `fetch` on regarde les NOMS d'en-têtes d'auth ; pour XHR on note qu'un en-tête d'auth
+  // a été posé (booléen), sans sa valeur. On renvoie toujours l'objet d'origine inchangé.
+  (() => {
+    try {
+      const of = window.fetch;
+      if (typeof of === "function" && !of.__trameWrapped) {
+        const wrapped = function (input, init) {
+          let url = "", method = "GET", authSet;
+          try {
+            if (typeof Request !== "undefined" && input instanceof Request) {
+              url = input.url;
+              method = input.method || "GET";
+              authSet = apiCapture.authNames(input.headers);
+            } else {
+              url = String(input);
+            }
+            if (init) {
+              if (init.method) method = init.method;
+              if (init.headers) {
+                const h = apiCapture.authNames(init.headers);
+                authSet = authSet ? new Set([...authSet, ...h]) : h;
+              }
+            }
+          } catch {}
+          const p = of.apply(this, arguments);
+          try {
+            p.then(
+              (res) => {
+                try {
+                  apiCapture.note(method, url, res.status, authSet, (res.headers.get("content-type") || "").split(";")[0]);
+                } catch {}
+              },
+              () => {},
+            );
+          } catch {}
+          return p;
+        };
+        wrapped.__trameWrapped = true;
+        window.fetch = wrapped;
+      }
+      const XP = XMLHttpRequest && XMLHttpRequest.prototype;
+      if (XP && !XP.open.__trameWrapped) {
+        const oOpen = XP.open, oSend = XP.send, oSet = XP.setRequestHeader;
+        const wOpen = function (method, url) {
+          this.__trame = { method: method || "GET", url: String(url || ""), auth: new Set() };
+          return oOpen.apply(this, arguments);
+        };
+        wOpen.__trameWrapped = true;
+        XP.open = wOpen;
+        XP.setRequestHeader = function (name) {
+          try {
+            if (this.__trame && AUTH_HEADER.test(String(name))) this.__trame.auth.add(String(name).toLowerCase());
+          } catch {}
+          return oSet.apply(this, arguments);
+        };
+        XP.send = function () {
+          try {
+            const meta = this.__trame;
+            if (meta)
+              this.addEventListener("loadend", () => {
+                try {
+                  const ct = (this.getResponseHeader && this.getResponseHeader("content-type") || "").split(";")[0];
+                  apiCapture.note(meta.method, meta.url, this.status, meta.auth, ct);
+                } catch {}
+              });
+          } catch {}
+          return oSend.apply(this, arguments);
+        };
+      }
+    } catch {}
+  })();
+
   const reply = (payload) => window.__TAURI_INTERNALS__.invoke("teams_bridge_reply", { payload });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const label = (el) => (el?.getAttribute?.("aria-label") || el?.innerText || "").replace(/\s+/g, " ").trim();
@@ -1703,6 +1903,57 @@
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     probe,
     title: () => document.title,
+    // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
+    // page interroge déjà, avec SES propres credentials (cookies). Ne renvoie que le corps
+    // métier parsé et borné — jamais d'en-tête de réponse (hors type), jamais d'auth. Le
+    // jeton reste dans la page : le moteur ne peut ni poser un en-tête d'auth (ils sont
+    // refusés) ni lire de credential. Les services à bearer token (refusés en cookie seul)
+    // retomberont sur le DOM tant que la page ne rejoue pas son auth (étape suivante).
+    webfetch: async ({ url, method = "GET", body = null, headers = null, json = true }) => {
+      let u;
+      try {
+        u = new URL(String(url || ""), location.origin);
+      } catch {
+        return { ok: false, error: "url invalide" };
+      }
+      if (u.protocol !== "https:") return { ok: false, error: "https requis" };
+      if (!API_HOSTS.test(u.hostname)) return { ok: false, error: `hôte non autorisé : ${u.hostname}` };
+      const init = { method: String(method || "GET").toUpperCase(), credentials: "include", headers: {} };
+      if (headers && typeof headers === "object")
+        for (const [k, v] of Object.entries(headers)) {
+          // Seuls des en-têtes métier : tout en-tête d'auth est ignoré (porté par la page).
+          if (!AUTH_HEADER.test(String(k))) init.headers[String(k)] = String(v);
+        }
+      if (body != null && init.method !== "GET" && init.method !== "HEAD") {
+        init.body = typeof body === "string" ? body : JSON.stringify(body);
+        if (!Object.keys(init.headers).some((k) => k.toLowerCase() === "content-type"))
+          init.headers["Content-Type"] = "application/json";
+      }
+      let res;
+      try {
+        res = await fetch(u.toString(), init);
+      } catch (e) {
+        return { ok: false, error: `échec réseau : ${String((e && e.message) || e)}` };
+      }
+      const ct = (res.headers.get("content-type") || "").split(";")[0];
+      const out = { ok: res.ok, status: res.status, contentType: ct };
+      let text = "";
+      try {
+        text = await res.text();
+      } catch {}
+      const LIMIT = 2_000_000;
+      const clipped = text.length > LIMIT ? text.slice(0, LIMIT) : text;
+      if (json && /json/i.test(ct)) {
+        try {
+          out.json = JSON.parse(clipped);
+        } catch {
+          out.text = clipped;
+        }
+      } else {
+        out.text = clipped;
+      }
+      return out;
+    },
     // deep : Teams ne dessine que le début de la liste. On la fait défiler jusqu'en bas
     // pour charger la suite, en cumulant ce qui passe, puis on revient où elle était.
     list: async ({ deep } = {}) => {
@@ -2452,6 +2703,8 @@
         return known === null ? "illisible" : known ? "rempli" : "vide";
       })(),
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
+      // API internes repérées (structure seule : ni jeton, ni paramètre, ni contenu).
+      api_capture: apiCapture.summary(),
     }),
   };
 
