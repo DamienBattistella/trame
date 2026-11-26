@@ -10,6 +10,8 @@ from typing import Any, Optional
 from models import DELETED_TEXT, REACTIONS, CardRef, FileRef, IncomingMessage, LinkRef, Surface, WatchEntity
 
 MAX_LINKS, MAX_FILES, MAX_CARDS = 20, 10, 5
+HOSTED = re.compile(r'<img[^>]+src="(https://graph\.microsoft\.com/v1\.0/chats/[^"]+/hostedContents/[^"/]+/\$value)"',
+                    re.IGNORECASE)
 WEB_URL = re.compile(r"^https?://[^\s/?#@]+[^\s]*$", re.IGNORECASE)
 FILE_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.(live\.)?com|1drv\.ms)(/|$)", re.IGNORECASE)
 
@@ -82,6 +84,32 @@ def body_text(body: Optional[dict]) -> "tuple[str, list[LinkRef]]":
     parser.feed(content)
     parser.close()
     return parser.text(), parser.links
+
+
+def hosted_images(body: Optional[dict]) -> list[str]:
+    """Graph URLs of the images pasted in a message (hostedContents), in order."""
+    content = str((body or {}).get("content") or "")
+    return list(dict.fromkeys(HOSTED.findall(content)))
+
+
+_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+           "novembre", "décembre")
+
+
+def meeting_when(start: Optional[str], end: Optional[str]) -> str:
+    """« mardi 24 novembre 2026 11:00 - 11:45 », as on Teams' recap cards (local time)."""
+    try:
+        a = datetime.fromisoformat(str(start).replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return ""
+    out = f"{_DAYS[a.weekday()]} {a.day} {_MONTHS[a.month - 1]} {a.year} {a:%H:%M}"
+    try:
+        b = datetime.fromisoformat(str(end).replace("Z", "+00:00")).astimezone()
+        out += f" - {b:%H:%M}"
+    except ValueError:
+        pass
+    return out
 
 
 def when(iso: Optional[str], now: Optional[datetime] = None) -> str:

@@ -526,14 +526,18 @@ class WebBridgeDriver(TeamsDriver):
                                            received_at=label.last_time or "", surface=label.surface))
         return out
 
+    def watch_tick(self, on_message: Callable[[IncomingMessage], None]) -> None:
+        """One look at the chat list: new previews become messages."""
+        items = self._items()
+        convs = {it["thread_id"]: WatchEntity(thread_id=it["thread_id"], display_name=it["parsed"].name,
+                                              surface=it["parsed"].surface) for it in items}
+        for msg in self._previews.diff(((it["thread_id"], it.get("label") or "") for it in items), convs):
+            on_message(msg)
+
     def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:
         while not should_stop():
             try:
-                items = self._items()
-                convs = {it["thread_id"]: WatchEntity(thread_id=it["thread_id"], display_name=it["parsed"].name,
-                                                      surface=it["parsed"].surface) for it in items}
-                for msg in self._previews.diff(((it["thread_id"], it.get("label") or "") for it in items), convs):
-                    on_message(msg)
+                self.watch_tick(on_message)
             except Exception:
                 pass
             time.sleep(self.POLL_SECONDS)
