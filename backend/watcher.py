@@ -73,8 +73,21 @@ class Watcher:
             self.log("warn", "Teams : connexion perdue, tout reste en brouillon")
             return
         self.log("info", "Teams connecté")
+        if getattr(self.driver, "list_all_conversations", None) is None:
+            self._read_conversations(self.driver.list_conversations)
+            return
+        # Teams only draws the beginning of its list: reading it all takes a few seconds
+        # of scrolling, done aside so the caller is not kept waiting. What Teams shows
+        # right now is only taken when nothing is known yet: merging that short list
+        # would drop every other conversation until the full read lands.
+        if not self.state.watchlist:
+            self._read_conversations(self.driver.list_conversations)
+        threading.Thread(target=self._read_conversations, args=(self.driver.list_all_conversations,),
+                         daemon=True).start()
+
+    def _read_conversations(self, read) -> None:
         try:
-            discovered = self.driver.list_conversations()
+            discovered = read()
         except Exception:
             return
         with self._lock:
