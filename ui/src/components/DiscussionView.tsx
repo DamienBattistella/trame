@@ -20,7 +20,7 @@ import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
-import { acceptOf, addFiles, humanSize, limitsText } from "@/lib/attachments";
+import { acceptOf, addFiles, humanSize, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -406,7 +406,7 @@ export function DiscussionView({
     ? "Pièces jointes indisponibles : moteur injoignable"
     : !limits.canAttach
       ? `Pièces jointes indisponibles : ${limits.unsupported ?? "pilote Teams sans pièces jointes"}`
-      : `Joindre un fichier · ${limitsText(limits)}`;
+      : `Joindre un fichier, ou Ctrl+V d'une capture · ${limitsText(limits)}`;
 
   const pick = async (picked: File[]) => {
     if (!limits?.canAttach || !picked.length || busy === "send") return;
@@ -886,6 +886,15 @@ export function DiscussionView({
               }}
               onClick={(e) => followMention(text, e.currentTarget.selectionStart)}
               onBlur={() => setMentioning(null)}
+              onPaste={(e) => {
+                // Ctrl+V d'une capture d'écran ou de fichiers copiés : ils rejoignent les
+                // pièces jointes, comme par le trombone. Un texte collé reste un texte.
+                const pasted = pastedFiles(e.clipboardData);
+                if (!pasted.length) return;
+                e.preventDefault();
+                if (!canAttach) return void toast.error("Pièce jointe impossible", { description: attachHint });
+                void pick(pasted);
+              }}
               onKeyDown={(e) => {
                 if (mentioning && suggestions.length && mentionKey(e)) return;
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {

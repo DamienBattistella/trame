@@ -71,6 +71,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 - **Deux modes par conversation** : *Brouillon* (tu valides) ou *Auto* (envoi après un compte à rebours de 3, 5 ou 10 s, annulable par la pause).
 - **Brouillons éditables** : tu modifies le texte avant l'envoi, ou tu l'ouvres directement dans Teams pour le terminer toi-même.
 - **Mentions** : « @ » dans la zone de saisie propose les gens de la conversation et de ton entourage ; à l'envoi, Trame choisit la personne dans les suggestions de Teams, qui la notifie comme une vraie mention. Si Teams ne propose pas exactement une personne de ce nom, rien ne part.
+- **Pièces jointes** : trombone, glisser-déposer ou **Ctrl+V d'une capture d'écran** dans la zone de réponse ; les images et fichiers reçus s'affichent dans la discussion. Un texte collé (même copié depuis Word avec une image) reste du texte.
 - **Rattrapage** : en un clic, les messages non lus deviennent des brouillons — jamais d'envoi automatique en rafale.
 - **Brief de conversation** : en un clic, un résumé de la discussion, les points ouverts, les sujets abordés et les PR, issues et commits GitHub liés, chacun avec la raison du lien. Activable et réglable (20, 30 ou 50 derniers messages) dans les réglages.
 - **Connexion GitHub intégrée** : « Se connecter à GitHub » dans le wizard ou les Réglages affiche le code à usage unique ; la connexion passe par `gh`, et Trame signale les organisations qui exigent le SSO.
