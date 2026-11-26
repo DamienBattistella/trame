@@ -332,6 +332,17 @@ class GraphDriver:
                     {"user": {"id": self._me_id(client), "tenantId": self._tenant_id(client)}})
         return True
 
+    def _hide(self, client: GraphClient, thread_id: str, hide: bool) -> bool:
+        chat = self._chat_id(client, thread_id)
+        client.post(f"/chats/{chat}/{'hideForUser' if hide else 'unhideForUser'}",
+                    {"user": {"id": self._me_id(client), "tenantId": self._tenant_id(client)}})
+        return True
+
+    def hide_chat(self, thread_id: str, hide: bool) -> bool:
+        """Masquer (ou réafficher) la conversation pour soi dans Teams. Graph seulement :
+        la page Teams ne sait pas le faire, le repli répond False."""
+        return self._write("hide_chat", lambda c: self._hide(c, thread_id, hide), lambda: False)
+
     def mark_read(self, thread_id: str) -> bool:
         return self._write("mark_read", lambda c: self._mark_read(c, thread_id),
                            lambda: self._inner.mark_read(thread_id))

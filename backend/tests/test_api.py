@@ -165,6 +165,7 @@ def test_settings_get(make_client):
         },
         "brief": {"enabled": True, "last_messages": 30},
         "follow_ups": {"enabled": True, "delay_hours": 24},
+        "archive": {"after_days": 0, "hide_in_teams": False},
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
