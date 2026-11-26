@@ -28,6 +28,17 @@ export interface DraftItem {
   senderLabel?: string;
 }
 
+/** Message tout juste reçu, annoncé par une notification Windows. */
+export interface Notice {
+  id: string;
+  threadId: string;
+  conversation: string;
+  from: string;
+  text: string;
+  at: string;
+  surface: Surface;
+}
+
 export interface LogItem {
   at: string;
   level: "info" | "warn" | "sent" | "draft";

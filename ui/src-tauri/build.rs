@@ -9,6 +9,7 @@ fn main() {
             "teams_web_close",
             "teams_web_eval",
             "teams_bridge_reply",
+            "notify",
         ]),
     ))
     .expect("échec du build Tauri");

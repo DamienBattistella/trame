@@ -276,6 +276,13 @@ fn teams_bridge_reply(app: AppHandle, payload: serde_json::Value) {
     let _ = app.emit_to("main", "teams-bridge-reply", payload);
 }
 
+/// Windows notification for a message just received (asked by the Trame UI).
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification().builder().title(title).body(body).show().map_err(|e| e.to_string())
+}
+
 fn quit(app: &AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
     stop_backend(app);
@@ -294,6 +301,7 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[TEAMS_WEB]).build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(Backend(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             restart_backend,
@@ -303,7 +311,8 @@ fn main() {
             teams_web_hide,
             teams_web_close,
             teams_web_eval,
-            teams_bridge_reply
+            teams_bridge_reply,
+            notify
         ])
         .setup(|app| {
             spawn_backend(app.handle());

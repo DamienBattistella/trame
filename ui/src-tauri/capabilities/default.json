@@ -35,6 +35,7 @@
     "allow-teams-web-open",
     "allow-teams-web-hide",
     "allow-teams-web-close",
-    "allow-teams-web-eval"
+    "allow-teams-web-eval",
+    "allow-notify"
   ]
 }

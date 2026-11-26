@@ -454,3 +454,33 @@ def test_refresh_conversations_keeps_the_list_when_teams_gives_nothing(make_clie
     driver._convs = []
     assert client.post("/api/conversations/refresh").status_code == 409
     assert watcher.state.watchlist == before
+
+
+def _incoming(thread_id="19:bb22@thread.v2", sender="Lucas", text="Salut"):
+    from models import IncomingMessage, Surface
+    return IncomingMessage(thread_id=thread_id, sender=sender, text=text, surface=Surface.dm, received_at="13:22")
+
+
+def test_received_message_is_announced_even_when_not_followed(make_client):
+    client, watcher, _driver = make_client()
+    for w in watcher.state.watchlist:
+        w.watch = False
+    watcher._on_message(_incoming(thread_id="name:Inconnue", sender="Chiara", text="Tu as 5 min ?"))
+    notice = client.get("/api/state").json()["notices"][0]
+    assert (notice["from"], notice["text"], notice["conversation"]) == ("Chiara", "Tu as 5 min ?", "Chiara")
+    assert watcher.state.drafts == []
+
+
+def test_own_messages_and_sent_replies_are_not_announced(make_client):
+    _client, watcher, _driver = make_client()
+    watcher._on_message(_incoming(sender="Vous"))
+    watcher._sent_recent["19:bb22@thread.v2"] = [(__import__("time").monotonic(), "Je regarde")]
+    watcher._on_message(_incoming(text="Je regarde"))
+    assert watcher.state.notices == []
+
+
+def test_notices_are_capped_and_newest_first(make_client):
+    _client, watcher, _driver = make_client()
+    for i in range(25):
+        watcher._notice(_incoming(text=f"m{i}"))
+    assert len(watcher.state.notices) == 20 and watcher.state.notices[0].text == "m24"

@@ -15,7 +15,7 @@ import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
+from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, WatchEntity
 from drivers.base import Focus, SendUncertain, TeamsDriver
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
@@ -107,8 +107,26 @@ class Watcher:
         self.driver.watch(self._on_message, self._stop.is_set)
 
     # --- core reaction ---
+    MAX_NOTICES = 20
+
     def _on_message(self, msg: IncomingMessage) -> None:
+        self._notice(msg)
         self._process(msg)
+
+    def _notice(self, msg: IncomingMessage) -> None:
+        """Announce a received message, followed conversation or not. Never the user's
+        own messages nor the replies Trame just sent."""
+        try:
+            if self._is_own_message(msg, self.cfg.get("triggers", {}).get("self_names", ["Damien"])):
+                return
+            entity = next((w for w in self.state.watchlist if w.thread_id == msg.thread_id), None)
+            notice = Notice(id=str(uuid.uuid4())[:8], thread_id=msg.thread_id,
+                            conversation=entity.display_name if entity else msg.sender,
+                            **{"from": msg.sender}, text=msg.text, at=msg.received_at, surface=msg.surface)
+            with self._lock:
+                self.state.notices = [notice, *self.state.notices][: self.MAX_NOTICES]
+        except Exception:
+            pass
 
     def _process(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
         with telemetry.span("message", conversation=msg.thread_id, surface=msg.surface.value, force_draft=force_draft,
@@ -725,6 +743,7 @@ class Watcher:
             self._thread_cache.clear()
             self._sent_recent.clear()
             self.state.drafts = []
+            self.state.notices = []
             self.state.logs = []
             self.state.paused = False
             self.state.onboarded = False
