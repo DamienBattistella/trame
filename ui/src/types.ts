@@ -241,3 +241,20 @@ export interface GithubLogin {
   code: string;
   verificationUrl: string;
 }
+
+/** Vérification des faits d'un message avant envoi : lecture seule, n'envoie rien. */
+export type FactVerdict = "contredit" | "non_verifiable" | "ok";
+export interface FactClaim {
+  /** Passage du message, tel quel : la correction le remplace. */
+  excerpt: string;
+  verdict: FactVerdict;
+  /** Source citée : message du fil, fiche de l'entourage ou GitHub. */
+  source: string;
+  fix: string | null;
+}
+export interface FactCheck {
+  threadId: string;
+  checkedAt: string;
+  claims: FactClaim[];
+  sources: { messages: number; people: number; github: number };
+}
