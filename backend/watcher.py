@@ -389,9 +389,9 @@ class Watcher:
     MAX_NOTICES = 20
 
     def _on_message(self, msg: IncomingMessage) -> None:
-        # Followed or not, an open discussion view rereads the conversation on the
-        # notice: its cached copy lacks this message.
-        self._thread_cache.pop(msg.thread_id, None)
+        # Followed or not, an open discussion view rereads the conversation: its cached
+        # copy lacks this message (one of the user's own, typed in Teams, included).
+        self._touch(msg.thread_id)
         self._track(msg.thread_id, [msg])
         self._notice(msg)
         self._process(msg)
@@ -462,10 +462,20 @@ class Watcher:
             gh_thread.join()
         gh_ctx = gh_result[0]
 
+        # The reply Trame drafts by itself shows in the reflection panel too, like the
+        # reply-box actions: what was gathered, the model's reasoning, the proposal.
         try:
-            with telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
-                                github=bool(gh_ctx)):
+            with self._reflect("reply", msg.thread_id), \
+                    telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
+                                   github=bool(gh_ctx)):
+                reflection.step(f"Message reçu de {msg.sender} ({len(msg.text)} caractères), "
+                                f"mode {'auto' if entity.mode == 'auto' and not force_draft else 'brouillon'}")
+                reflection.step(f"Contexte : fil ({summary.count(chr(10)) + 1 if summary else 0} ligne(s))"
+                                f"{', GitHub' if gh_ctx else ''}")
+                self._brain_call("rédiger la réponse")
                 proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary, entity))
+                reflection.step(f"Réponse reçue ({len(proposal)} caractères)")
+                reflection.result(proposal)
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -599,8 +609,19 @@ class Watcher:
                     self.log("warn", f"Saisie refusée : {focus.reason}")
             if focus.ok and send and text.strip():
                 self._remember_sent(thread_id, text)
+            if focus.ok and send:
+                self._touch(thread_id)
         self._warn_if_not_restored(focus)
         return focus.ok
+
+    def _touch(self, thread_id: str) -> None:
+        """The conversation changed (message received, or sent by Trame): its cached
+        history is stale, and the open discussion view rereads it."""
+        self._thread_cache.pop(thread_id, None)
+        self._history.pop(thread_id, None)
+        with self._lock:
+            self.state.thread_updates = {**self.state.thread_updates,
+                                         thread_id: self.state.thread_updates.get(thread_id, 0) + 1}
 
     def _warn_if_not_restored(self, focus: Focus) -> None:
         if focus.restored is False:

@@ -70,6 +70,8 @@ export interface TrameState {
   myPresence: Presence | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
+  /** threadId -> compteur : change quand un message arrive ou que Trame en envoie un. */
+  threadUpdates: Record<string, number>;
   /** Dernier contrôle des repères de la page Teams ; null tant qu'il n'a pas tourné. */
   teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
@@ -229,6 +231,7 @@ function mapState(s: any): TrameState {
     },
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
+    threadUpdates: s.thread_updates ?? {},
     teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
   };
@@ -507,7 +510,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], teamsCheck: null, followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, teamsCheck: null, followUps: [] };
   }
   return {
     paused: false,
@@ -522,6 +525,7 @@ function mockState(): TrameState {
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
     outbox: [],
+    threadUpdates: {},
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
   };

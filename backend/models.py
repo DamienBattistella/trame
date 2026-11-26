@@ -159,6 +159,9 @@ class AppState(BaseModel):
     my_presence: Optional[Presence] = None
     # Messages que tu as envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est.
     outbox: list["QueuedSend"] = Field(default_factory=list)
+    # thread id -> compteur : change dès qu'un message arrive ou que Trame en envoie un
+    # (mode Auto, file d'envoi, brouillon). La discussion ouverte se relit alors.
+    thread_updates: dict[str, int] = Field(default_factory=dict)
     # Dernier contrôle des repères de la page Teams web ; None tant qu'il n'a pas tourné
     # (ou que le pilote ne sait pas le faire).
     teams_check: Optional[TeamsCheck] = None
