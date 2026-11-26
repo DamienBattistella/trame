@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -52,12 +52,12 @@ function keysOf(messages: ThreadMessage[]): string[] {
 }
 
 /** Bouton-icône : `label` est son nom accessible, `hint` (s'il diffère) l'explication en infobulle. */
-function IconAction({ label, hint, onClick, disabled, children }: { label: string; hint?: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+function IconAction({ label, hint, onClick, disabled, pressed, children }: { label: string; hint?: string; onClick: () => void; disabled?: boolean; pressed?: boolean; children: React.ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="inline-flex">
-          <Button variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground hover:text-foreground" aria-label={label} disabled={disabled} onClick={onClick}>
+          <Button variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground hover:text-foreground" aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
             {children}
           </Button>
         </span>
@@ -302,6 +302,8 @@ export function DiscussionView({
   reflectionOpen = false,
   onReflection,
   autoReflection = false,
+  favorite = false,
+  onFavorite,
 }: {
   trame: Trame;
   conversation: WatchEntity;
@@ -314,6 +316,9 @@ export function DiscussionView({
   onReflection?: (open: boolean) => void;
   /** Ouvrir la réflexion à chaque action (fenêtre assez large pour le panneau ancré). */
   autoReflection?: boolean;
+  /** En favori : épinglée en haut de la liste (étoile de l'en-tête, Alt+F). */
+  favorite?: boolean;
+  onFavorite?: () => void;
 }) {
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
   // Conversation de réunion : son lien, pour « Rejoindre dans Teams » (null sinon).
@@ -811,6 +816,11 @@ export function DiscussionView({
             )}
           </AnimatePresence>
           <div className="flex items-center">
+            {onFavorite && (
+              <IconAction label={favorite ? "Retirer des favoris" : "Ajouter aux favoris"} hint={`${favorite ? "Retirer des favoris" : "Épingler en haut de la liste, dans Favoris"} · Alt+F`} pressed={favorite} onClick={onFavorite}>
+                <Star className={cn("size-4", favorite && "fill-warning text-warning")} />
+              </IconAction>
+            )}
             {onReflection && (
               <IconAction label={reflectionOpen ? "Masquer la réflexion du modèle" : "Réflexion du modèle"} onClick={() => onReflection(!reflectionOpen)}>
                 <Brain className="size-4" />

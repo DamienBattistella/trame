@@ -114,6 +114,14 @@ class WatchBody(BaseModel):
     watch: bool
 
 
+class FavoriteBody(BaseModel):
+    favorite: bool
+
+
+class FavoritesOrderBody(BaseModel):
+    order: list[str] = Field(max_length=500)
+
+
 class ModeBody(BaseModel):
     mode: Literal["draft", "auto"]
 
@@ -322,6 +330,14 @@ def create_app(
     def set_watch(thread_id: str, body: WatchBody):
         watcher.set_watch(thread_id, body.watch)
         return {"ok": True}
+
+    @app.post("/api/favorite/{thread_id:path}")
+    def set_favorite(thread_id: str, body: FavoriteBody):
+        return {"ok": True, "favorites": watcher.set_favorite(thread_id, body.favorite)}
+
+    @app.put("/api/favorites")
+    def reorder_favorites(body: FavoritesOrderBody):
+        return {"ok": True, "favorites": watcher.reorder_favorites(body.order)}
 
     @app.post("/api/mode/{thread_id:path}")
     def set_mode(thread_id: str, body: ModeBody):

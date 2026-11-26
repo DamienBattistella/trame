@@ -12,6 +12,10 @@ export const mockConversations: WatchEntity[] = withRecency([
   ...extraConversations(),
 ]).map(withPresence);
 
+/** Démo : trois favoris, avec leurs indicateurs (réponse à relire, relance, envoi auto),
+ *  dont une conversation non suivie : favori ≠ suivie. */
+export const mockFavorites: string[] = ["19:cc33@thread.v2", "19:ee55@thread.v2", "19:aa11@thread.v2"];
+
 /** Démo : un statut Teams varié pour chaque conversation privée, quelques-unes sans
  *  statut connu (comme quand Teams ne le dit pas). */
 function withPresence(c: WatchEntity, i: number): WatchEntity {

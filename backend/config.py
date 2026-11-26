@@ -55,6 +55,7 @@ def factory_reset() -> dict:
         cfg = json.load(f)
     cfg["onboarded"] = False
     cfg["watchlist"] = []
+    cfg["favorites"] = []
     save(cfg)
     source, target = BUNDLE / "SOUL.md", HOME / "SOUL.md"
     if source.exists() and source.resolve() != target.resolve():
