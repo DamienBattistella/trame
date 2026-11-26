@@ -162,11 +162,25 @@ class AppState(BaseModel):
     # thread id -> compteur : change dès qu'un message arrive ou que Trame en envoie un
     # (mode Auto, file d'envoi, brouillon). La discussion ouverte se relit alors.
     thread_updates: dict[str, int] = Field(default_factory=dict)
+    # Réponses envoyées par le mode Auto, encore annulables (supprimées dans Teams).
+    undoable: list["UndoableSend"] = Field(default_factory=list)
     # Dernier contrôle des repères de la page Teams web ; None tant qu'il n'a pas tourné
     # (ou que le pilote ne sait pas le faire).
     teams_check: Optional[TeamsCheck] = None
     # Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule).
     follow_ups: list["FollowUp"] = Field(default_factory=list)
+
+
+class UndoableSend(BaseModel):
+    """Une réponse partie seule (mode Auto) que l'utilisateur peut encore retirer : Trame
+    la supprime alors dans Teams, comme une suppression faite à la main."""
+    id: str
+    thread_id: str
+    conversation: str
+    text: str
+    sent_at: str
+    # Fin de la fenêtre d'annulation, en millisecondes depuis l'époque (pour le compte à rebours).
+    expires_at_ms: int
 
 
 class FollowUp(BaseModel):
