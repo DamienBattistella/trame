@@ -65,6 +65,7 @@ def test_bridge_end_to_end(make_client, monkeypatch):
         assert client.get("/api/teams-web/status").json()["status"]["ready"] is True
     finally:
         page.stop = True
+        page.thread.join(timeout=5)
 
 
 def test_bridge_without_relay_fails_safe():

@@ -427,16 +427,33 @@ def create_app(
         await socket.accept()
         last = ""
         idle = 0.0
+        closed = asyncio.Event()
+
+        # A closed tab is only noticed when reading: without this, the loop would keep
+        # running until its next send (up to the keep-alive) after the UI went away.
+        async def until_closed():
+            try:
+                while (await socket.receive())["type"] != "websocket.disconnect":
+                    pass
+            except Exception:
+                pass
+            closed.set()
+
+        reader = asyncio.create_task(until_closed())
         try:
-            while True:
+            while not closed.is_set():
                 payload = state_payload()
                 if payload != last or idle >= WS_KEEPALIVE:
                     await socket.send_text(payload)
                     last, idle = payload, 0.0
-                await asyncio.sleep(WS_POLL)
-                idle += WS_POLL
-        except WebSocketDisconnect:
-            return
+                try:
+                    await asyncio.wait_for(closed.wait(), WS_POLL)
+                except asyncio.TimeoutError:
+                    idle += WS_POLL
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            reader.cancel()
 
     return app
 

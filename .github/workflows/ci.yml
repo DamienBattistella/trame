@@ -38,4 +38,5 @@ jobs:
       - name: Import check
         run: TRAME_DRIVER=mock python -c "import run; print('backend import OK')"
       - name: Tests
-        run: python -m pytest -q tests
+        timeout-minutes: 5
+        run: python -m pytest -q tests -o faulthandler_timeout=60
