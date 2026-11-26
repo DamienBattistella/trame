@@ -97,6 +97,14 @@ test("webfetch ne renvoie que le corps (statut + type), jamais d'en-tête de ré
   assert.equal(r.result.text, "non-json ici");
 });
 
+test("diagnose rapporte l'empreinte du pont injecté par l'hôte (sinon null)", async () => {
+  const absent = teamsPage();
+  assert.equal((await absent.run("diagnose")).result.bridge, null);
+  const p = teamsPage();
+  p.ctx.__trameBridge = "deadbeefcafe0001"; // posée par l'hôte à l'injection
+  assert.equal((await p.run("diagnose")).result.bridge, "deadbeefcafe0001");
+});
+
 test("la capture ne retient que la structure : chemin masqué, NOMS d'auth, aucune valeur", async () => {
   const p = teamsPage();
   // Teams émet une requête authentifiée (jeton en en-tête) vers une conversation précise.
