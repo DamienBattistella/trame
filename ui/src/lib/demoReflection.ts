@@ -4,6 +4,7 @@ const TITLES: Record<ReflectionAction, string> = {
   correct: "Corriger",
   check: "Vérifier",
   suggest: "Proposer une réponse",
+  report: "Compte-rendu de réunion",
 };
 
 export interface DemoPlan {
@@ -18,6 +19,8 @@ export interface DemoPlan {
   result: string;
   /** Skill dont le texte est donné au modèle (démo du chargement à la demande). */
   skill?: string;
+  /** Skill choisi par l'utilisateur, chargé d'office (compte-rendu). */
+  loaded?: string;
 }
 
 let seq = 0;
@@ -66,13 +69,13 @@ export async function playDemoReflection(
     return true;
   };
   push();
-  const steps = [...plan.before, "Appel envoyé au cerveau de démonstration"];
+  const steps = [...plan.before, ...(plan.loaded ? [`Skill chargé : ${plan.loaded}`] : []), "Appel envoyé au cerveau de démonstration"];
   if (plan.skill) steps.push("Skills proposés au modèle", `Skill chargé : ${plan.skill}`);
   for (const text of steps) {
     await wait(260);
     if (cancelled()) return "cancelled";
     run.steps.push({ atMs: at(), kind: "step", text });
-    if (plan.skill && text.startsWith("Skill chargé")) run.skills = [plan.skill];
+    if (text.startsWith("Skill chargé : ")) run.skills = [text.slice("Skill chargé : ".length)];
     push();
   }
   const words = plan.thinking.split(" ");

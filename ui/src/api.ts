@@ -40,6 +40,7 @@ import {
   Meeting,
   SavedTranscript,
   SkillsSummary,
+  ReportSession,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -51,6 +52,7 @@ import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
 import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
 import { demoSkills } from "@/lib/demoSkills";
+import { demoPrompt, demoSession, demoTurn } from "@/lib/demoReport";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
@@ -1404,6 +1406,105 @@ export function useTrame() {
     if (!connectedRef.current) return demo(200, { path });
     return request("POST", "/api/meetings/file", { path, reveal });
   };
+  /** Compte-rendu de réunion : un skill appliqué au .vtt (récupéré d'abord s'il manque), en plusieurs tours. */
+  const demoReports = useRef(new Map<string, ReportSession>());
+  const demoReportTurn = async (s: ReportSession) => {
+    const prompt = demoPrompt(s);
+    s.pendingPrompt = prompt;
+    const first = !s.turns.some((t) => t.role === "assistant");
+    let runId = "";
+    const outcome = await playDemoReflection(
+      {
+        action: "report",
+        threadId: null,
+        conversation: s.title,
+        before: first
+          ? [`Transcription : ${s.vttPath.split("\\").pop()}, ${s.cues} prise(s) de parole, ${s.vttChars} caractères (texte complet envoyé)`]
+          : ["Réponse de l'utilisateur transmise, l'échange continue"],
+        loaded: first ? s.skill : undefined,
+        thinking: first
+          ? "Je lis la transcription : deux participants, les tests OBX sont verts, la PR #214 sera fusionnée et la démo interop reste jeudi à 10 h. Le skill demande un compte-rendu structuré, puis de proposer des issues : je pose la question au lieu de les créer, Trame ne crée rien lui-même."
+          : "L'utilisateur a répondu. Je reprends le compte-rendu et j'ajoute seulement ce qu'il a demandé, sous forme de texte à copier.",
+        after: "Réponse reçue",
+        result: "",
+      },
+      (run) => {
+        runId = run.id;
+        s.runId = run.id;
+        upsertReflection(run);
+      },
+      (id) => demoStopped.current.has(id)
+    );
+    if (outcome === "cancelled" || s.status === "cancelled") {
+      s.pendingPrompt = "";
+      s.status = "cancelled";
+      s.rev++;
+      return;
+    }
+    s.pendingPrompt = "";
+    const turn = demoTurn(s, prompt, runId);
+    s.turns = [...s.turns, turn];
+    if (turn.report) s.report = turn.report;
+    s.status = turn.question ? "waiting" : "done";
+    s.rev++;
+  };
+  const reportCall = async (method: string, path: string, body?: unknown): Promise<Result<{ report: ReportSession }>> =>
+    request<{ report: ReportSession }>(method, path, body);
+  const startReport = async (m: Meeting, path?: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const s = demoSession(m, DEMO_TRANSCRIPTS_DIR);
+      demoReports.current.set(s.id, s);
+      void demoReportTurn(s);
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", "/api/reports", { thread_id: m.threadId, mid: m.mid, title: m.title, date: m.date, path: path || null });
+  };
+  const getReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      return s ? { ok: true, report: { ...s, turns: [...s.turns] } } : { ok: false, error: OFFLINE };
+    }
+    return reportCall("GET", `/api/reports/${encodeURIComponent(id)}`);
+  };
+  const answerReport = async (id: string, text: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      s.turns = [...s.turns, { role: "user", text, at: new Date().toTimeString().slice(0, 8), question: "", options: [], report: "", prompt: "", runId: "" }];
+      s.status = "running";
+      s.rev++;
+      void demoReportTurn(s);
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/answer`, { text });
+  };
+  const cancelReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      if (s.runId) demoStopped.current.add(s.runId);
+      s.status = "cancelled";
+      s.rev++;
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/cancel`);
+  };
+  const saveReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      await wait(300);
+      s.savedPath = s.vttPath.replace(/\.vtt$/, ".md");
+      s.rev++;
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/save`);
+  };
+  const openReportFolder = async (id: string): Promise<Result<{ directory: string }>> => {
+    if (!connectedRef.current) return demo(300, { directory: DEMO_TRANSCRIPTS_DIR });
+    return request("POST", `/api/reports/${encodeURIComponent(id)}/open-folder`);
+  };
   /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
   const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
     if (!connectedRef.current) {
@@ -1906,6 +2007,12 @@ export function useTrame() {
     updateSettings,
     getSkills,
     reloadSkills,
+    startReport,
+    getReport,
+    answerReport,
+    cancelReport,
+    saveReport,
+    openReportFolder,
     setSkillEnabled,
     setSkillDirs,
     syncSkillRepo,

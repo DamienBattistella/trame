@@ -15,6 +15,7 @@ import {
   Loader2,
   Lock,
   MoreHorizontal,
+  NotebookPen,
   RefreshCw,
   Repeat,
   Search,
@@ -38,7 +39,8 @@ import {
 import { GroupList, SectionLabel, pop } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { durationLabel, durationMinutes, fold, groupByPeriod, matches, occurrences, shortDate, shortPath, slotOf } from "@/lib/meetings";
-import { Meeting, SavedTranscript } from "@/types";
+import { Meeting, ReportSession, SavedTranscript } from "@/types";
+import { ReportDialog } from "@/components/ReportDialog";
 
 type Fetch =
   | { state: "queued" }
@@ -75,6 +77,9 @@ export function Meetings({ trame }: { trame: Trame }) {
   const [query, setQuery] = useState("");
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const stopBatch = useRef(false);
+  // Compte-rendu (skill meeting-report) ouvert dans le dialogue, et la réunion qui le prépare.
+  const [report, setReport] = useState<ReportSession | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
 
   useEffect(() => {
     Object.assign(memory, { meetings, readAt, directory, fetches });
@@ -175,8 +180,17 @@ export function Meetings({ trame }: { trame: Trame }) {
   const savedCount = (meetings ?? []).filter((m) => savedOf(m)).length;
   const searchable = (meetings?.length ?? 0) > 6;
 
+  const startReport = async (m: Meeting) => {
+    setStarting(m.meetingId);
+    const res = await trame.startReport(m, savedOf(m)?.path);
+    setStarting(null);
+    if (res.ok) setReport(res.report);
+    else toast.error("Compte-rendu impossible", { description: res.error });
+  };
+
   return (
     <div className="flex flex-col gap-5 pb-6">
+      {report && <ReportDialog trame={trame} session={report} onClose={() => setReport(null)} />}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">Réunions</h1>
@@ -297,6 +311,8 @@ export function Meetings({ trame }: { trame: Trame }) {
                     onReveal={(p) => void openFile(p, true)}
                     onCopy={(p) => void copyPath(p)}
                     onSeries={() => setQuery(m.title)}
+                    reporting={starting === m.meetingId}
+                    onReport={() => void startReport(m)}
                   />
                 ))}
               </GroupList>
@@ -401,6 +417,8 @@ type RowProps = {
   onReveal: (path: string) => void;
   onCopy: (path: string) => void;
   onSeries: () => void;
+  reporting: boolean;
+  onReport: () => void;
 };
 
 type RowState = "none" | "available" | "queued" | "run" | "saved" | "partial" | "denied" | "error";
@@ -424,7 +442,7 @@ const STATE_ICON: Record<RowState, { icon: React.ReactNode; label: string }> = {
   error: { icon: <AlertTriangle className="size-4 text-destructive" />, label: "Transcription non récupérée" },
 };
 
-function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries }: RowProps) {
+function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport }: RowProps) {
   const state = rowState(m, fetch, saved);
   const { start, end } = slotOf(m);
   const duration = durationLabel(durationMinutes(start, end));
@@ -495,6 +513,20 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {(state === "available" || state === "saved" || state === "partial") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("rounded-full", !reporting && reveal)}
+            onClick={onReport}
+            disabled={batching || reporting}
+            aria-label={`Compte-rendu de ${m.title}`}
+            title="Appliquer le skill de compte-rendu à la transcription (récupérée d'abord si besoin)"
+          >
+            {reporting ? <Loader2 className="size-4 animate-spin" /> : <NotebookPen className="size-4" />}
+            {reporting ? "Préparation…" : "Compte-rendu"}
+          </Button>
+        )}
         {state === "available" && (
           <Button variant="ghost" size="sm" className={cn("rounded-full", reveal)} onClick={onFetch} disabled={batching} aria-label={`Récupérer la transcription de ${m.title}`}>
             <Download className="size-4" /> Récupérer

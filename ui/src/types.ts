@@ -366,7 +366,7 @@ export interface ReflectionStep {
   text: string;
 }
 
-export type ReflectionAction = "correct" | "check" | "suggest";
+export type ReflectionAction = "correct" | "check" | "suggest" | "report";
 
 /** Ce que fait le modèle pendant une action de la zone de réponse. Reste local : jamais envoyé dans Teams. */
 export interface ReflectionRun {
@@ -447,4 +447,45 @@ export interface SavedTranscript {
   /** Faux si la liste n'a pas pu être relue jusqu'au bout. */
   complete: boolean;
   organizer: string;
+}
+
+/** Un tour de l'échange d'un compte-rendu : le cerveau (avec le prompt exact envoyé) ou l'utilisateur. */
+export interface ReportTurn {
+  role: "assistant" | "user";
+  text: string;
+  at: string;
+  /** Question posée à l'utilisateur (le compte-rendu attend sa réponse). */
+  question: string;
+  options: string[];
+  /** Compte-rendu (Markdown) rendu à ce tour. */
+  report: string;
+  /** Le prompt envoyé au cerveau pour ce tour, mot pour mot. */
+  prompt: string;
+  /** Action du panneau Réflexion de ce tour. */
+  runId: string;
+}
+
+/** Un compte-rendu de réunion : un skill appliqué à une transcription .vtt, en plusieurs tours. */
+export interface ReportSession {
+  id: string;
+  title: string;
+  meetingId: string;
+  skill: string;
+  skillSource: string;
+  vttPath: string;
+  vttChars: number;
+  cues: number;
+  provider: string;
+  model: string;
+  status: "running" | "waiting" | "done" | "error" | "cancelled";
+  turns: ReportTurn[];
+  report: string;
+  error: string;
+  savedPath: string;
+  runId: string;
+  /** Le prompt en cours d'envoi (pendant que le cerveau travaille). */
+  pendingPrompt: string;
+  startedAt: string;
+  rev: number;
+  references: string[];
 }
