@@ -44,13 +44,22 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
 
   if (!live) return <Sheet open={false} />;
 
-  const send = async () => {
+  const send = async (force = false) => {
     const body = text.trim();
     if (!body || busy !== "idle") return;
     setBusy("send");
-    const res = await trame.sendInThread(live.threadId, body);
+    const res = await trame.sendInThread(live.threadId, body, null, [], [], force);
     setBusy("idle");
     if (!res.ok) {
+      // Le même message, resté « non confirmé », est déjà dans le fil : renvoi sur demande seulement.
+      if (res.code === "maybe_sent") {
+        toast.warning(`Déjà envoyé à ${live.displayName} ?`, {
+          description: `${res.error} Ton message est conservé.`,
+          duration: 20000,
+          action: { label: "Renvoyer quand même", onClick: () => void send(true) },
+        });
+        return;
+      }
       controls.start(shake);
       toast.error(`Envoi impossible à ${live.displayName}`, { description: `${res.error} Ton message est conservé.` });
       return;
@@ -180,7 +189,7 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
                 {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
                 Proposer
               </Button>
-              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim()} onClick={send}>
+              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim()} onClick={() => send()}>
                 {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Envoyer
               </Button>

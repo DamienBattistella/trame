@@ -195,7 +195,8 @@ function mapQueued(q: any): QueuedSend {
   };
 }
 
-export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
+/** `code` : « maybe_sent », le même contenu, resté « non confirmé », semble déjà dans le fil. */
+export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number; code?: string };
 
 export interface WatchlistEntry {
   threadId: string;
@@ -696,7 +697,7 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
     }
     if (!res.ok || data?.ok === false) {
       const error = typeof data?.error === "string" && data.error ? data.error : `Le moteur Trame a répondu ${res.status}.`;
-      return { ok: false, error, status: res.status };
+      return { ok: false, error, status: res.status, ...(typeof data?.code === "string" ? { code: data.code } : {}) };
     }
     return { ...(data ?? {}), ok: true } as Result<T>;
   } catch {
@@ -979,13 +980,14 @@ export function useTrame() {
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
   /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
    *  `files` : fichiers choisis par l'utilisateur, envoyés avec le message. */
-  const sendDraft = async (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+  const sendDraft = async (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = [], force = false): Promise<Result<{ queued: QueuedSend | null }>> => {
     if (!connectedRef.current) return demo(files.length ? 1500 : 700, { queued: null });
     const res = await request<{ queued?: any }>("POST", `/api/drafts/${encodeURIComponent(id)}/send`, {
       text,
       reply_to: replyTo ? messageRef(replyTo) : null,
       mentions,
       attachments: wireFiles(files),
+      ...(force ? { force: true } : {}),
     });
     return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
@@ -1383,13 +1385,15 @@ export function useTrame() {
   };
   /** Envoi à la main, avec les fichiers choisis par l'utilisateur (jamais en mode Auto). */
   /** `queued` : Teams n'était pas prêt, le message attend dans la file d'envoi et partira seul. */
-  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+  /** `force` : renvoyer quand même ce qui semble déjà parti (réponse « maybe_sent »). */
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = [], force = false): Promise<Result<{ queued: QueuedSend | null }>> => {
     if (!connectedRef.current) return demo(files.length ? 1500 : 800, { queued: null });
     const res = await request<{ queued?: any }>("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, {
       text,
       reply_to: replyTo ? messageRef(replyTo) : null,
       mentions,
       attachments: wireFiles(files),
+      ...(force ? { force: true } : {}),
     });
     return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
