@@ -145,3 +145,24 @@ def test_deep_list_asks_the_page_for_everything_and_drops_duplicates():
     assert calls == [("list", {"timeout": 20, "deep": True})]
     d.list_conversations()
     assert calls[-1] == ("list", {})
+
+
+def test_connection_reads_the_whole_list_and_keeps_known_conversations(make_client, monkeypatch):
+    """After a restart Teams draws only the top of its list: the conversations known
+    from before must not vanish while the full read is on its way."""
+    import threading as th
+    from models import WatchEntity
+    _c, watcher, driver = make_client()
+    known = [WatchEntity(thread_id=f"name:C{i}", display_name=f"C{i}", surface=Surface.dm) for i in range(5)]
+    watcher.state.watchlist = list(known)
+    watcher.state.selftest_ok = False
+    calls = []
+    driver.list_conversations = lambda: calls.append("short") or known[:2]
+    driver.list_all_conversations = lambda: calls.append("full") or known + [
+        WatchEntity(thread_id="name:Nouvelle", display_name="Nouvelle", surface=Surface.dm)]
+    started = []
+    monkeypatch.setattr(th.Thread, "start", lambda self: started.append(self))
+    watcher.teams_ready(True)
+    assert calls == [] and len(watcher.state.watchlist) == 5
+    started[0].run()
+    assert calls == ["full"] and len(watcher.state.watchlist) == 6
