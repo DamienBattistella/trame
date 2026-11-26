@@ -59,6 +59,34 @@ def excerpt(flat: str, start: int, end: int, width: int = 140) -> tuple[str, int
     return prefix + flat[lo:hi] + suffix, start - lo + len(prefix), end - lo + len(prefix)
 
 
+def locate(flat: str, query: str) -> Optional[tuple[int, int]]:
+    """Position [start, end) of the folded query in `flat`, None if absent."""
+    q = fold(query)
+    if len(q) < 2:
+        return None
+    folded, origin = fold_map(flat)
+    pos = folded.find(q)
+    if pos == -1:
+        return None
+    return origin[pos], origin[pos + len(q) - 1] + 1
+
+
+def hit(thread_id: Optional[str], conversation: str, sender: str, at: str, mine: bool, text: str,
+        query: str) -> dict:
+    """One search result. `match` is None when the text itself does not contain the
+    query (Teams' search also matches word forms): the excerpt is then its beginning."""
+    flat = " ".join((text or "").split())
+    where = locate(flat, query)
+    if where is None:
+        snippet = excerpt(flat, 0, 0)[0]
+        match = None
+    else:
+        snippet, s, e = excerpt(flat, *where)
+        match = [s, e]
+    return {"thread_id": thread_id, "conversation": conversation, "sender": sender, "at": at, "mine": mine,
+            "text": text, "excerpt": snippet, "match": match}
+
+
 class MessageArchive:
     """Messages already read, per conversation, in the order Trame saw them."""
 
@@ -85,9 +113,8 @@ class MessageArchive:
                         known["at"] = m.received_at
                     continue
                 self._seq += 1
-                flat = " ".join(text.split())
                 bucket[key] = {"sender": m.sender or "", "text": text, "at": m.received_at or "",
-                               "seq": self._seq, "flat": flat, "folded": fold_map(flat)}
+                               "seq": self._seq, "folded": fold(text)}
             while len(bucket) > self.PER_THREAD:
                 bucket.pop(next(iter(bucket)))
 
@@ -96,6 +123,13 @@ class MessageArchive:
             self._threads.clear()
             self._seq = 0
             self.since = datetime.now()
+
+    def thread_of(self, text: str) -> Optional[str]:
+        """The one conversation where this exact message was read, None if none or several."""
+        folded = fold(text)
+        with self._lock:
+            found = {t for t, bucket in self._threads.items() if any(m["folded"] == folded for m in bucket.values())}
+        return found.pop() if len(found) == 1 else None
 
     def scope(self) -> dict:
         with self._lock:
@@ -114,18 +148,10 @@ class MessageArchive:
         with self._lock:
             for thread_id, bucket in self._threads.items():
                 for m in bucket.values():
-                    folded, origin = m["folded"]
-                    pos = folded.find(q)
-                    if pos == -1:
+                    if q not in m["folded"]:
                         continue
-                    start = origin[pos]
-                    end = origin[pos + len(q) - 1] + 1
-                    snippet, s, e = excerpt(m["flat"], start, end)
-                    hits.append((m["seq"], {
-                        "thread_id": thread_id, "conversation": names.get(thread_id, thread_id),
-                        "sender": m["sender"], "at": m["at"], "mine": is_mine(m["sender"]),
-                        "text": m["text"], "excerpt": snippet, "match": [s, e],
-                    }))
+                    hits.append((m["seq"], hit(thread_id, names.get(thread_id, thread_id), m["sender"], m["at"],
+                                               is_mine(m["sender"]), m["text"], query)))
         hits.sort(key=lambda h: h[0], reverse=True)
         return [h for _, h in hits[:limit]]
 

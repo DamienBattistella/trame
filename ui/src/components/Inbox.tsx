@@ -187,7 +187,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             {all.length === 0 && (
               <p className="px-3 py-8 text-center text-sm text-muted-foreground">{query ? "Aucune discussion à ce nom." : "Aucune discussion."}</p>
             )}
-            <MessageSearchResults trame={trame} query={query} onOpen={(h) => select(h.threadId, h)} />
+            <MessageSearchResults trame={trame} query={query} onOpen={(h) => h.threadId && select(h.threadId, h)} />
           </nav>
         </ScrollArea>
       </aside>

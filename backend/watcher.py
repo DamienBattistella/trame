@@ -482,6 +482,43 @@ class Watcher:
         who = f"{ref.sender} : " if ref.sender else ""
         return f", en réponse à « {who}{ref.text[:40]} »"
 
+    def search_teams(self, query: str, limit: int = 25) -> dict:
+        """Teams' own search, for what Trame has not read: every conversation, the whole
+        history Teams keeps. Teams' results page shows for a few seconds in Trame's Teams
+        window, then the chat list comes back. Nothing is typed anywhere else."""
+        q = " ".join((query or "").split())
+        if len(searchmod.fold(q)) < 2:
+            raise ActionError(422, "Tape au moins deux caractères.")
+        if not self.driver.can_search_messages:
+            raise ActionError(501, f"Recherche dans Teams impossible : {self.driver.search_messages_unsupported}.")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne lance pas de recherche dans Teams.")
+            try:
+                with telemetry.span("teams.search", limit=limit) as sp:
+                    found = self.driver.search_messages(q, limit)
+                    telemetry.set_attrs(sp, results=len(found))
+            except Exception as e:
+                self.log("warn", f"Recherche dans Teams impossible : {e}")
+                raise ActionError(502, f"Recherche dans Teams impossible : {e}")
+        results = []
+        for r in found:
+            name = r.get("conversation") or ""
+            entity = next((w for w in self.state.watchlist if name and rail_label.same_name(w.display_name, name)), None)
+            if entity is None and not name:
+                # Your own message in a private chat: Teams does not name the other person,
+                # but Trame may have read that very message already.
+                tid = self.archive.thread_of(r.get("text") or "")
+                entity = next((w for w in self.state.watchlist if w.thread_id == tid), None)
+                name = entity.display_name if entity else ""
+            results.append(searchmod.hit(entity.thread_id if entity else None, name or "Conversation privée",
+                                         r.get("sender") or "", r.get("at") or "", bool(r.get("mine")),
+                                         r.get("text") or "", q))
+        self.log("info", f"Recherche dans Teams : {len(results)} message{'s' if len(results) > 1 else ''} trouvé"
+                         f"{'s' if len(results) > 1 else ''}")
+        return {"results": results}
+
     def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None) -> None:
         entity = self._conversation(thread_id)
         body = text.strip()

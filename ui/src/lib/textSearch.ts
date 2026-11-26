@@ -1,4 +1,4 @@
-import { MessageHit, SearchScope, ThreadMessage } from "@/types";
+import { MessageHit, SearchScope, ThreadMessage, WatchEntity } from "@/types";
 
 /** Même pliage que le moteur (backend/search.py) : sans accents ni casse, espaces
  *  consécutifs réduits à un seul, avec pour chaque caractère plié son index d'origine. */
@@ -92,4 +92,22 @@ export class DemoArchive {
     }
     return hits.sort((a, b) => b.seq - a.seq).slice(0, limit).map(({ seq: _seq, ...h }) => h);
   }
+}
+
+/** Mode démo : messages plus anciens que seule la recherche de Teams retrouve. */
+const DEMO_TEAMS: { conversation: string; sender: string; at: string; text: string }[] = [
+  { conversation: "Sofia Marino", sender: "Sofia Marino", at: "12/10 09:41", text: "On avait déjà eu ce souci de cache sur le runner Windows en septembre." },
+  { conversation: "Lucas Bernard", sender: "Lucas Bernard", at: "03/09 16:20", text: "Pour le premier jet du mapping HL7, je pars sur une table de correspondance UCUM ?" },
+  { conversation: "#prod-incidents", sender: "Marc Lefèvre", at: "28/08 11:02", text: "Incident clos : la latence du connecteur HL7 venait du pool MLLP trop petit." },
+  { conversation: "Équipe Interop", sender: "Chiara Rossi", at: "14/08 10:15", text: "Le client a validé le flux de résultats de labo, on peut préparer la démo de rentrée." },
+];
+
+export function demoTeamsSearch(query: string, watchlist: WatchEntity[]): MessageHit[] {
+  return DEMO_TEAMS.flatMap((m) => {
+    const at = findFolded(m.text, query);
+    if (!at) return [];
+    const [snippet, s, e] = excerpt(m.text, at[0], at[1]);
+    const threadId = watchlist.find((w) => fold(w.displayName) === fold(m.conversation))?.threadId ?? null;
+    return [{ threadId, conversation: m.conversation, sender: m.sender, at: m.at, mine: false, text: m.text, excerpt: snippet, match: [s, e] }];
+  });
 }

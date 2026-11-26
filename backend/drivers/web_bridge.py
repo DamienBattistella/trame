@@ -218,6 +218,21 @@ class WebBridgeDriver(TeamsDriver):
         self._kinds[thread_id] = Surface.dm
         return WatchEntity(thread_id=thread_id, display_name=shown, surface=Surface.dm)
 
+    # Teams web: its search field, the Messages tab, then back to the chat list.
+    can_search_messages = True
+
+    def search_messages(self, query: str, limit: int = 25) -> list[dict]:
+        res = self._rpc("search", query=" ".join((query or "").split()), limit=limit, timeout=35) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'recherche impossible'}")
+        out = []
+        for r in res.get("results") or []:
+            text = (r.get("text") or "").strip()
+            if text:
+                out.append({"conversation": (r.get("conversation") or "").strip(), "sender": (r.get("sender") or "").strip(),
+                            "mine": bool(r.get("mine")), "at": (r.get("at") or "").strip(), "text": text})
+        return out[:limit]
+
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         return self.read_history(thread_id, last_n)[0]
 

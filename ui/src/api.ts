@@ -28,7 +28,7 @@ import {
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
-import { DemoArchive } from "@/lib/textSearch";
+import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
@@ -172,14 +172,14 @@ function mapBrief(b: any): Brief {
 }
 function mapHit(h: any): MessageHit {
   return {
-    threadId: h.thread_id,
+    threadId: h.thread_id ?? null,
     conversation: h.conversation,
     sender: h.sender,
     at: h.at,
     mine: Boolean(h.mine),
     text: h.text,
     excerpt: h.excerpt,
-    match: [h.match[0], h.match[1]],
+    match: Array.isArray(h.match) ? [h.match[0], h.match[1]] : null,
   };
 }
 
@@ -836,6 +836,17 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, results: res.results.map(mapHit), scope: res.scope };
   };
+  /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
+  const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(1800);
+      return { ok: true, results: demoTeamsSearch(q, stateRef.current.watchlist) };
+    }
+    const res = await request<{ results: any[] }>("POST", "/api/search/teams", { q });
+    if (!res.ok) return res;
+    return { ok: true, results: res.results.map(mapHit) };
+  };
   const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null });
@@ -1108,6 +1119,7 @@ export function useTrame() {
     factoryReset,
     threadMessages,
     searchMessages,
+    searchTeams,
     reactInThread,
     sendInThread,
     suggestInThread,

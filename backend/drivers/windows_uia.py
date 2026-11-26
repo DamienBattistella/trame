@@ -17,6 +17,7 @@ from drivers.preview_watch import PreviewWatcher
 
 class WindowsUIADriver(TeamsDriver):
     start_chat_unsupported = "le pilote Teams de bureau (UIA) ne sait pas démarrer une conversation"
+    search_messages_unsupported = "le pilote Teams de bureau (UIA) ne sait pas lancer la recherche de Teams"
 
     def __init__(self, window_title: str = "Microsoft Teams", poll: float = 1.0):
         import uiautomation as auto  # noqa: F401  (Windows-only dependency)

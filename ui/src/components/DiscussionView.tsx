@@ -332,7 +332,7 @@ export function DiscussionView({
   const keys = keysOf(shown);
   const foundIndex = foundAt(shown, found);
   // La recherche dans l'excerpt surligne la même plage dans le message entier.
-  const foundQuery = found ? found.excerpt.slice(found.match[0], found.match[1]) : "";
+  const foundQuery = found?.match ? found.excerpt.slice(found.match[0], found.match[1]) : "";
 
   useEffect(() => {
     if (foundIndex < 0) return;
@@ -385,6 +385,19 @@ export function DiscussionView({
         </div>
       </header>
 
+      {found && messages !== null && foundIndex < 0 && (
+        <div className="flex items-center justify-center gap-2 border-b bg-muted/40 px-5 py-2 text-center text-xs text-muted-foreground">
+          <SearchX className="size-3.5 shrink-0" />
+          <span className="min-w-0">
+            Le message trouvé ({found.at || "sans heure"}) est plus ancien que ceux affichés ici :
+            « <Highlight text={found.excerpt} range={found.match} /> »
+          </span>
+          <button type="button" className="shrink-0 font-medium text-link hover:underline" onClick={openInTeams}>
+            Voir dans Teams
+          </button>
+        </div>
+      )}
+
       <StickToBottom contextRef={scroller} className="relative min-h-0 flex-1 overflow-y-auto" resize="smooth" initial={found ? false : "instant"}>
         <StickToBottom.Content className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-5 py-5">
           {error && !draft ? (
@@ -402,12 +415,6 @@ export function DiscussionView({
             <p className="py-16 text-center text-sm text-muted-foreground">Aucun message lisible dans cette conversation.</p>
           ) : (
             <>
-              {found && messages !== null && foundIndex < 0 && (
-                <p className="flex items-center justify-center gap-2 pb-2 text-center text-xs text-muted-foreground">
-                  <SearchX className="size-3.5 shrink-0" />
-                  Le message trouvé ({found.at || "sans heure"}) est plus ancien que ceux affichés ici.
-                </p>
-              )}
               {messages === null && draft && (
                 <span className="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" /> Historique en cours de lecture…
