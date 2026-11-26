@@ -713,7 +713,14 @@ class Watcher:
         if not discovered:
             return self.state.watchlist
         by_id = {w.thread_id: w for w in self.state.watchlist}
+        by_name = {d.display_name.casefold(): d.thread_id for d in discovered}
         for w in self.state.watchlist:
+            unstable = not w.thread_id.startswith("name:") and rail_label.stable_id(w.thread_id) is None
+            if unstable:
+                target = by_name.get(w.display_name.casefold())
+                if target and target != w.thread_id and (target not in by_id or (w.watch and not by_id[target].watch)):
+                    by_id[target] = w
+                continue
             if w.thread_id.startswith("name:"):
                 clean = "name:" + rail_label.parse(w.thread_id[5:]).name
                 if clean != w.thread_id:
@@ -731,6 +738,8 @@ class Watcher:
                                                 "named_people": saved.named_people or d.named_people}))
         legacy = {w.thread_id for w in self.state.watchlist if w.thread_id.startswith("name:")
                   and "name:" + rail_label.parse(w.thread_id[5:]).name != w.thread_id}
+        legacy |= {w.thread_id for w in self.state.watchlist
+                   if not w.thread_id.startswith("name:") and rail_label.stable_id(w.thread_id) is None}
         for w in self.state.watchlist:
             if w.thread_id not in found and w.thread_id not in legacy and w.watch:
                 out.append(w)

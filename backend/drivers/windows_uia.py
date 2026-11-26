@@ -62,9 +62,12 @@ class WindowsUIADriver(TeamsDriver):
     def _rail_items(self, rail) -> list:
         # A CALER: rail entries are expected as TreeItem/ListItem descendants of the rail.
         out = []
-        for ctrl, _depth in self.auto.WalkControl(rail, includeTop=False, maxDepth=4):
-            if ctrl.ControlTypeName in ("TreeItemControl", "ListItemControl") and (ctrl.Name or "").strip():
-                out.append(ctrl)
+        for ctrl, _depth in self.auto.WalkControl(rail, includeTop=False, maxDepth=6):
+            if ctrl.ControlTypeName not in ("TreeItemControl", "ListItemControl") or not (ctrl.Name or "").strip():
+                continue
+            if rail_label.is_structural(rail_label.parse(ctrl.Name).name, getattr(ctrl, "AriaProperties", "") or ""):
+                continue
+            out.append(ctrl)
         return out
 
     @staticmethod
@@ -80,8 +83,7 @@ class WindowsUIADriver(TeamsDriver):
     def _thread_id_of(self, item) -> str:
         # Teams rail DOM id is "chat-list-item_19:...@thread.v2"; Chromium usually
         # surfaces it as AutomationId. Fall back to the display name when absent.
-        auto_id = getattr(item, "AutomationId", "") or ""
-        return auto_id.replace("chat-list-item_", "") or f"name:{self._display_name_of(item)}"
+        return rail_label.stable_id(getattr(item, "AutomationId", "") or "") or f"name:{self._display_name_of(item)}"
 
     def list_conversations(self) -> list[WatchEntity]:
         win = self._window()
@@ -104,7 +106,7 @@ class WindowsUIADriver(TeamsDriver):
         if not thread_id.startswith("name:"):
             # A real id is matched by id only: the rail is virtualized, and falling back
             # to the display name could pick another chat with the same name.
-            by_id = [i for i in items if thread_id in (getattr(i, "AutomationId", "") or "")]
+            by_id = [i for i in items if rail_label.stable_id(getattr(i, "AutomationId", "") or "") == thread_id]
             return by_id[0] if len(by_id) == 1 else None
         name = rail_label.parse(thread_id[5:]).name
         by_name = [i for i in items if self._display_name_of(i) == name]
@@ -144,10 +146,19 @@ class WindowsUIADriver(TeamsDriver):
 
     def active_thread(self) -> Optional[str]:
         try:
-            rail = self._find_rail(self._window())
+            win = self._window()
+            rail = self._find_rail(win)
             if rail is None:
                 return None
-            selected = [i for i in self._rail_items(rail) if self._is_selected(i)]
+            items = self._rail_items(rail)
+            title = self._conversation_title(win)
+            if title:
+                named = [i for i in items if rail_label.same_name(self._display_name_of(i), title)]
+                if len(named) == 1:
+                    thread_id = self._thread_id_of(named[0])
+                    self._names[thread_id] = self._display_name_of(named[0])
+                    return thread_id
+            selected = [i for i in items if self._is_selected(i)]
             if len(selected) != 1:
                 return None
             thread_id = self._thread_id_of(selected[0])
@@ -157,17 +168,25 @@ class WindowsUIADriver(TeamsDriver):
             return None
 
     def _conversation_title(self, win) -> Optional[str]:
-        return None  # A CALER: header of the open conversation (title text node).
+        """Teams v2 exposes no selection state on the chat list (diagnostic on a real
+        install), but its window title names the open conversation."""
+        try:
+            return rail_label.title_conversation(win.Name or "")
+        except Exception:
+            return None
 
     def _is_active(self, win, thread_id: str) -> bool:
         rail = self._find_rail(win)
         if rail is None:
             return False
         item = self._rail_item_for(rail, thread_id)
-        if item is None or not self._is_selected(item):
+        if item is None:
             return False
         title = self._conversation_title(win)
-        if title is not None and title.strip() != self._display_name_of(item):
+        if title is not None:
+            if not rail_label.same_name(title, self._display_name_of(item)):
+                return False
+        elif not self._is_selected(item):
             return False
         return self._find_compose(win) is not None
 
@@ -365,6 +384,7 @@ class WindowsUIADriver(TeamsDriver):
         except Exception as e:
             return {**report, "window": f"introuvable : {e}"}
         report["window"] = {"name": win.Name, "class": win.ClassName}
+        report["title_conversation"] = self._conversation_title(win)
         rail = self._find_rail(win)
         compose = self._find_compose(win)
         msglist = self._find_message_list(win)
@@ -405,6 +425,7 @@ class WindowsUIADriver(TeamsDriver):
                     time.sleep(1.5)
                     test["signals_after_click"] = self._selection_signals(item)
                     test["selected_after_click"] = [self._display_name_of(i) for i in self._rail_items(rail) if self._is_selected(i)]
+                    test["title_after_click"] = self._conversation_title(win)
                     test["confirmed"] = self._is_active(win, thread_id)
                 except Exception as e:
                     test["error"] = repr(e)

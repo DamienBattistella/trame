@@ -246,3 +246,16 @@ def test_thread_history_cached_between_clicks(make_client):
     assert driver.opened == [DM_DRAFT, USER_VIEW]
     client.get(f"/api/threads/{t}/messages?fresh=true")
     assert driver.opened == [DM_DRAFT, USER_VIEW, DM_DRAFT, USER_VIEW]
+
+
+def test_merge_migrates_unstable_react_ids(make_client):
+    from models import WatchEntity, Surface
+    _c, watcher, _d = make_client()
+    watcher.state.watchlist = [
+        WatchEntity(thread_id="menurmh", display_name="Romain CUREAU", surface=Surface.dm, watch=True, mode="auto"),
+        WatchEntity(thread_id="menur9z", display_name="Parti", surface=Surface.dm, watch=True),
+    ]
+    merged = watcher._merge([WatchEntity(thread_id="name:Romain CUREAU", display_name="Romain CUREAU", surface=Surface.dm)])
+    by = {w.thread_id: w for w in merged}
+    assert by["name:Romain CUREAU"].watch and by["name:Romain CUREAU"].mode == "auto"
+    assert "menurmh" not in by and "menur9z" not in by

@@ -83,3 +83,36 @@ def parse(label: str) -> RailLabel:
         last_time = {"yesterday": "Hier", "hier": "Hier"}.get(t.group(1).lower(), t.group(1))
     return RailLabel(name=name, surface=surface, unread=bool(_UNREAD_RE.search(rest)), is_self=is_self, last_time=last_time,
                      preview_sender=preview_sender, preview=preview or None)
+
+
+# Rail entries that are navigation, not conversations (Teams v2 chat list headers and
+# quick views), in English and French.
+_STRUCTURAL = {
+    "copilot", "quick views", "mentions", "drafts", "saved", "favorites", "chats", "teams and channels",
+    "vues rapides", "brouillons", "enregistrés", "enregistrements", "favoris", "conversations", "équipes et canaux",
+}
+
+
+def is_structural(name: str, aria: str = "") -> bool:
+    """Section headers and quick views of the chat list: never a conversation."""
+    return " ".join((name or "").split()).casefold() in _STRUCTURAL or "expanded=true" in (aria or "").lower()
+
+
+def stable_id(automation_id: str) -> Optional[str]:
+    """Teams' own chat id when exposed ("19:…@thread.v2"). React ids such as "menurmh"
+    change at every Teams restart and must never identify a conversation."""
+    aid = (automation_id or "").replace("chat-list-item_", "")
+    return aid if ("@thread" in aid or aid.startswith("19:")) else None
+
+
+def title_conversation(window_name: str) -> Optional[str]:
+    """Open conversation from the window title: "Chat | Romain CUREAU | Microsoft Teams"."""
+    parts = [p.strip() for p in (window_name or "").split("|")]
+    if len(parts) >= 3 and "teams" in parts[-1].lower():
+        name = " | ".join(parts[1:-1]).strip()
+        return name or None
+    return None
+
+
+def same_name(a: str, b: str) -> bool:
+    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()

@@ -40,3 +40,17 @@ def test_last_time():
     assert parse("Chat Damien Battistella (You) You: test 04:49").last_time == "04:49"
     assert parse("Chat Anne Away Last message ok Yesterday").last_time == "Hier"
     assert parse("Amélie Durand").last_time is None
+
+
+def test_teams_v2_calibration():
+    from drivers.rail_label import is_structural, stable_id, title_conversation, same_name
+    assert title_conversation("Chat | Romain CUREAU | Microsoft Teams") == "Romain CUREAU"
+    assert title_conversation("Chat | Projet | FHIR | Microsoft Teams") == "Projet | FHIR"
+    assert title_conversation("Microsoft Teams") is None and title_conversation("Chat | Microsoft Teams") is None
+    assert stable_id("menurmh") is None and stable_id("") is None
+    assert stable_id("chat-list-item_19:abc@thread.v2") == "19:abc@thread.v2"
+    for name in ("Copilot", "Quick views", "Mentions", "Drafts", "Saved", "Favorites", "Favoris"):
+        assert is_structural(name)
+    assert is_structural("Hexagone", "expanded=true;level=1")
+    assert not is_structural("Foundation 🧱", "expanded=false;level=2;selected=false")
+    assert same_name("Romain  CUREAU", "romain cureau")
