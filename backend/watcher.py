@@ -19,6 +19,7 @@ import journal as journalmod
 import outbox_store as outboxstore
 import reflection
 import telemetry
+import teams_check as teamscheck
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
@@ -110,6 +111,12 @@ class Watcher:
         # et nouvel essai demandé) enverraient le même message deux fois.
         self._outbox_flush = threading.Lock()
         self.outbox_auto = True  # renvoi en arrière-plan ; coupé par les tests
+        # Contrôle des repères de la page Teams : au démarrage, à la connexion, toutes les
+        # heures, et peu après une opération refusée par Teams (réveil par le pilote).
+        self._check_wake = threading.Event()
+        self._check_lock = threading.Lock()
+        self._landmark_marks: dict[str, dict] = {}
+        driver.on_page_failure = self._check_wake.set
         # Relances : tes questions restées sans réponse (suivi gardé sur disque).
         self.follow_ups = followmod.Tracker(cfgmod.HOME / "follow_ups.json")
         self._follow_up_failed: dict[str, float] = {}
@@ -131,6 +138,7 @@ class Watcher:
             return
         self.log("info", "Teams connecté")
         self._outbox_wake.set()
+        self._check_wake.set()
         if getattr(self.driver, "list_all_conversations", None) is None:
             self._read_conversations(self.driver.list_conversations)
             return
@@ -172,6 +180,9 @@ class Watcher:
         self._thread.start()
         threading.Thread(target=self._presence_loop, daemon=True).start()
         threading.Thread(target=self._outbox_loop, daemon=True).start()
+        if self.state.selftest_ok:
+            self._check_wake.set()
+        threading.Thread(target=self._check_loop, daemon=True).start()
         threading.Thread(target=self._follow_up_loop, daemon=True).start()
 
     def stop(self) -> None:
@@ -179,6 +190,50 @@ class Watcher:
 
     def _run(self) -> None:
         self.driver.watch(self._on_message, self._stop.is_set)
+
+    # --- Contrôle de la page Teams (teams_check) ---
+    CHECK_EVERY = 3600.0
+    # Après un réveil (connexion, opération refusée) : laisser Teams se poser, et ne faire
+    # qu'un contrôle pour plusieurs échecs rapprochés.
+    CHECK_SETTLE = 3.0
+
+    def _check_loop(self) -> None:
+        while not self._stop.is_set():
+            woke = self._check_wake.wait(self.CHECK_EVERY)
+            if woke and self._stop.wait(self.CHECK_SETTLE):
+                return
+            if self._stop.is_set():
+                return
+            self._check_wake.clear()
+            self.check_teams()
+
+    def check_teams(self) -> Optional[teamscheck.TeamsCheck]:
+        """Contrôle les repères de la page Teams dont dépend le pilote, sans rien y changer.
+        None quand le pilote ne sait pas le faire ou que Teams n'est pas affiché : le
+        dernier contrôle reste alors en place."""
+        with self._check_lock:
+            try:
+                raw = self.driver.probe_page()
+            except Exception:
+                return None
+            if not isinstance(raw, dict) or not raw.get("ready"):
+                return None
+            self._landmark_marks = teamscheck.merge_marks(self._landmark_marks, raw.get("marks"))
+            check = teamscheck.evaluate(raw.get("results"), self._landmark_marks)
+            before = self.state.teams_check
+            self.state.teams_check = check
+        was = {m.key for m in before.missing} if before else set()
+        now = {m.key for m in check.missing}
+        # Le journal ne garde que les changements : un contrôle par heure sans nouveauté
+        # n'y écrit rien.
+        if now and now != was:
+            self.log("warn", f"{check.summary} Repères absents : {', '.join(sorted(now))}"
+                             " (détail dans Réglages › Général).")
+        elif was and not now:
+            self.log("info", "Teams : les repères qui manquaient sont revenus, tout remarche.")
+        elif before is None and not now:
+            self.log("info", f"Contrôle de Teams : {check.verified} repères présents, rien n'a changé.")
+        return check
 
     PRESENCE_REFRESH = 20.0
 

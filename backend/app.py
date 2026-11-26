@@ -642,6 +642,14 @@ def create_app(
         watcher.log("info", "Diagnostic Teams lancé")
         return {"ok": True, "report": report}
 
+    @app.post("/api/teams/check")
+    def teams_check():
+        # Lecture seule dans la page Teams : aucun menu ouvert, rien de cliqué.
+        check = watcher.check_teams()
+        if check is None:
+            raise ActionError(409, "Contrôle impossible : Teams n'est pas affiché dans Trame.")
+        return {"ok": True, "check": check.model_dump()}
+
     @app.post("/api/selftest")
     def selftest():
         try:

@@ -28,6 +28,7 @@ import { LogExportButtons } from "@/components/LogExportButtons";
 import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
+import { TeamsCheckBanner } from "@/components/TeamsCheck";
 import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Inbox } from "@/components/Inbox";
@@ -111,6 +112,8 @@ export function Panel({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <TeamsCheckBanner check={state.teamsCheck} onDetail={tab === "settings" ? undefined : () => onTab("settings")} />
 
       <AnimatePresence initial={false}>
         {!trame.connected && !trame.demoMode && (

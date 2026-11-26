@@ -5,6 +5,7 @@ import { GroupList } from "@/components/kit";
 import { TeamsLogo } from "@/brands";
 import { isDesktop, teamsWebHide, teamsWebOpen } from "@/desktop";
 import { Trame } from "@/api";
+import { TeamsCheckRow } from "@/components/TeamsCheck";
 
 type Status = { enabled: boolean; relay?: boolean; ready?: boolean; title?: string; error?: string };
 
@@ -55,7 +56,10 @@ export function TeamsWebSettings({ trame }: { trame: Trame }) {
           </div>
         )}
       </div>
-      <div className="px-4 py-2.5 text-xs text-muted-foreground">
+      <div className="border-t">
+        <TeamsCheckRow trame={trame} />
+      </div>
+      <div className="border-t px-4 py-2.5 text-xs text-muted-foreground">
         Trame lit et écrit dans sa propre fenêtre Teams, cachée. C'est une session de plus sur ton compte : ouvrir une
         conversation peut la marquer comme lue. L'envoi reste toujours ton clic ou le mode Auto.
       </div>

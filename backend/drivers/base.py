@@ -290,6 +290,16 @@ class TeamsDriver(ABC):
         """Calibration report (structure only, no message text)."""
         return {"driver": type(self).__name__}
 
+    # --- Contrôle des repères de la page Teams (teams_check) ---
+    on_page_failure: Optional[Callable[[], None]] = None
+    """Appelé quand Teams a refusé une opération : le moteur recontrôle la page."""
+
+    def probe_page(self) -> Optional[dict]:
+        """Repères de la page Teams dont dépend le pilote, en lecture seule : {ready,
+        results: clé -> True/False/None, marks: clé -> {ok, at}}. None : ce pilote ne
+        sait pas les contrôler."""
+        return None
+
     @abstractmethod
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         """Type into the compose box of the active conversation, which must still be

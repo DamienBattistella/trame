@@ -1,10 +1,12 @@
 from __future__ import annotations
 import itertools
+import os
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional
 from models import DELETED_TEXT, IncomingMessage, MessageRef, Surface, WatchEntity
 from drivers.base import TeamsDriver, same_message
+import teams_check
 
 _SEED = [
     WatchEntity(thread_id="19:aa11@thread.v2", display_name="Sofia Marino", surface=Surface.dm, watch=True, mode="auto"),
@@ -202,6 +204,17 @@ class MockTeamsDriver(TeamsDriver):
 
     def selftest(self) -> bool:
         return True
+
+    # Repères de la page Teams : tous présents, sauf ceux de TRAME_MOCK_TEAMS_MISSING
+    # (clés séparées par des virgules, ex. « mention_list ») pour montrer l'alerte.
+    missing_landmarks: tuple[str, ...] = tuple(
+        k.strip() for k in os.environ.get("TRAME_MOCK_TEAMS_MISSING", "").split(",") if k.strip())
+
+    def probe_page(self) -> Optional[dict]:
+        now = int(time.time() * 1000)
+        results = {key: key not in self.missing_landmarks for key in teams_check.LANDMARKS}
+        return {"ready": True, "results": results,
+                "marks": {key: {"ok": False, "at": now} for key in self.missing_landmarks}}
 
     def list_conversations(self) -> list[WatchEntity]:
         seen = self.presence()

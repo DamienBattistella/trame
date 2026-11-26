@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from presence import Presence
+from teams_check import TeamsCheck
 
 
 class Surface(str, Enum):
@@ -158,6 +159,9 @@ class AppState(BaseModel):
     my_presence: Optional[Presence] = None
     # Messages que tu as envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est.
     outbox: list["QueuedSend"] = Field(default_factory=list)
+    # Dernier contrôle des repères de la page Teams web ; None tant qu'il n'a pas tourné
+    # (ou que le pilote ne sait pas le faire).
+    teams_check: Optional[TeamsCheck] = None
     # Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule).
     follow_ups: list["FollowUp"] = Field(default_factory=list)
 

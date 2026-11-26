@@ -70,8 +70,48 @@ export interface TrameState {
   myPresence: Presence | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
+  /** Dernier contrôle des repères de la page Teams ; null tant qu'il n'a pas tourné. */
+  teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
   followUps: FollowUpItem[];
+}
+
+/** Un repère de la page Teams dont dépend Trame, introuvable. how « page » : absent au
+ *  contrôle ; « usage » : absent quand une opération s'en est servie (menus). */
+export interface TeamsLandmark {
+  key: string;
+  label: string;
+  features: string[];
+  how: "page" | "usage";
+  at: string;
+}
+
+/** Contrôle de la page Teams web : summary dit ce qui ne marchera plus, vide si rien ne manque. */
+export interface TeamsCheck {
+  at: string;
+  ok: boolean;
+  summary: string;
+  missing: TeamsLandmark[];
+  verified: number;
+  unverified: number;
+}
+
+function mapTeamsCheck(c: any): TeamsCheck | null {
+  if (!c || typeof c !== "object") return null;
+  return {
+    at: String(c.at ?? ""),
+    ok: Boolean(c.ok),
+    summary: String(c.summary ?? ""),
+    missing: (c.missing ?? []).map((m: any) => ({
+      key: String(m.key),
+      label: String(m.label ?? m.key),
+      features: Array.isArray(m.features) ? m.features.map(String) : [],
+      how: m.how === "usage" ? "usage" : "page",
+      at: String(m.at ?? ""),
+    })),
+    verified: Number(c.verified ?? 0),
+    unverified: Number(c.unverified ?? 0),
+  };
 }
 
 /** Une relance proposée : ta question restée sans réponse, depuis quand (ISO, heure
@@ -189,6 +229,7 @@ function mapState(s: any): TrameState {
     },
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
+    teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
   };
 }
@@ -466,7 +507,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], teamsCheck: null, followUps: [] };
   }
   return {
     paused: false,
@@ -481,6 +522,7 @@ function mockState(): TrameState {
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
     outbox: [],
+    teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
   };
 }
@@ -1349,6 +1391,16 @@ export function useTrame() {
     return request<{ report: unknown }>("POST", "/api/diagnostics/teams", { thread_id: threadId ?? null });
   };
 
+  /** Contrôle des repères de la page Teams, en lecture seule (aucun menu ouvert). */
+  const checkTeams = async (): Promise<Result<{ check: TeamsCheck | null }>> => {
+    if (!connectedRef.current) return demoRef.current ? demo(600, { check: null }) : { ok: false, error: OFFLINE };
+    const res = await request<{ check: unknown }>("POST", "/api/teams/check");
+    if (!res.ok) return res;
+    const check = mapTeamsCheck(res.check);
+    setState((s) => ({ ...s, teamsCheck: check }));
+    return { ok: true, check };
+  };
+
   /** Zone de danger : réglages par défaut, plus rien de suivi, configuration à refaire. */
   const factoryReset = async (): Promise<Result> => {
     if (!connectedRef.current) {
@@ -1569,6 +1621,7 @@ export function useTrame() {
     ignoreFollowUp,
     diagnoseTeams,
     teamsWebStatus,
+    checkTeams,
     exportLogs,
     queryLogs,
     previewSoul,

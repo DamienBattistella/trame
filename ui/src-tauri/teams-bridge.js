@@ -7,6 +7,72 @@
   const norm = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const rail = () => document.querySelector('[role="tree"]');
   const items = () => Array.from(rail()?.querySelectorAll('[role="treeitem"]') || []);
+  // --- Repères de Teams web dont dépendent les opérations du pont ---
+  // [clé, quand le vérifier, sélecteur]. Le contrôle « probe » les cherche sans rien changer :
+  //   page   : toujours là une fois Teams affiché ;
+  //   chat   : une conversation ouverte ;
+  //   thread : des messages affichés dans cette conversation ;
+  //   hover  : barre d'actions d'un message, montrée par un survol (aucun clic) ;
+  //   unread : une ligne de la liste annoncée « Non lu » ;
+  //   menu   : seulement dans un menu ou après un geste. Le contrôle ne les ouvre pas (un
+  //            menu ouvert dans la fenêtre cachée gênerait l'opération en cours, et ouvrir
+  //            celui de « Marquer comme lu » ou du statut frôle le geste réel) : ils sont
+  //            constatés quand l'opération qui s'en sert les cherche (voir seen()).
+  // Les sélecteurs vides se vérifient en script (titre de la fenêtre, instance CKEditor,
+  // entrée « cet appareil »).
+  // Le moteur (backend/teams_check.py) dit ce qui en dépend ; backend/tests/
+  // test_teams_landmarks.py les vérifie sur des fragments de la vraie page.
+  const LANDMARKS = [
+    ["rail", "page", '[role="tree"]'],
+    ["rail_item", "page", '[role="tree"] [role="treeitem"]'],
+    ["rail_id", "page", '[role="tree"] [role="treeitem"] [id*="19:"]'],
+    ["me", "page", '[data-tid="me-control-avatar-trigger"]'],
+    ["me_presence", "page", '[data-tid="me-control-avatar-presence"]'],
+    ["new_chat", "page", '[data-tid="chat-list-new-chat-button"], [data-tid="new-chat-button"], button[aria-label^="New chat"], button[aria-label^="Nouvelle conversation"]'],
+    ["search_input", "page", '#ms-searchux-input, [data-tid="AUTOSUGGEST_INPUT"]'],
+    ["chat_app", "page", '[data-tid="app-bar-wrapper"] [data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"], [data-tid="app-bar-wrapper"] [aria-label="Conversation"], [data-tid="app-bar-wrapper"] [aria-label="Chat"]'],
+    ["title", "chat", ''],
+    ["editor", "chat", '[data-tid="ckeditor"][contenteditable="true"], [data-tid="ckeditor"] [contenteditable="true"]'],
+    ["editor_model", "chat", ''],
+    ["send", "chat", '[data-tid="sendMessageCommands-send"], [data-tid="newMessageCommands-send"], button[aria-label^="Send"], button[aria-label^="Envoyer"]'],
+    ["attach", "chat", '[data-tid="sendMessageCommands-FilePicker"], [data-tid="newMessageCommands-FilePicker"]'],
+    ["main_pane", "chat", '[role="main"]'],
+    ["messages", "thread", '[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]'],
+    ["message_body", "thread", '[data-tid="chat-pane-message"]'],
+    ["message_id", "thread", '[id^="content-"]'],
+    ["action_bar", "hover", '[data-tid="message-actions-container"]'],
+    ["react_like", "hover", '[data-tid="message-actions-like"]'],
+    ["react_heart", "hover", '[data-tid="message-actions-heart"]'],
+    ["react_laugh", "hover", '[data-tid="message-actions-laugh"]'],
+    ["react_surprised", "hover", '[data-tid="message-actions-surprised"]'],
+    ["quote", "hover", '[data-tid="message-actions-quoted-reply"], [data-tid="message-actions-more"]'],
+    ["unread", "unread", '[data-tid="unread"]'],
+    ["me_menu", "menu", '[data-tid="me-control-menu-dialog"]'],
+    ["status_entry", "menu", '[data-tid="set-presence-status-menu-item"]'],
+    ["status_choice", "menu", '[data-tid="me_control_presence_availability_available"]'],
+    ["duration_entry", "menu", '[data-tid="set-availability-duration"]'],
+    ["duration_panel", "menu", '[data-tid="me-control-set-availability-update-availability-button"]'],
+    ["duration_lists", "menu", '#set-availability-choose-availability-dropdown, #set-availability-clear-availability-after-dropdown'],
+    ["expiry_date", "menu", '[data-tid="me-control-set-availability"] input[aria-haspopup="dialog"]'],
+    ["expiry_time", "menu", '[data-tid="custom-expiry-time-picker"]'],
+    ["note_edit", "menu", '[data-tid="me-control-menu-status-message-edit-button"], [data-tid="me-control-set-status-message-button"], [data-tid="me-control-menu-set-status-message"]'],
+    ["read_entry", "menu", '[data-tid="change-read-status-menu-item"]'],
+    ["mention_list", "menu", '[data-tid="AutocompletePopup-Mentions"]'],
+    ["delete_entry", "menu", '[data-tid="message-actions-delete"]'],
+    ["people_picker", "menu", '[data-tid="people-picker-input"], input[aria-label^="To"], input[aria-label^="À"], input[role="combobox"]'],
+    ["search_tab", "menu", '[data-tid="messages-tab"]'],
+    ["attach_menu", "menu", ''],
+    ["discard_confirm", "menu", '[data-tid="messagedraft-discard-confirm"]'],
+  ];
+  const LM = Object.fromEntries(LANDMARKS.map(([key, , sel]) => [key, sel]));
+  // Ce que les opérations ont constaté en cherchant un repère de menu : vrai trouvé, faux
+  // absent. Le contrôle le rapporte au moteur. Rend `ok` pour s'écrire en ligne.
+  const marks = {};
+  const seen = (key, ok) => {
+    marks[key] = { ok: Boolean(ok), at: Date.now() };
+    return ok;
+  };
+  let running = 0;
   // Présence : Teams web ne l'écrit pas dans le texte de la ligne, seulement sur le
   // badge de l'avatar. On remonte les libellés courts trouvés autour de l'avatar ; le
   // moteur ne garde qu'un statut connu (« En réunion », « Available »…), sinon rien.
@@ -33,7 +99,7 @@
   const TYPING_ROW = '[data-testid="typing-indicator"]';
   const TYPING_TEXT = /\b(est|sont) en train d.\s?[eé]crire|\b(is|are) typing\b/i;
   const paneTyping = () => {
-    const main = document.querySelector('[role="main"]');
+    const main = document.querySelector(LM.main_pane);
     if (!main) return "";
     const walk = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
@@ -94,8 +160,8 @@
     return exact.sort((a, b) => label(a).length - label(b).length)[0] || null;
   };
   // Pastille « non lu » d'une ligne de la liste, et entrée lu / non lu de son menu.
-  const UNREAD = '[data-tid="unread"]';
-  const READ_ENTRY = '[data-tid="change-read-status-menu-item"]';
+  const UNREAD = LM.unread;
+  const READ_ENTRY = LM.read_entry;
   const sendReady = () => {
     const btn = sendButton();
     return Boolean(btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true");
@@ -116,8 +182,10 @@
     return null;
   };
   const REACTIONS = /^\s*\d+\s+(réactions?|reactions?)\b.*$/gim;
+  // Teams web nomme le bouton sendMessageCommands-send (newMessageCommands-send avant) ;
+  // son libellé reste le dernier recours.
   const sendButton = () =>
-    document.querySelector('[data-tid="newMessageCommands-send"]') ||
+    document.querySelector('[data-tid="sendMessageCommands-send"], [data-tid="newMessageCommands-send"]') ||
     document.querySelector('button[aria-label^="Send"], button[aria-label^="Envoyer"]');
   // Wall-clock deadline: the window is hidden, so timers can be throttled to 1 s or
   // more and counting iterations would wait far longer than the engine does.
@@ -322,7 +390,7 @@
     if (!btn) return false;
     btn.click();
     const confirm = () => Array.from(document.querySelectorAll('[data-tid="messagedraft-discard-confirm"]')).find(visible);
-    if (!(await waitFor(confirm, 2000))) return false;
+    if (!seen("discard_confirm", await waitFor(confirm, 2000))) return false;
     confirm().click();
     return waitFor(() => !confirm(), 2000);
   };
@@ -355,7 +423,7 @@
   // « Charger à partir de cet appareil » crée un champ éphémère et l'ouvre par click().
   // Le temps de ce geste, ce click() est retenu (aucune boîte de dialogue Windows dans
   // la fenêtre cachée) et le champ rendu au pont, qui y pose les fichiers.
-  const PICKER = '[data-tid="sendMessageCommands-FilePicker"], [data-tid="newMessageCommands-FilePicker"]';
+  const PICKER = LM.attach;
   const pickerButton = (root) =>
     root?.querySelector(PICKER) ||
     Array.from(root?.querySelectorAll("button[aria-label]") || []).find((b) => /^(joindre|attach)\b/i.test(b.getAttribute("aria-label") || "")) ||
@@ -389,7 +457,7 @@
     if (own.showPicker) proto.showPicker = hold("showPicker");
     try {
       btn.click();
-      if (!(await waitFor(() => deviceItem(), 2000))) throw new Error("menu Joindre sans « cet appareil »");
+      if (!seen("attach_menu", await waitFor(() => deviceItem(), 2000))) throw new Error("menu Joindre sans « cet appareil »");
       deviceItem().click();
       if (!(await waitFor(() => caught, 2000))) throw new Error("Teams n'a pas ouvert de champ fichier");
       return caught;
@@ -497,26 +565,12 @@
       .join(" et ");
     return { ok: false, busy: true, error: `zone de saisie non vide : ${what || "contenu non identifié"} attend dans Teams` };
   };
-  const NEW_CHAT = [
-    '[data-tid="chat-list-new-chat-button"]',
-    '[data-tid="new-chat-button"]',
-    'button[aria-label^="New chat"]',
-    'button[aria-label^="Nouvelle conversation"]',
-  ].join(", ");
-  const TO_FIELD = [
-    '[data-tid="people-picker-input"]',
-    'input[aria-label^="To"]',
-    'input[aria-label^="À"]',
-    'input[role="combobox"]',
-  ].join(", ");
+  const NEW_CHAT = LM.new_chat;
+  const TO_FIELD = LM.people_picker;
   // Recherche de Teams : champ du haut, page de résultats, bouton Conversation de la barre
   // d'applications pour en revenir (l'id est celui de l'application Conversation de Teams).
-  const SEARCH_INPUT = '#ms-searchux-input, [data-tid="AUTOSUGGEST_INPUT"]';
-  const CHAT_APP = [
-    '[data-tid="app-bar-wrapper"] [data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]',
-    '[data-tid="app-bar-wrapper"] [aria-label="Conversation"]',
-    '[data-tid="app-bar-wrapper"] [aria-label="Chat"]',
-  ].join(", ");
+  const SEARCH_INPUT = LM.search_input;
+  const CHAT_APP = LM.chat_app;
   const searchCards = () => Array.from(document.querySelectorAll('[data-tid="search-message-card"]'));
   // « Damien Battistella (Vous) » : tes propres messages.
   const SELF = /\s*\((vous|you)\)\s*$/i;
@@ -546,7 +600,7 @@
       text: flat(body),
     };
   };
-  const MSGS ='[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]';
+  const MSGS = LM.messages;
   const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
@@ -643,7 +697,7 @@
   // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
   // (teams_type_trusted, réservé à cette page), choisit la seule suggestion de ce nom,
   // et vérifie que l'éditeur contient bien une mention de plus.
-  const MENTION_LIST = '[data-tid="AutocompletePopup-Mentions"]';
+  const MENTION_LIST = LM.mention_list;
   const typeTrusted = (text) => window.__TAURI_INTERNALS__.invoke("teams_type_trusted", { text });
   // Une personne mentionnée = un élément « readonly-mention », qui contient un élément
   // « mention » par mot du nom (prénom, nom), chacun avec l'identifiant Teams (mri).
@@ -714,9 +768,13 @@
           return l === n || l.startsWith(n + " ");
         });
     if (!(await waitFor(() => matches().length > 0, 5000))) {
+      // Liste de suggestions affichée sans ce nom : la personne n'y est pas. Pas de liste
+      // du tout : Teams l'a renommée ou ne l'ouvre plus.
+      seen("mention_list", Array.from(document.querySelectorAll(MENTION_LIST)).some(visible));
       closePopup();
       return `« ${who} » absent des suggestions de Teams (pas dans cette conversation ?)`;
     }
+    seen("mention_list", true);
     await sleep(400); // la liste se met à jour au fil de la frappe
     const found = matches();
     if (found.length !== 1) {
@@ -1009,9 +1067,9 @@
   // libellé (« Votre profil, statut Ne pas déranger ») et sur son badge (« do not
   // disturb ») : le lire n'ouvre aucun menu. Le changer passe par son menu, entrée
   // « Modifier l'état », puis le choix ; le moteur vérifie ensuite ce que Teams affiche.
-  const ME = '[data-tid="me-control-avatar-trigger"]';
-  const ME_MENU = '[data-tid="me-control-menu-dialog"]';
-  const STATUS_ENTRY = '[data-tid="set-presence-status-menu-item"]';
+  const ME = LM.me;
+  const ME_MENU = LM.me_menu;
+  const STATUS_ENTRY = LM.status_entry;
   const STATUS_TIDS = {
     available: "me_control_presence_availability_available",
     busy: "me_control_presence_availability_busy",
@@ -1024,10 +1082,10 @@
   // Panneau « Durée » du menu de statut : deux listes (statut, « Rétablir le statut
   // après ») dans l'ordre du menu de Teams, « Terminé » et « Précédent ». Les libellés,
   // sans accents ni casse, confirment chaque choix (français et anglais).
-  const DURATION_ENTRY = '[data-tid="set-availability-duration"]';
+  const DURATION_ENTRY = LM.duration_entry;
   const AVAIL_STATUS = "set-availability-choose-availability-dropdown";
   const AVAIL_AFTER = "set-availability-clear-availability-after-dropdown";
-  const AVAIL_DONE = '[data-tid="me-control-set-availability-update-availability-button"]';
+  const AVAIL_DONE = LM.duration_panel;
   const AVAIL_BACK = '[data-tid="me-control-set-availability-back-button"]';
   const STATUS_ORDER = ["available", "busy", "dnd", "brb", "away", "offline"];
   const STATUS_WORDS = {
@@ -1050,8 +1108,8 @@
   // « Personnalisé » : un champ de date en lecture seule qui ouvre un calendrier (jours
   // nommés « 26, novembre, 2026 »), et une liste native des heures par demi-heure dont
   // chaque valeur est l'instant visé en millisecondes, recalculée pour le jour choisi.
-  const AVAIL_DATE = '[data-tid="me-control-set-availability"] input[aria-haspopup="dialog"]';
-  const AVAIL_TIME = '[data-tid="custom-expiry-time-picker"]';
+  const AVAIL_DATE = LM.expiry_date;
+  const AVAIL_TIME = LM.expiry_time;
   const MONTHS = [
     ["janvier", "january"], ["fevrier", "february"], ["mars", "march"], ["avril", "april"],
     ["mai", "may"], ["juin", "june"], ["juillet", "july"], ["aout", "august"],
@@ -1059,8 +1117,7 @@
   ];
   const monthOf = (word) => MONTHS.findIndex((names) => names.includes(norm(word)));
   const NOTE = '[data-tid="me-control-status-note-container"]';
-  const NOTE_EDIT =
-    '[data-tid="me-control-menu-status-message-edit-button"], [data-tid="me-control-set-status-message-button"], [data-tid="me-control-menu-set-status-message"]';
+  const NOTE_EDIT = LM.note_edit;
   const NOTE_CLEAR = '[data-tid="me-control-menu-status-message-clear-button"]';
   const NOTE_PANEL = '[data-tid="me-control-set-status-message"]';
   const NOTE_DONE = '[data-tid="me-control-set-status-message-update-status-message-button"]';
@@ -1082,7 +1139,7 @@
     const trigger = document.querySelector(ME);
     if (!trigger) return false;
     trigger.click();
-    return waitFor(meMenuOpen, 3000);
+    return seen("me_menu", await waitFor(meMenuOpen, 3000));
   };
   // Échap ferme le sous-menu puis le menu ; en dernier recours, le bouton du profil
   // le referme. Jamais de menu laissé ouvert dans la fenêtre Teams de Trame.
@@ -1106,8 +1163,59 @@
     return noteText();
   };
 
+  // Une ligne de la liste annoncée non lue (« Non lu », « Unread » en tête de son libellé).
+  const UNREAD_LABEL = /^(non lus?|unread)\b/;
+  // Contrôle des repères (voir LANDMARKS), en lecture seule : rien n'est cliqué ni tapé, aucun
+  // menu ouvert. Seul geste : le survol du dernier message, pour que Teams montre sa barre
+  // d'actions, retiré aussitôt, et seulement quand aucune autre opération ne tourne.
+  // Chaque repère : true trouvé, false absent, null pas vérifiable maintenant.
+  const probe = async () => {
+    const has = (key) => Boolean(document.querySelector(LM[key]));
+    // Ni liste ni bouton du profil : Teams pas encore affiché ou pas connecté.
+    if (!rail() && !document.querySelector(ME)) return { ready: false, results: {}, marks };
+    // La recherche remplace la liste un moment : rien à conclure pendant une opération.
+    if (!rail() && running) return { ready: false, busy: running, results: {}, marks };
+    const results = {};
+    const when = (scope, test) => {
+      for (const [key, w] of LANDMARKS) if (w === scope) results[key] = test(key);
+    };
+    when("page", has);
+    const box = editor();
+    const chat = Boolean(titleName() || box);
+    when("chat", (key) => {
+      if (!chat) return null;
+      // Le titre de la fenêtre nomme la conversation ouverte : toutes les opérations s'y fient.
+      if (key === "title") return Boolean(titleName());
+      if (key === "editor_model") return box ? Boolean(cke(box)) : null;
+      if (key === "attach") return box ? Boolean(pickerButton(composeRoot(box))) : null;
+      return has(key);
+    });
+    // Des messages affichés : une heure de message hors de la liste des conversations.
+    const thread = chat && Array.from(document.querySelectorAll("time")).some((t) => !rail()?.contains(t));
+    when("thread", (key) => (thread ? has(key) : null));
+    when("hover", () => null);
+    const last = Array.from(document.querySelectorAll(MSGS)).reverse().find((el) => msgId(el));
+    if (thread && last && !running) {
+      hover(last);
+      let bar = null;
+      await waitFor(() => (bar = barFor(last)), 1500);
+      // Une opération lancée entre-temps survole son propre message : rien à conclure, et
+      // surtout ne pas lui retirer sa barre.
+      if (running) when("hover", () => null);
+      else {
+        when("hover", (key) => (key === "action_bar" ? Boolean(bar) : bar ? Boolean(bar.querySelector(LM[key])) : null));
+        unhover();
+      }
+    }
+    const unreadRows = items().filter((el) => UNREAD_LABEL.test(norm(label(el)).replace(KIND, "")));
+    when("unread", () => (unreadRows.length ? unreadRows.some((el) => el.querySelector(UNREAD)) : null));
+    when("menu", () => null);
+    return { ready: true, busy: running, results, marks };
+  };
+
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
+    probe,
     title: () => document.title,
     // deep : Teams ne dessine que le début de la liste. On la fait défiler jusqu'en bas
     // pour charger la suite, en cumulant ce qui passe, puis on revient où elle était.
@@ -1163,7 +1271,7 @@
       if (!button) return { ok: false, title: document.title, error: "bouton « Nouvelle conversation » introuvable dans Teams" };
       button.click();
       const field = () => Array.from(document.querySelectorAll(TO_FIELD)).find(visible);
-      if (!(await waitFor(() => field(), 4000))) return { ok: false, title: document.title, error: "champ « À » introuvable" };
+      if (!seen("people_picker", await waitFor(() => field(), 4000))) return { ok: false, title: document.title, error: "champ « À » introuvable" };
       const input = field();
       const cancel = () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
       input.focus();
@@ -1212,7 +1320,7 @@
         if (form?.requestSubmit) form.requestSubmit();
         else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
         const tab = () => document.querySelector('[data-tid="messages-tab"]');
-        if (!(await waitFor(tab, 10000))) return { ok: false, error: "page de résultats de Teams non affichée" };
+        if (!seen("search_tab", await waitFor(tab, 10000))) return { ok: false, error: "page de résultats de Teams non affichée" };
         tab().click();
         await waitFor(() => tab()?.getAttribute("aria-selected") === "true", 3000);
         // Les cartes arrivent par lots : la première, puis on attend qu'il n'en arrive plus.
@@ -1259,7 +1367,7 @@
       );
       const entry = () => document.querySelector(`[role="menu"] ${READ_ENTRY}`);
       const close = () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
-      if (!(await waitFor(entry, 2000))) {
+      if (!seen("read_entry", await waitFor(entry, 2000))) {
         close();
         return { ok: false, error: "entrée « Marquer comme lu » introuvable" };
       }
@@ -1472,7 +1580,7 @@
       if (!more) return fail("menu « Autres options » introuvable sur ce message");
       more.click();
       let entry = null;
-      if (!(await waitFor(() => (entry = deleteEntry()), 1500))) return fail("« Supprimer » introuvable dans le menu du message");
+      if (!seen("delete_entry", await waitFor(() => (entry = deleteEntry()), 1500))) return fail("« Supprimer » introuvable dans le menu du message");
       // Rien n'a bougé entre-temps : même conversation, même message sous la souris.
       if (!isOpen(name)) return fail("conversation changée avant la suppression");
       const again = findMessage(message);
@@ -1538,7 +1646,7 @@
         // soit refermée et que celle-ci soit là.
         await waitFor(() => !options().length && visible(document.getElementById(combo)), 3000);
         const box = document.getElementById(combo);
-        if (!box || !visible(box)) return `liste « ${combo} » introuvable`;
+        if (!seen("duration_lists", box && visible(box))) return `liste « ${combo} » introuvable`;
         box.click();
         if (!(await waitFor(() => options().length > i, 2000))) return "choix absents de la liste de Teams";
         // La liste s'ouvre en glissant : un clic pendant l'animation referme tout le menu
@@ -1563,7 +1671,7 @@
         return Number(n) === day.getDate() && monthOf(month) === day.getMonth() && Number(year) === day.getFullYear();
       };
       const pickDay = async () => {
-        if (!(await waitFor(() => firstVisible(AVAIL_DATE), 3000))) return "champ de date introuvable";
+        if (!seen("expiry_date", await waitFor(() => firstVisible(AVAIL_DATE), 3000))) return "champ de date introuvable";
         if (firstVisible(AVAIL_DATE).value === day.toDateString()) return null;
         firstVisible(AVAIL_DATE).click();
         if (!(await waitFor(calendar, 2000))) return "calendrier de Teams non ouvert";
@@ -1599,7 +1707,7 @@
       const pickTime = async () => {
         const list = () => firstVisible(AVAIL_TIME);
         const shows = () => Number(list()?.value) === at.getTime();
-        if (!(await waitFor(list, 2000))) return "liste des heures introuvable";
+        if (!seen("expiry_time", await waitFor(list, 2000))) return "liste des heures introuvable";
         const opt = Array.from(list().options).find((o) => Number(o.value) === at.getTime());
         if (!opt) return `heure ${time} absente de la liste de Teams`;
         if (!shows()) {
@@ -1625,12 +1733,12 @@
         const durationEntry = () => firstVisible(DURATION_ENTRY);
         if (!durationEntry()) {
           const sub = firstVisible(STATUS_ENTRY);
-          if (!sub) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
+          if (!seen("status_entry", sub)) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
           sub.click();
-          if (!(await waitFor(durationEntry, 3000))) return { ok: false, error: "entrée « Durée » absente du menu de Teams" };
+          if (!seen("duration_entry", await waitFor(durationEntry, 3000))) return { ok: false, error: "entrée « Durée » absente du menu de Teams" };
         }
         durationEntry().click();
-        if (!(await waitFor(() => firstVisible(AVAIL_DONE), 3000))) return { ok: false, error: "panneau « Durée » non ouvert" };
+        if (!seen("duration_panel", await waitFor(() => firstVisible(AVAIL_DONE), 3000))) return { ok: false, error: "panneau « Durée » non ouvert" };
         const why =
           (await pick(AVAIL_STATUS, index, STATUS_WORDS[choice])) ||
           (await pick(AVAIL_AFTER, d, DURATION_WORDS[duration])) ||
@@ -1668,9 +1776,9 @@
         const entry = () => firstVisible(`[data-tid="${tid}"]`);
         if (!entry()) {
           const sub = firstVisible(STATUS_ENTRY);
-          if (!sub) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
+          if (!seen("status_entry", sub)) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
           sub.click();
-          if (!(await waitFor(entry, 3000))) return { ok: false, error: "choix de statut absents du menu de Teams" };
+          if (!seen("status_choice", await waitFor(entry, 3000))) return { ok: false, error: "choix de statut absents du menu de Teams" };
         }
         if (late()) return { ok: false, error: "commande expirée" };
         entry().click();
@@ -1698,7 +1806,7 @@
         } else {
           if (noteText() === want) return { ok: true, message: want };
           const edit = firstVisible(NOTE_EDIT);
-          if (!edit) return { ok: false, error: "bouton « Définir le message de statut » introuvable" };
+          if (!seen("note_edit", edit)) return { ok: false, error: "bouton « Définir le message de statut » introuvable" };
           edit.click();
           const box = () => firstVisible(`${NOTE_PANEL} [contenteditable="true"]`);
           if (!(await waitFor(box, 3000))) return { ok: false, error: "zone du message de statut introuvable" };
@@ -1794,8 +1902,17 @@
         const op = ops[cmd.op];
         if (!op) throw new Error(`opération inconnue : ${cmd.op}`);
         if (cmd.deadline_ms && Date.now() > cmd.deadline_ms) throw new Error("commande expirée");
-        deadline = cmd.deadline_ms || 0;
-        reply({ id: cmd.id, ok: true, result: await op(cmd.args || {}) });
+        // Le contrôle tourne à côté des autres opérations : il ne touche pas à leur délai.
+        const own = op !== probe;
+        if (own) {
+          deadline = cmd.deadline_ms || 0;
+          running++;
+        }
+        try {
+          reply({ id: cmd.id, ok: true, result: await op(cmd.args || {}) });
+        } finally {
+          if (own) running--;
+        }
       } catch (e) {
         reply({ id: cmd.id, ok: false, error: String((e && e.message) || e) });
       }
