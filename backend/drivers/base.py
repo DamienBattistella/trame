@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Optional
+from typing import Callable, Iterable, Iterator, Optional, Sequence
 from models import IncomingMessage, MessageRef, WatchEntity
 
 
@@ -48,6 +48,7 @@ class TeamsDriver(ABC):
     # Gestes en plus de la saisie : réagir à un message, répondre à un message précis.
     supports_reactions: bool = False
     supports_reply: bool = False
+    supports_mentions: bool = False
     """Abstraction over the Teams client. Implemented by MockTeamsDriver (any OS,
     for development) and WindowsUIADriver (real UIA driving, Windows only)."""
 
@@ -187,15 +188,20 @@ class TeamsDriver(ABC):
         return self.type_focused(thread_id, text, send, restore).ok
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
-                     reply_to: Optional[MessageRef] = None) -> Focus:
+                     reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = ()) -> Focus:
         """Like type_reply but returns the Focus; `ok` is True only if the text was typed.
-        reply_to: answer that precise message (Teams « Répondre »), not just the thread."""
+        reply_to: answer that precise message (Teams « Répondre »), not just the thread.
+        mentions: names written « @Nom » in text that Teams must turn into real mentions."""
         if reply_to is not None and not self.supports_reply:
             raise NotSupported("Ce pilote Teams ne sait pas répondre à un message précis.")
+        if mentions and not self.supports_mentions:
+            raise NotSupported("Ce pilote Teams ne sait pas mentionner quelqu'un.")
         with self.focused(thread_id, restore=restore) as focus:
             if focus.ok:
                 try:
-                    if reply_to is None:
+                    if mentions:
+                        focus.ok = bool(self._type_with_mentions(thread_id, text, send, list(mentions), reply_to))
+                    elif reply_to is None:
                         focus.ok = bool(self._type_into_active(thread_id, text, send))
                     else:
                         focus.ok = bool(self._reply_in_active(thread_id, reply_to, text, send))
@@ -212,6 +218,13 @@ class TeamsDriver(ABC):
         be thread_id), then type text. The driver must first find target and check its
         sender and text: never quote another message. Empty compose box required."""
         raise NotSupported("Ce pilote Teams ne sait pas répondre à un message précis.")
+
+    def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],
+                            reply_to: Optional[MessageRef] = None) -> bool:
+        """Type text where each « @Nom » of mentions becomes a real Teams mention (picked
+        in Teams' own suggestions, one person of exactly that name). On any doubt the
+        compose box is cleared and nothing is sent."""
+        raise NotSupported("Ce pilote Teams ne sait pas mentionner quelqu'un.")
 
     def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
         """Open thread_id, then put `reaction` on target. `ok` only once Teams shows it.

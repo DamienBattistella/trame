@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { BookOpenText, Check, ExternalLink, ListChecks, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { findFolded, fold } from "@/lib/textSearch";
+import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
@@ -192,6 +193,10 @@ export function DiscussionView({
   const [reacting, setReacting] = useState<{ index: number; reaction: Reaction } | null>(null);
   const caps = trame.state.capabilities;
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Mentions : personnes choisies dans les suggestions « @ », et la liste ouverte.
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [mentioning, setMentioning] = useState<{ at: number; query: string; index: number } | null>(null);
+  const [entourage, setEntourage] = useState<string[]>([]);
   const base = useRef(draft?.proposal ?? "");
   const controls = useAnimationControls();
   const scroller = useRef<StickToBottomContext>(null);
@@ -282,18 +287,79 @@ export function DiscussionView({
     toast.error(title, { description: error });
   };
 
+  // Qui mentionner : ceux qui ont écrit dans le fil (membres sûrs de la conversation),
+  // la personne d'une conversation privée, puis l'entourage. Teams vérifie à l'envoi.
+  useEffect(() => {
+    if (!caps.mentions) return;
+    trame.listPeople().then((r) => r.ok && setEntourage(r.list.map((p) => p.name)));
+  }, [caps.mentions]);
+  const people = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const add = (n?: string | null) => {
+      const name = (n ?? "").replace(/\s+/g, " ").trim();
+      if (name && !seen.has(name.toLowerCase())) {
+        seen.add(name.toLowerCase());
+        out.push(name);
+      }
+    };
+    [...(messages ?? [])].reverse().forEach((m) => !m.mine && add(m.sender));
+    if (c.surface === "dm") add(c.displayName);
+    entourage.forEach(add);
+    return out;
+  }, [messages, c.surface, c.displayName, entourage]);
+  const suggestions = mentioning ? matchPeople(mentioning.query, people) : [];
+
+  const followMention = (value: string, caret: number) => {
+    if (!caps.mentions) return;
+    const q = mentionQuery(value, caret);
+    setMentioning(q ? { ...q, index: 0 } : null);
+  };
+  const chooseMention = (name: string) => {
+    const box = composer.current;
+    if (!mentioning || !box) return;
+    const next = applyMention(text, box.selectionStart, mentioning.at, name);
+    setText(next.text);
+    setReview(null);
+    setChosen((list) => (list.includes(name) ? list : [...list, name]));
+    setMentioning(null);
+    requestAnimationFrame(() => {
+      box.focus();
+      box.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  // Clavier dans la liste ouverte : vrai si la touche a été prise par la liste.
+  const mentionKey = (e: React.KeyboardEvent) => {
+    if (!mentioning) return false;
+    const n = suggestions.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setMentioning({ ...mentioning, index: (mentioning.index + step + n) % n });
+    } else if ((e.key === "Enter" && !e.ctrlKey && !e.metaKey) || e.key === "Tab") {
+      chooseMention(suggestions[Math.min(mentioning.index, n - 1)]);
+    } else if (e.key === "Escape") {
+      setMentioning(null);
+    } else return false;
+    e.preventDefault();
+    return true;
+  };
+
   const send = async () => {
     const body = text.trim();
     if (!body || busy !== "idle" || review) return;
     setBusy("send");
     const target = replyTo;
-    const res = draft ? await trame.sendDraft(draft.id, body, target) : await trame.sendInThread(c.threadId, body, target);
+    const mentions = caps.mentions ? mentionsUsed(body, chosen) : [];
+    const res = draft
+      ? await trame.sendDraft(draft.id, body, target, mentions)
+      : await trame.sendInThread(c.threadId, body, target, mentions);
     setBusy("idle");
     if (!res.ok) return fail(`Envoi impossible à ${c.displayName}`, `${res.error} Ton message est conservé.`);
     if (draft) trame.removeDraft(draft.id);
     setMessages((m) => [...(m ?? []), { sender: "Toi", text: body, at: "à l'instant", mine: true, replyTo: target }]);
     setText("");
     setReplyTo(null);
+    setChosen([]);
     setCheck(null);
     setUndo(null);
     base.current = "";
@@ -656,32 +722,71 @@ export function DiscussionView({
               </Button>
             </div>
           )}
-          <Textarea
-            ref={composer}
-            aria-label={replyTo ? `Réponse au message de ${replyTo.sender}` : `Message à ${c.displayName}`}
-            placeholder={replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              // Le texte a changé : la correction affichée ne lui correspond plus.
-              setReview(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                send();
-              } else if (e.key === "Escape" && replyTo) {
-                e.preventDefault();
-                setReplyTo(null);
-              }
-            }}
-            disabled={busy === "send" || busy === "correct"}
-            rows={2}
-            className={cn(
-              "field-sizing-content max-h-48 min-h-16 resize-none rounded-xl",
-              draft && "border-primary/30 bg-primary/5 dark:bg-primary/10"
-            )}
-          />
+          <div className="relative">
+            <AnimatePresence>
+              {mentioning && suggestions.length > 0 && (
+                <motion.ul
+                  key="mentions"
+                  role="listbox"
+                  aria-label="Mentionner"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 4 }}
+                  className="absolute bottom-full left-0 z-20 mb-1 w-72 overflow-hidden rounded-xl border bg-popover p-1 shadow-md"
+                >
+                  {suggestions.map((name, i) => (
+                    <li
+                      key={name}
+                      role="option"
+                      aria-selected={i === mentioning.index}
+                      // mousedown : choisir avant que la zone de saisie ne perde le focus.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        chooseMention(name);
+                      }}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm",
+                        i === mentioning.index ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                      )}
+                    >
+                      <InitialsAvatar name={name} className="size-6 text-[10px]" />
+                      <span className="truncate">{name}</span>
+                    </li>
+                  ))}
+                </motion.ul>
+              )}
+            </AnimatePresence>
+            <Textarea
+              ref={composer}
+              aria-label={replyTo ? `Réponse au message de ${replyTo.sender}` : `Message à ${c.displayName}`}
+              placeholder={replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                // Le texte a changé : la correction affichée ne lui correspond plus.
+                setReview(null);
+                followMention(e.target.value, e.target.selectionStart);
+              }}
+              onClick={(e) => followMention(text, e.currentTarget.selectionStart)}
+              onBlur={() => setMentioning(null)}
+              onKeyDown={(e) => {
+                if (mentioning && suggestions.length && mentionKey(e)) return;
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  send();
+                } else if (e.key === "Escape" && replyTo) {
+                  e.preventDefault();
+                  setReplyTo(null);
+                }
+              }}
+              disabled={busy === "send" || busy === "correct"}
+              rows={2}
+              className={cn(
+                "field-sizing-content max-h-48 min-h-16 resize-none rounded-xl",
+                draft && "border-primary/30 bg-primary/5 dark:bg-primary/10"
+              )}
+            />
+          </div>
           <div className="flex items-center gap-2">
             <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
               <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd> pour envoyer

@@ -117,6 +117,8 @@ class TextBody(BaseModel):
     text: Optional[str] = None
     # Répondre à ce message précis du fil (citation Teams), pas seulement à la conversation.
     reply_to: Optional[MessageRef] = None
+    # Noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
+    mentions: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ReactBody(BaseModel):
@@ -279,7 +281,8 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[TextBody] = None):
-        watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None)
+        watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
+                           body.mentions if body else None)
         return {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/compose")
@@ -325,7 +328,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):
-        watcher.send_manual(thread_id, body.text or "", body.reply_to)
+        watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions)
         return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/react")

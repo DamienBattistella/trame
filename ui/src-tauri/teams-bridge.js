@@ -237,6 +237,148 @@
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
+  // --- Mentions (@quelqu'un) ---
+  // Teams n'ouvre ses suggestions de mention que sur une vraie frappe : les événements
+  // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
+  // (teams_type_trusted, réservé à cette page), choisit la seule suggestion de ce nom,
+  // et vérifie que l'éditeur contient bien une mention de plus.
+  const MENTION_LIST = '[data-tid="AutocompletePopup-Mentions"]';
+  const typeTrusted = (text) => window.__TAURI_INTERNALS__.invoke("teams_type_trusted", { text });
+  // Une personne mentionnée = un élément « readonly-mention », qui contient un élément
+  // « mention » par mot du nom (prénom, nom), chacun avec l'identifiant Teams (mri).
+  const mentionsIn = (box) => {
+    try {
+      const ed = cke(box);
+      let n = 0;
+      for (const step of ed.model.createRangeIn(ed.model.document.getRoot())) {
+        if (step.type === "elementStart" && step.item.name === "readonly-mention") n++;
+      }
+      return n;
+    } catch {
+      return -1;
+    }
+  };
+  // Le texte se termine-t-il par une espace ? Teams en ajoute une après une mention.
+  const endsWithSpace = (box) => {
+    try {
+      const ed = cke(box);
+      let last = "";
+      for (const step of ed.model.createRangeIn(ed.model.document.getRoot())) {
+        if (typeof step.item.data === "string") last = step.item.data;
+        else if (step.type === "elementEnd" && step.item.name === "readonly-mention") last = "";
+      }
+      return /[\s ]$/.test(last);
+    } catch {
+      return false;
+    }
+  };
+  // « Salut @Ana Lopez, tu vois avec @Marc ? » -> morceaux de texte et mentions, dans l'ordre.
+  const splitMentions = (text, names) => {
+    const out = [];
+    let rest = text;
+    while (rest) {
+      let best = null;
+      for (const n of names) {
+        const i = rest.toLowerCase().indexOf("@" + n.toLowerCase());
+        if (i >= 0 && (!best || i < best.i)) best = { i, n };
+      }
+      if (!best) {
+        out.push({ text: rest });
+        break;
+      }
+      if (best.i) out.push({ text: rest.slice(0, best.i) });
+      out.push({ mention: best.n });
+      rest = rest.slice(best.i + 1 + best.n.length);
+    }
+    return out;
+  };
+  const closePopup = () =>
+    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  // Une mention : null si elle est en place, sinon la raison.
+  const addMention = async (box, who) => {
+    const before = mentionsIn(box);
+    if (before < 0) return "éditeur de Teams illisible";
+    caretAtEnd(box);
+    try {
+      await typeTrusted("@" + who);
+    } catch (e) {
+      return `frappe impossible (${(e && e.message) || e})`;
+    }
+    const n = norm(who);
+    const matches = () =>
+      Array.from(document.querySelectorAll(`${MENTION_LIST} [role="option"]`))
+        .filter(visible)
+        .filter((o) => {
+          const l = norm(label(o));
+          return l === n || l.startsWith(n + " ");
+        });
+    if (!(await waitFor(() => matches().length > 0, 5000))) {
+      closePopup();
+      return `« ${who} » absent des suggestions de Teams (pas dans cette conversation ?)`;
+    }
+    await sleep(400); // la liste se met à jour au fil de la frappe
+    const found = matches();
+    if (found.length !== 1) {
+      closePopup();
+      return `${found.length} personnes nommées « ${who} » dans les suggestions`;
+    }
+    found[0].click();
+    if (await waitFor(() => mentionsIn(box) > before, 2500)) return null;
+    closePopup();
+    return `mention de « ${who} » non créée par Teams`;
+  };
+  const typeWithMentions = async ({ name, text, send, quote, mentions }) => {
+    if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+    let box = editor();
+    if (!box) return { ok: false, error: "zone de saisie introuvable" };
+    if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
+    const fail = (error) => {
+      clear(box);
+      return { ok: false, error };
+    };
+    if (quote) {
+      const why = await quoteMessage(quote, box);
+      if (why) return fail(why);
+      if (!isOpen(name)) return fail("conversation changée pendant la citation");
+      box = editor() || box;
+    }
+    const parts = splitMentions(text, mentions);
+    const wanted = parts.filter((p) => p.mention).length;
+    if (!wanted) return fail("mention absente du texte");
+    // Le message cité peut lui-même contenir des mentions : on compte à partir d'ici.
+    const base = mentionsIn(box);
+    for (const part of parts) {
+      if (late()) return fail("délai dépassé pendant la saisie");
+      if (!isOpen(name)) return fail("conversation changée pendant la saisie");
+      if (part.mention) {
+        const why = await addMention(box, part.mention);
+        if (why) return fail(why);
+        continue;
+      }
+      // Teams laisse une espace après la mention : pas de double espace.
+      const chunk = endsWithSpace(box) ? part.text.replace(/^[  ]/, "") : part.text;
+      if (!chunk) continue;
+      caretAtEnd(box);
+      if (!(await insert(box, chunk))) return fail("texte non inséré après une mention");
+    }
+    // Un essai de saisie raté vide la zone : toutes les mentions doivent y être encore.
+    if (mentionsIn(box) !== base + wanted) return fail("mentions perdues pendant la saisie");
+    if (!send) return { ok: true };
+    if (!isOpen(name)) return fail("conversation changée avant l'envoi");
+    if (late()) return fail("délai dépassé avant l'envoi");
+    // Une fois envoyée, la mention s'affiche sans « @ » : on cherche le texte sans.
+    const shownText = mentions.reduce((t, m) => t.split("@" + m).join(m), text);
+    const key = flat(shownText).slice(0, 40);
+    const before = lastMessages(3).filter((t) => t.includes(key)).length;
+    await waitFor(sendReady, 1500);
+    if (!sendReady()) return fail("Envoyer reste inactif");
+    sendButton().click();
+    const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, 6000);
+    if (shown) return { ok: true };
+    if (box.innerText.trim() || modelText(box)) return fail("envoi refusé par Teams (mentions)");
+    return { ok: false, uncertain: true, error: "message non visible dans la conversation, vérifie dans Teams (mentions)" };
+  };
+
   // --- Un message précis du fil : réagir, répondre ---
   const bodyOf = (el) =>
     (el.querySelector('[data-tid="chat-pane-message"]')?.innerText || el.querySelector('[id^="content-"]')?.innerText || "")
@@ -622,7 +764,8 @@
       }
       return { messages: out.slice(-last), top };
     },
-    type: async ({ name, text, send, quote }) => {
+    type: async ({ name, text, send, quote, mentions }) => {
+      if (mentions && mentions.length) return typeWithMentions({ name, text, send, quote, mentions });
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
       let box = editor();
       if (!box) return { ok: false, error: "zone de saisie introuvable" };

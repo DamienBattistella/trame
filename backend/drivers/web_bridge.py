@@ -20,6 +20,7 @@ class WebBridgeDriver(TeamsDriver):
     waits_for_relay = True
     supports_reactions = True
     supports_reply = True
+    supports_mentions = True
     POLL_WAIT = 20.0
 
     """« Teams intégré » (expérimental) : Teams web (teams.microsoft.com) in a hidden
@@ -273,12 +274,22 @@ class WebBridgeDriver(TeamsDriver):
             raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'réaction refusée'}")
         return True
 
-    def _type(self, thread_id: str, text: str, send: bool, quote: Optional[dict] = None) -> bool:
+    def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],
+                            reply_to: Optional[MessageRef] = None) -> bool:
+        quote = self._ref(reply_to) if reply_to is not None else None
+        return self._type(thread_id, text, send, quote=quote, mentions=mentions)
+
+    def _type(self, thread_id: str, text: str, send: bool, quote: Optional[dict] = None,
+              mentions: Optional[list[str]] = None) -> bool:
         args: dict = {"name": self._name(thread_id), "text": text, "send": send}
         if quote is not None:
             args["quote"] = quote
+        if mentions:
+            args["mentions"] = mentions
+        # Each mention waits for Teams' suggestions: a few more seconds per person.
+        timeout = (18 if quote else 15) + 6 * len(mentions or [])
         try:
-            res = self._rpc("type", timeout=18 if quote else 15, **args)
+            res = self._rpc("type", timeout=timeout, **args)
         except BridgeUnavailable as e:
             if send and "pas de réponse" in str(e):
                 raise SendUncertain(str(e)) from e
