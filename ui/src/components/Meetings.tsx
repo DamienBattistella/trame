@@ -36,9 +36,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GroupList, SectionLabel, pop } from "@/components/kit";
+import { GroupList, InitialsAvatar, SectionLabel, pop } from "@/components/kit";
 import { cn } from "@/lib/utils";
-import { durationLabel, durationMinutes, fold, groupByPeriod, matches, occurrences, shortDate, shortPath, slotOf } from "@/lib/meetings";
+import { useMedia } from "@/lib/useMedia";
+import { dayOf, durationLabel, durationMinutes, fold, groupByPeriod, matches, occurrences, shortDate, shortPath, slotOf } from "@/lib/meetings";
 import { Meeting, ReportSession, SavedTranscript } from "@/types";
 import { ReportDialog } from "@/components/ReportDialog";
 
@@ -76,10 +77,13 @@ export function Meetings({ trame }: { trame: Trame }) {
   const [fetches, setFetches] = useState<Record<string, Fetch>>(memory.fetches);
   const [query, setQuery] = useState("");
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const stopBatch = useRef(false);
   // Compte-rendu (skill meeting-report) ouvert dans le dialogue, et la réunion qui le prépare.
   const [report, setReport] = useState<ReportSession | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  // Fenêtre moyenne ou large : la liste et, à côté, le détail de la réunion choisie.
+  const split = useMedia("(min-width: 80rem)");
 
   useEffect(() => {
     Object.assign(memory, { meetings, readAt, directory, fetches });
@@ -179,6 +183,8 @@ export function Meetings({ trame }: { trame: Trame }) {
   const groups = useMemo(() => groupByPeriod(visible, new Date()), [visible]);
   const savedCount = (meetings ?? []).filter((m) => savedOf(m)).length;
   const searchable = (meetings?.length ?? 0) > 6;
+  // Sans choix, la plus récente de la liste affichée ; un filtre qui la cache passe à la suivante visible.
+  const selected = split ? (visible.find((m) => m.meetingId === selectedId) ?? groups[0]?.items[0] ?? null) : null;
 
   const startReport = async (m: Meeting) => {
     setStarting(m.meetingId);
@@ -202,6 +208,8 @@ export function Meetings({ trame }: { trame: Trame }) {
         <FolderButton trame={trame} directory={directory} onChange={setDirectory} onCopy={copyPath} />
       </div>
 
+      <div className={cn("flex flex-col gap-5", selected && "grid grid-cols-[minmax(0,1fr)_24rem] items-start gap-x-8 3xl:grid-cols-[minmax(0,1fr)_28rem]")}>
+      <div className="flex min-w-0 flex-col gap-5">
       {meetings && (
         <div className="flex flex-wrap items-center gap-2">
           {searchable && (
@@ -228,7 +236,7 @@ export function Meetings({ trame }: { trame: Trame }) {
               )}
             </div>
           )}
-          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground tabular-nums" aria-live="polite">
+          <p className="min-w-0 flex-1 text-xs text-pretty text-muted-foreground tabular-nums" aria-live="polite">
             {plural(meetings.length, "réunion")}
             {savedCount > 0 && ` · ${plural(savedCount, "enregistrée")}`}
             {readAt && ` · lue à ${clock(readAt)}`}
@@ -313,6 +321,8 @@ export function Meetings({ trame }: { trame: Trame }) {
                     onSeries={() => setQuery(m.title)}
                     reporting={starting === m.meetingId}
                     onReport={() => void startReport(m)}
+                    selected={selected?.meetingId === m.meetingId}
+                    onSelect={split ? () => setSelectedId(m.meetingId) : undefined}
                   />
                 ))}
               </GroupList>
@@ -320,6 +330,25 @@ export function Meetings({ trame }: { trame: Trame }) {
           ))}
         </div>
       )}
+      </div>
+      {selected && (
+        <MeetingDetail
+          meeting={selected}
+          fetch={fetches[selected.meetingId]}
+          saved={savedOf(selected)}
+          repeats={counts.get(fold(selected.title)) ?? 1}
+          filtered={fold(query) === fold(selected.title)}
+          batching={!!batch}
+          onFetch={() => void fetchOne(selected)}
+          onOpen={(p) => void openFile(p)}
+          onReveal={(p) => void openFile(p, true)}
+          onCopy={(p) => void copyPath(p)}
+          onSeries={() => setQuery(selected.title)}
+          reporting={starting === selected.meetingId}
+          onReport={() => void startReport(selected)}
+        />
+      )}
+      </div>
     </div>
   );
 }
@@ -419,6 +448,9 @@ type RowProps = {
   onSeries: () => void;
   reporting: boolean;
   onReport: () => void;
+  /** Fenêtre partagée liste + détail : la ligne se choisit d'un clic. */
+  selected?: boolean;
+  onSelect?: () => void;
 };
 
 type RowState = "none" | "available" | "queued" | "run" | "saved" | "partial" | "denied" | "error";
@@ -442,7 +474,7 @@ const STATE_ICON: Record<RowState, { icon: React.ReactNode; label: string }> = {
   error: { icon: <AlertTriangle className="size-4 text-destructive" />, label: "Transcription non récupérée" },
 };
 
-function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport }: RowProps) {
+function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport, selected, onSelect }: RowProps) {
   const state = rowState(m, fetch, saved);
   const { start, end } = slotOf(m);
   const duration = durationLabel(durationMinutes(start, end));
@@ -470,11 +502,24 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
       data-testid="meeting-row"
       data-state={state}
       aria-busy={state === "run" || undefined}
-      className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40 focus-within:bg-accent/40"
+      className={cn(
+        "group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40 focus-within:bg-accent/40",
+        selected && "bg-accent/70 hover:bg-accent/70 focus-within:bg-accent/70"
+      )}
     >
+      {onSelect && (
+        // Toute la ligne choisit la réunion ; les boutons de la ligne passent au-dessus.
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed={selected}
+          aria-label={`Détails de ${m.title}`}
+          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        />
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/60" role="img" aria-label={STATE_ICON[state].label}>
+          <span className="relative grid size-8 shrink-0 place-items-center rounded-full bg-muted/60" role="img" aria-label={STATE_ICON[state].label}>
             <AnimatePresence mode="popLayout" initial={false}>
               <motion.span key={state} className="grid place-items-center" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={pop}>
                 {STATE_ICON[state].icon}
@@ -485,7 +530,7 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
         <TooltipContent side="left">{STATE_ICON[state].label}</TooltipContent>
       </Tooltip>
 
-      <div className="min-w-0 flex-1">
+      <div className={cn("min-w-0 flex-1", onSelect && "pointer-events-none")}>
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={cn("truncate text-sm font-medium", state === "none" && "text-muted-foreground")}>{m.title}</span>
           {repeats > 1 && !filtered && (
@@ -495,7 +540,7 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
                   type="button"
                   onClick={onSeries}
                   aria-label={`Réunion récurrente : afficher ses ${repeats} occurrences`}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
                   <Repeat className="size-3" /> {repeats}
                 </button>
@@ -512,7 +557,7 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="relative flex shrink-0 items-center gap-1">
         {(state === "available" || state === "saved" || state === "partial") && (
           <Button
             variant="ghost"
@@ -565,6 +610,137 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
         )}
       </div>
     </div>
+  );
+}
+
+const longDate = (m: Meeting) => {
+  const d = dayOf(m.date);
+  return d ? new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(d) : m.when || "Date inconnue";
+};
+
+/** Fenêtre moyenne ou large : la réunion choisie en entier, titre non tronqué, et ses actions à découvert. */
+function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport }: Omit<RowProps, "relative" | "selected" | "onSelect">) {
+  const state = rowState(m, fetch, saved);
+  const { start, end } = slotOf(m);
+  const duration = durationLabel(durationMinutes(start, end));
+  const got = fetch?.state === "ok" ? fetch.saved : null;
+  const path = got?.path ?? saved?.path ?? "";
+  const name = got?.name ?? saved?.name ?? "";
+  const reportButton = (variant: "default" | "outline") => (
+    <Button variant={variant} size="sm" className="rounded-full" onClick={onReport} disabled={batching || reporting} title="Appliquer le skill de compte-rendu à la transcription (récupérée d'abord si besoin)">
+      {reporting ? <Loader2 className="size-4 animate-spin" /> : <NotebookPen className="size-4" />}
+      {reporting ? "Préparation…" : "Compte-rendu"}
+    </Button>
+  );
+  const facts: [string, React.ReactNode][] = [
+    ["Date", <span className="first-letter:uppercase">{longDate(m)}</span>],
+    ...(start && end ? [["Horaire", `${start}–${end}${duration ? ` · ${duration}` : ""}`] as [string, string]] : []),
+    ...(m.organizer ? [["Organisation", m.organizer] as [string, string]] : []),
+    ...(repeats > 1
+      ? [[
+          "Série",
+          filtered ? (
+            plural(repeats, "occurrence")
+          ) : (
+            <button type="button" onClick={onSeries} className="inline-flex items-center gap-1 font-medium text-link hover:underline">
+              <Repeat className="size-3.5" /> {plural(repeats, "occurrence")}
+            </button>
+          ),
+        ] as [string, React.ReactNode]]
+      : []),
+  ];
+
+  return (
+    <aside aria-label="Détails de la réunion" className="sticky top-0 flex flex-col gap-5 rounded-2xl border bg-card p-5">
+      <div className="flex items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted/60" aria-hidden>
+          {STATE_ICON[state].icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-balance break-words">{m.title}</h2>
+          <p className="text-sm text-muted-foreground">{STATE_ICON[state].label}</p>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+        {facts.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="min-w-0 tabular-nums">{v}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="flex flex-col gap-3 border-t pt-4">
+        <h3 className="text-sm font-medium text-muted-foreground">Transcription</h3>
+        {(state === "saved" || state === "partial") && path ? (
+          <>
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-xs break-all">{name || shortPath(path)}</span>
+              {got && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {plural(got.cues, "prise de parole", "prises de parole")} · {plural(got.speakers.length, "intervenant")}
+                </span>
+              )}
+              {state === "partial" && <span className="text-xs text-warning">Relecture incomplète : la liste n'a pas été lue jusqu'au bout. Réessaie.</span>}
+            </div>
+            {got && got.speakers.length > 0 && (
+              <ul className="flex flex-col gap-1.5" aria-label="Intervenants">
+                {got.speakers.slice(0, 8).map((s) => (
+                  <li key={s} className="flex min-w-0 items-center gap-2 text-sm">
+                    <InitialsAvatar name={s} className="size-6 text-[10px]" />
+                    <span className="truncate">{s}</span>
+                  </li>
+                ))}
+                {got.speakers.length > 8 && <li className="pl-8 text-xs text-muted-foreground">et {got.speakers.length - 8} autres</li>}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {reportButton("default")}
+              <Button variant="outline" size="sm" className="rounded-full" onClick={() => onOpen(path)}>
+                <FileText className="size-4" /> Ouvrir
+              </Button>
+            </div>
+            <div className="-mt-1 -ml-2.5 flex flex-wrap">
+              <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground hover:text-foreground" onClick={() => onReveal(path)}>
+                <FolderSearch className="size-4" /> Afficher dans le dossier
+              </Button>
+              <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground hover:text-foreground" onClick={() => onCopy(path)}>
+                <Copy className="size-4" /> Copier le chemin
+              </Button>
+              <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground hover:text-foreground" onClick={onFetch} disabled={batching}>
+                <RefreshCw className="size-4" /> Récupérer à nouveau
+              </Button>
+            </div>
+          </>
+        ) : state === "available" ? (
+          <>
+            <p className="text-sm text-pretty text-muted-foreground">Disponible dans Teams, pas encore enregistrée sur ce poste.</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Button size="sm" className="rounded-full" onClick={onFetch} disabled={batching}>
+                <Download className="size-4" /> Récupérer la transcription
+              </Button>
+              {reportButton("outline")}
+            </div>
+          </>
+        ) : state === "run" || state === "queued" ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Loader2 className="size-4 animate-spin" /> {state === "run" ? "Lecture dans Teams…" : "En attente"}
+          </p>
+        ) : state === "error" || state === "denied" ? (
+          <>
+            <p role="alert" className="text-sm text-pretty text-destructive">{fetch?.state === "error" ? fetch.error : STATE_ICON[state].label}</p>
+            {state === "error" && (
+              <Button variant="outline" size="sm" className="self-start rounded-full" onClick={onFetch} disabled={batching}>
+                <RefreshCw className="size-4" /> Réessayer
+              </Button>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-pretty text-muted-foreground">Teams n'a pas de transcription pour cette réunion.</p>
+        )}
+      </div>
+    </aside>
   );
 }
 

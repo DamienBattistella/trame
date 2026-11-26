@@ -235,6 +235,17 @@ Check-list UI appliquée écran par écran ; choix assumés, avec leur raison :
 - **Listes d'éléments datés (Réunions)** : la plus récente d'abord, regroupée par période (Aujourd'hui, Hier, Cette semaine, La semaine dernière, Plus tôt ce mois-ci, puis le mois) ; dates courtes (« mar. 24 nov. · 11:00–11:45 · 45 min »), la date omise sous Aujourd'hui et Hier. L'état de chaque ligne se lit dans une pastille d'icône à gauche (disponible, en attente, lecture, enregistrée, incomplète, refusée) avec son libellé en infobulle ; l'action de ligne est un bouton discret qui paraît au survol ou au focus, et le seul bouton visible au repos est « Réessayer » d'une erreur. Une action groupée (« Récupérer les N nouvelles ») plutôt qu'un bouton plein par ligne. Une réunion récurrente porte un repère (icône + nombre) qui filtre ses occurrences. Un chemin long s'affiche abrégé (« Documents › Trame › Transcriptions »), le chemin complet dans une bulle qui permet de l'ouvrir, le copier ou le changer.
 - **Textes** : pas de tiret cadratin, d'emoji, de flèche, de majuscules d'emphase ni de synonymes en alternance (« résumé » partout, jamais « brief » à l'écran).
 
+## Largeurs et points de rupture (2026-11-26)
+
+Trame tourne aussi bien en panneau étroit à côté de Teams qu'en fenêtre plein écran sur un poste de bureau. Règle : pas de colonne étroite artificielle, mais une largeur de lecture pour le texte long.
+
+- **Points de rupture** : étroit sous 1280 px (une colonne), moyen à partir de 1280 px (`xl`), large à partir de 1600 px (`3xl`, défini dans `index.css`). Sous 1024 px (`lg`), l'en-tête se resserre jusqu'à la largeur minimale de la fenêtre (720 px) : le logo sans le mot « Trame », les pastilles d'état (« En direct », statut Teams, pause) sans leur libellé, gardé en infobulle ou pour les lecteurs d'écran. Rien ne déborde ni ne défile en largeur.
+- **Coquille** : Réunions, Journal et Réglages prennent toute la largeur jusqu'à 1600 px (`max-w-[100rem]`), centrés au-delà, avec une marge de 16 à 32 px selon la largeur. Discussions occupe toute la fenêtre (liste à gauche, 288 px, 320 px en large).
+- **Texte long** : paragraphes plafonnés autour de 70 à 80 caractères (`max-w-xl` pour une introduction, `max-w-3xl` pour le fil d'une conversation et les volets de réglages faits de textes et d'options).
+- **Listes et tableaux** : toute la largeur disponible (Journal, Conversations suivies, Entourage, Santé), et toute la hauteur de la fenêtre pour les listes qui défilent, au lieu d'une hauteur fixe.
+- **Réunions en fenêtre moyenne ou large** : liste à gauche, détail de la réunion choisie à droite (384 px, 448 px en large), collé en haut pendant le défilement. Le détail montre le titre entier, la date longue, l'horaire, la durée, l'organisation, la série, et pour la transcription le fichier, les prises de parole, les intervenants et les actions à découvert : Compte-rendu en action principale, Ouvrir, puis en retrait Afficher dans le dossier, Copier le chemin, Récupérer à nouveau. Sans choix, la réunion la plus récente de la liste affichée. En fenêtre étroite, pas de détail : la ligne garde ses actions au survol.
+- **Rien de tronqué qui tiendrait** : le compteur de la barre de Réunions passe à la ligne plutôt que d'être coupé par des points de suspension.
+
 ## Teams intégré (expérimental, 2026-11-26)
 
 Option dans Réglages › Avancé, désactivée par défaut. Le pilotage de l'appli Teams par l'accessibilité (UIA) reste le mode normal.

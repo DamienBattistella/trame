@@ -155,20 +155,20 @@ export default function App() {
         <header
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-          className="relative flex h-12 select-none items-center gap-3 border-b bg-sidebar pl-4"
+          className="relative flex h-12 select-none items-center gap-2 border-b bg-sidebar pl-4 lg:gap-3"
         >
           <Logo size={30} />
-          <span className="text-sm font-semibold">Trame</span>
+          <span className="sr-only text-sm font-semibold lg:not-sr-only">Trame</span>
 
           {configured && !booting && !engineDown && (
             <div className="ml-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
               <TabsList aria-label="Sections" className="h-8 rounded-full">
-                <TabsTrigger value="inbox" className="rounded-full px-3 text-xs">
+                <TabsTrigger value="inbox" className="rounded-full px-2.5 text-xs lg:px-3">
                   Discussions <CountBadge n={trame.state.drafts.length} />
                 </TabsTrigger>
-                <TabsTrigger value="meetings" className="rounded-full px-3 text-xs">Réunions</TabsTrigger>
-                <TabsTrigger value="logs" className="rounded-full px-3 text-xs">Journal</TabsTrigger>
-                <TabsTrigger value="settings" className="rounded-full px-3 text-xs">Réglages</TabsTrigger>
+                <TabsTrigger value="meetings" className="rounded-full px-2.5 text-xs lg:px-3">Réunions</TabsTrigger>
+                <TabsTrigger value="logs" className="rounded-full px-2.5 text-xs lg:px-3">Journal</TabsTrigger>
+                <TabsTrigger value="settings" className="rounded-full px-2.5 text-xs lg:px-3">Réglages</TabsTrigger>
               </TabsList>
             </div>
           )}
@@ -198,7 +198,7 @@ export default function App() {
                     {paused ? <Pause className="size-3.5 text-warning" /> : <Play className="size-3.5 text-success" />}
                   </motion.span>
                 </AnimatePresence>
-                <span className="w-14 text-xs">{paused ? "En pause" : "Actif"}</span>
+                <span className="sr-only text-xs lg:not-sr-only lg:w-14">{paused ? "En pause" : "Actif"}</span>
                 <Switch aria-label="Mettre Trame en pause" checked={paused} onCheckedChange={togglePause} />
               </div>
             )}
@@ -284,7 +284,7 @@ function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolea
             </AnimatePresence>
             <span className={cn("relative size-2 rounded-full transition-colors duration-300", connected ? "bg-success" : "bg-muted-foreground/50")} />
           </span>
-          <span className="hidden sm:inline">{connected ? "En direct" : demo ? "Données d'exemple" : "Hors ligne"}</span>
+          <span className="sr-only whitespace-nowrap lg:not-sr-only">{connected ? "En direct" : demo ? "Données d'exemple" : "Hors ligne"}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent>
