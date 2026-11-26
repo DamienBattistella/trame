@@ -26,12 +26,12 @@ function demoUpdate(): UpdateInfo | null {
 }
 
 /**
- * En-tête, à droite : icône de téléchargement avec une pastille LED, affichée seulement
+ * Bas du rail (en-tête pendant le wizard) : icône de téléchargement avec une pastille LED, affichée seulement
  * quand une nouvelle version est publiée (vérifiée toutes les 15 minutes par l'application
  * de bureau) : l'en-tête reste calme le reste du temps. Un clic montre ce qui a changé et
  * propose de l'installer ; pendant l'installation, l'icône tourne et la pastille ne pulse plus.
  */
-export function UpdateLed() {
+export function UpdateLed({ side }: { side?: "right" | "bottom" } = {}) {
   const update = useSyncExternalStore(subscribeAvailableUpdate, getAvailableUpdate);
   const [current, setCurrent] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -69,7 +69,7 @@ export function UpdateLed() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="relative"
+                  className="relative size-10 rounded-xl"
                   aria-label={installing ? `Installation de Trame ${update.version} en cours` : `Mise à jour ${update.version} disponible — installer`}
                   aria-busy={installing || undefined}
                   onClick={() => setOpen(true)}
@@ -82,7 +82,7 @@ export function UpdateLed() {
                   </span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>
+              <TooltipContent side={side}>
                 {installing ? `Installation de Trame ${update.version}…` : `Mise à jour ${update.version} disponible — installer`}
               </TooltipContent>
             </Tooltip>

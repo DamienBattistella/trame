@@ -21,7 +21,7 @@ export function ShortcutsHelp() {
       <DialogContent className="max-h-[min(40rem,calc(100dvh-4rem))] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Raccourcis clavier</DialogTitle>
-          <DialogDescription>Hors d'un champ de saisie, sauf Ctrl+K, Échap et cette aide qui marchent partout.</DialogDescription>
+          <DialogDescription>Hors d'un champ de saisie, sauf les sections (Ctrl+1 à 3, Ctrl+,), Ctrl+K, Échap et cette aide, qui marchent partout.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5">
           {SHORTCUTS.map((g) => (

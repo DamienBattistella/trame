@@ -1,10 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { Check, Moon, Sun, Settings2, Pause, Play, Minus, Square, X, WifiOff, Loader2, FlaskConical } from "lucide-react";
+import { Check, Minus, Square, X, WifiOff, Loader2, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CountBadge } from "@/components/kit";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
@@ -12,9 +9,9 @@ import { useTrame } from "@/api";
 import { TeamsWebRelay } from "@/components/TeamsWebRelay";
 import { WhatsNew } from "@/components/Changelog";
 import { UpdateLed } from "@/components/UpdateLed";
-import { OwnStatus } from "@/components/OwnStatus";
+import { AppRail, ThemeButton } from "@/components/AppRail";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
-import { isSwitcherKey, requestSwitcher } from "@/lib/shortcuts";
+import { isSwitcherKey, overlayOpen, requestSwitcher, sectionFromKey } from "@/lib/shortcuts";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
@@ -122,6 +119,13 @@ export default function App() {
   // Ctrl+K depuis Journal ou Réglages : retour aux Discussions, où la palette s'ouvre
   // (dans l'onglet Discussions, c'est la liste elle-même qui l'écoute).
   const switchToInbox = useRef<() => boolean>(() => false);
+  // Ctrl+1, 2, 3 et Ctrl+, : les sections du rail, une fois le panneau affiché.
+  const goToSection = useRef<(t: PanelTab) => boolean>(() => false);
+  goToSection.current = (t) => {
+    if (!configured || overlayOpen()) return false;
+    setPanelTab(t);
+    return true;
+  };
   switchToInbox.current = () => {
     if (!configured || panelTab === "inbox") return false;
     requestSwitcher();
@@ -136,105 +140,73 @@ export default function App() {
         setDark((v) => !v);
       } else if (isSwitcherKey(e) && !e.defaultPrevented && switchToInbox.current()) {
         e.preventDefault();
+      } else {
+        const section = e.defaultPrevented ? null : sectionFromKey(e);
+        if (section && goToSection.current(section)) e.preventDefault();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const railShown = configured && !booting && !engineDown;
   const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
   return (
     <MotionConfig reducedMotion="user">
     <TooltipProvider delayDuration={300}>
-      <Tabs
-        value={panelTab}
-        onValueChange={(v) => setPanelTab(v as PanelTab)}
-        className="flex h-screen flex-col gap-0 overflow-hidden rounded-xl border bg-background text-foreground"
-      >
+      <div className="flex h-screen flex-col gap-0 overflow-hidden rounded-xl border bg-background text-foreground">
+        {/* Barre de titre : la marque, un problème de connexion s'il y en a un, les boutons de la fenêtre.
+            Tout le reste vit dans le rail, à gauche ; tant qu'il n'est pas là (wizard), mise à jour et thème restent ici. */}
         <header
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-          className="relative flex h-12 select-none items-center gap-2 border-b bg-sidebar pl-4 lg:gap-3"
+          className="relative flex h-12 shrink-0 select-none items-center gap-2 border-b bg-sidebar pr-0"
         >
-          <Logo size={30} />
-          <span className="sr-only text-sm font-semibold lg:not-sr-only">Trame</span>
-
-          {configured && !booting && !engineDown && (
-            <div className="ml-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-              <TabsList aria-label="Sections" className="h-8 rounded-full">
-                <TabsTrigger value="inbox" className="rounded-full px-2.5 text-xs lg:px-3">
-                  Discussions <CountBadge n={trame.state.drafts.length} />
-                </TabsTrigger>
-                <TabsTrigger value="meetings" className="rounded-full px-2.5 text-xs lg:px-3">Réunions</TabsTrigger>
-                <TabsTrigger value="logs" className="rounded-full px-2.5 text-xs lg:px-3">Journal</TabsTrigger>
-                <TabsTrigger value="settings" className="rounded-full px-2.5 text-xs lg:px-3">Réglages</TabsTrigger>
-              </TabsList>
-            </div>
-          )}
+          <span className="grid w-14 shrink-0 place-items-center lg:w-[4.5rem]">
+            <Logo size={30} />
+          </span>
+          <span className="-ml-1 text-sm font-semibold lg:-ml-2">Trame</span>
 
           <div className="flex-1" />
 
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
-            <UpdateLed />
             <ConnectionBadge connected={trame.connected} demo={trame.demoMode} lost={trame.everConnected} />
-            {configured && !engineDown && trame.state.capabilities.ownStatus && <OwnStatus trame={trame} />}
-
-            {configured && (
-              <div
-                className={cn(
-                  "flex items-center gap-2 rounded-full px-2.5 py-1 transition-colors duration-300",
-                  paused ? "bg-warning/15" : "bg-secondary"
-                )}
-              >
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.span
-                    key={paused ? "p" : "a"}
-                    initial={{ scale: 0, rotate: -90 }}
-                    animate={{ scale: 1, rotate: 0 }}
-                    exit={{ scale: 0, rotate: 90 }}
-                    transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                  >
-                    {paused ? <Pause className="size-3.5 text-warning" /> : <Play className="size-3.5 text-success" />}
-                  </motion.span>
-                </AnimatePresence>
-                <span className="sr-only text-xs lg:not-sr-only lg:w-14">{paused ? "En pause" : "Actif"}</span>
-                <Switch aria-label="Mettre Trame en pause" checked={paused} onCheckedChange={togglePause} />
-              </div>
+            {!railShown && (
+              <>
+                <UpdateLed />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ThemeButton dark={dark} onToggle={() => setDark((v) => !v)} className="size-9 rounded-full" />
+                  </TooltipTrigger>
+                  <TooltipContent>Thème clair ou sombre (Alt + D)</TooltipContent>
+                </Tooltip>
+              </>
             )}
-
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label={dark ? "Thème clair" : "Thème sombre"} onClick={() => setDark(!dark)}>
-                  <AnimatePresence mode="popLayout" initial={false}>
-                    <motion.span
-                      key={dark ? "sun" : "moon"}
-                      initial={{ rotate: -90, scale: 0 }}
-                      animate={{ rotate: 0, scale: 1 }}
-                      exit={{ rotate: 90, scale: 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                    >
-                      {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-                    </motion.span>
-                  </AnimatePresence>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Thème clair ou sombre (Alt + D)</TooltipContent>
-            </Tooltip>
           </div>
 
           <WindowControls />
         </header>
 
-        <main className="relative flex-1 overflow-hidden">
+        <main className="relative min-h-0 flex-1 overflow-hidden">
           <AnimatePresence mode="wait">
             {booting ? (
               <Splash key="splash" connected={trame.connected} />
             ) : engineDown ? (
               <EngineDown key="down" />
             ) : (
-              <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
+              <motion.div key="app" className="flex h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
+                {railShown && (
+                  <AppRail
+                    trame={trame}
+                    tab={panelTab}
+                    onTab={setPanelTab}
+                    dark={dark}
+                    onToggleDark={() => setDark((v) => !v)}
+                    onTogglePause={togglePause}
+                  />
+                )}
+                <div className="h-full min-w-0 flex-1">
                 <Suspense fallback={null}>
                   {configured ? (
                     <Panel
@@ -249,11 +221,12 @@ export default function App() {
                     />
                   ) : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
                 </Suspense>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
         </main>
-      </Tabs>
+      </div>
       <TeamsWebRelay />
       <WhatsNew />
       <Toaster richColors position="bottom-right" />
