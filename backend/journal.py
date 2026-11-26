@@ -22,7 +22,7 @@ LEVELS = ("info", "warn", "sent", "draft")
 
 class Journal:
     def __init__(self, path: Path, max_entries: int = 5000):
-        self.path = Path(path)
+        self.path = path  # already a Path: no Path() here, tests fake os.name
         self.max_entries = max_entries
         self._lock = threading.Lock()
         self._lines_on_disk = 0
