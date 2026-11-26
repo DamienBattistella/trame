@@ -24,6 +24,16 @@ def _post(client, content, filename="entourage.json"):
     return client.post("/api/people", json={"filename": filename, "content": content})
 
 
+def test_list_gives_each_person_without_email(make_client, fresh_home):
+    client, _w, _d = make_client()
+    assert client.get("/api/people/list").json() == {"ok": True, "people": []}
+    _post(client, json.dumps(ENTOURAGE))
+    people = client.get("/api/people/list").json()["people"]
+    assert [p["name"] for p in people] == ["Lucas Bernard", "Sofia Marino"]
+    assert people[1] == {"name": "Sofia Marino", "aliases": ["S. Marino"], "role": "Cheffe de projet", "team": "Interop",
+                         "relation": "N+1", "tone": "vouvoiement", "note": None}
+
+
 def test_matching_ignores_order_case_accents_and_email():
     d = Directory(Directory.parse(json.dumps(ENTOURAGE)))
     assert d.find("BERNARD Lucas").name == "Lucas Bernard"

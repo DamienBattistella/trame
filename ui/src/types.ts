@@ -100,6 +100,17 @@ export interface ThreadMessage {
   mine: boolean;
 }
 
+/** Une personne de l'entourage, telle que Trame la décrit au cerveau. */
+export interface Person {
+  name: string;
+  aliases: string[];
+  role: string | null;
+  team: string | null;
+  relation: string | null;
+  tone: string | null;
+  note: string | null;
+}
+
 export interface PeopleSummary {
   loaded: boolean;
   count: number;

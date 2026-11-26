@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { GroupList, shake } from "@/components/kit";
 import { Trame } from "@/api";
 import { cn } from "@/lib/utils";
-import { PeopleSummary } from "@/types";
+import { EntourageDirectory } from "@/components/EntourageDirectory";
+import { PeopleSummary, Person } from "@/types";
 
 const dateFr = (iso: string | null) => {
   if (!iso) return null;
@@ -17,13 +18,18 @@ const dateFr = (iso: string | null) => {
 /** Réglages › Entourage : qui est qui au travail (ENTOURAGE.json exporté d'Orbite). */
 export function EntourageSection({ trame }: { trame: Trame }) {
   const [people, setPeople] = useState<PeopleSummary | null>(null);
+  const [list, setList] = useState<Person[]>([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const controls = useAnimationControls();
 
+  // Un moteur plus ancien ne connaît pas la liste : l'annuaire reste simplement absent.
+  const loadList = () => trame.listPeople().then((res) => setList(res.ok ? res.list : []));
+
   useEffect(() => {
     trame.getPeople().then((res) => res.ok && setPeople(res.people));
+    loadList();
   }, [trame.connected]);
 
   const fail = (title: string, error: string) => {
@@ -39,6 +45,7 @@ export function EntourageSection({ trame }: { trame: Trame }) {
     if (input.current) input.current.value = "";
     if (!res.ok) return fail("Entourage non importé", `${res.error} L'entourage précédent est conservé.`);
     setPeople(res.people);
+    loadList();
     toast.success(`${res.people.count} personne${res.people.count > 1 ? "s" : ""} dans ton entourage`);
   };
 
@@ -48,6 +55,7 @@ export function EntourageSection({ trame }: { trame: Trame }) {
     setBusy(false);
     if (!res.ok) return fail("Entourage non retiré", res.error);
     setPeople({ loaded: false, count: 0, source: null, generatedAt: null });
+    setList([]);
   };
 
   const when = dateFr(people?.generatedAt ?? null);
@@ -111,6 +119,7 @@ export function EntourageSection({ trame }: { trame: Trame }) {
           pour répondre juste à chacun ; rien d'autre n'en sort.
         </div>
       </GroupList>
+      {people?.loaded && list.length > 0 && <EntourageDirectory people={list} />}
     </motion.div>
   );
 }
