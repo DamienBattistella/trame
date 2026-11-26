@@ -41,6 +41,7 @@ const GROUPS: { title: string; send?: boolean; tools: [string, string][] }[] = [
       ["get_status · get_settings", "état de Trame et de Teams, réglages (sans jeton)"],
       ["get_logs · get_telemetry", "journal, export complet, traces OpenTelemetry"],
       ["diagnose_teams", "structure de la page Teams, sans texte de message"],
+      ["list_skills", "skills chargés, actifs ou non, sans leur texte"],
     ],
   },
   {

@@ -5,8 +5,9 @@ import re
 import time
 
 import reflection
+import skills as skillsmod
 
-from brain.base import Brain
+from brain.base import Brain, build_prompt, clean_reply
 from brain.correct import mock_correct
 
 
@@ -17,6 +18,13 @@ class MockBrain(Brain):
     model = "simulé"
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
+        reg = skillsmod.registry()
+        if reg is not None and reg.active():
+            # Same path as the real brains: the skills are offered, a body read on demand.
+            return clean_reply(self.ask(build_prompt(soul, thread_summary, incoming, github_context, people_context)))
+        return self._draft(thread_summary, incoming, people_context)
+
+    def _draft(self, thread_summary: str, incoming: str, people_context: str = "") -> str:
         _think(
             f"Le dernier message dit : « {_short(incoming)} ». "
             + ("Le fil donne le contexte des échanges précédents, je m'appuie dessus. " if thread_summary else "")
@@ -42,6 +50,8 @@ class MockBrain(Brain):
         return mock_correct(text)
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
+        if prompt.startswith(skillsmod.PROTOCOL):
+            return self._skill_turn(prompt)
         from brain.status_note import MARKER
         if MARKER in prompt:
             # Démo : un message différent selon l'angle demandé.
@@ -104,6 +114,27 @@ class MockBrain(Brain):
             "search_queries": list(dict.fromkeys(queries))[:5],
         }
         return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
+
+
+    def _skill_turn(self, prompt: str) -> str:
+        """Offline: a skill whose name words (4 letters or more) appear in the message is
+        asked for once; then the task is done as without skills."""
+        task = skillsmod.task_of(prompt)
+        if "Dernier message reçu :\n" not in task:
+            return self.complete(task)
+        incoming = task.rsplit("Dernier message reçu :\n", 1)[1].rsplit("\n\nRéponse :", 1)[0]
+        head = prompt.split(skillsmod.TASK_MARK, 1)[0]
+        loaded = re.findall(r"--- Début du skill « ([a-z0-9-]+) »", head)
+        if not loaded and "[[skill:nom]]" in head:
+            from safety import _plain
+            low = _plain(incoming)
+            for name in re.findall(r"^- ([a-z0-9][a-z0-9-]*) : ", head, re.MULTILINE):
+                if any(len(w) >= 4 and w in low for w in name.split("-")):
+                    _think(f"Le message parle de {name.replace('-', ' ')} : je lis le skill « {name} » avant de répondre.")
+                    return f"[[skill:{name}]]"
+        if loaded:
+            _think(f"Le skill « {loaded[0]} » donne la méthode : je l'applique sans changer la tâche.")
+        return self._draft("", incoming)
 
 
 def _short(text: str, n: int = 70) -> str:

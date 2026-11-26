@@ -143,6 +143,19 @@ class TextBody(BaseModel):
     mentions: list[str] = Field(default_factory=list, max_length=10)
 
 
+class SkillToggleBody(BaseModel):
+    enabled: bool
+
+
+class SkillDirsBody(BaseModel):
+    dirs: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SkillRepoBody(BaseModel):
+    url: str = Field(max_length=300)
+    branch: str = Field(default="", max_length=100)
+
+
 class FollowUpSendBody(BaseModel):
     text: Optional[str] = Field(default=None, max_length=8000)
 
@@ -529,6 +542,30 @@ def create_app(
     def correct_text(body: CorrectBody):
         text = watcher.correct_text(body.text, body.thread_id)
         return {"ok": True, "text": text, "changed": text != body.text.strip()}
+
+    @app.get("/api/skills")
+    def get_skills():
+        return {"ok": True, **watcher.skills_summary()}
+
+    @app.post("/api/skills/reload")
+    def reload_skills():
+        return {"ok": True, **watcher.reload_skills()}
+
+    @app.put("/api/skills/dirs")
+    def put_skill_dirs(body: SkillDirsBody):
+        return {"ok": True, **watcher.set_skill_dirs(body.dirs)}
+
+    @app.post("/api/skills/repos")
+    def sync_skill_repo(body: SkillRepoBody):
+        return {"ok": True, **watcher.sync_skill_repo(body.url, body.branch)}
+
+    @app.post("/api/skills/repos/remove")
+    def remove_skill_repo(body: SkillRepoBody):
+        return {"ok": True, **watcher.remove_skill_repo(body.url, body.branch)}
+
+    @app.post("/api/skills/{name}")
+    def toggle_skill(name: str, body: SkillToggleBody):
+        return {"ok": True, **watcher.set_skill_enabled(name, body.enabled)}
 
     @app.get("/api/reflections")
     def get_reflections():

@@ -54,6 +54,8 @@ class Run:
     result: str = ""
     duration_ms: Optional[int] = None
     reasoning: bool = False
+    # Skills whose text was given to the model during this run.
+    skills: list[str] = field(default_factory=list)
     rev: int = 0
     _t0: float = field(default_factory=time.monotonic, repr=False)
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -68,7 +70,7 @@ class Run:
             "id": self.id, "action": self.action, "title": self.title, "threadId": self.thread_id,
             "conversation": self.conversation, "provider": self.provider, "model": self.model,
             "startedAt": self.started_at, "status": self.status, "result": self.result,
-            "durationMs": self.duration_ms, "reasoning": self.reasoning, "rev": self.rev,
+            "durationMs": self.duration_ms, "reasoning": self.reasoning, "skills": list(self.skills), "rev": self.rev,
             "steps": [{"atMs": s.at_ms, "kind": s.kind, "text": s.text} for s in self.steps],
         }
 
@@ -210,6 +212,16 @@ def thinking(chunk: str) -> None:
     run = _current.get()
     if run is not None and chunk:
         run._registry._append(run, "thinking", chunk)
+
+
+def skill_loaded(name: str, rel: str = "") -> None:
+    """A skill's text (or one of its reference files) given to the model."""
+    run = _current.get()
+    if run is not None:
+        with run._registry._lock:
+            if name not in run.skills:
+                run.skills.append(name)
+        run._registry._append(run, "step", f"Skill chargé : {name}" + (f" ({rel})" if rel else ""))
 
 
 def result(text: str) -> None:
