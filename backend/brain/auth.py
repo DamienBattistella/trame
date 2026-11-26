@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 from pydantic import BaseModel
 
-from github.auth import _creationflags
+from winproc import _creationflags
 from watcher import ActionError
 
 STATUS_CMD = ["auth", "status", "--json"]
@@ -40,13 +40,13 @@ def parse_status(text: str) -> tuple[bool, Optional[str], Optional[str]]:
 
 
 def default_run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                           stdin=subprocess.DEVNULL, creationflags=_creationflags())
 
 
 def default_spawn(cmd: list[str]) -> subprocess.Popen:
     return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1, creationflags=_creationflags())
+                            text=True, encoding="utf-8", errors="replace", bufsize=1, creationflags=_creationflags())
 
 
 class ClaudeAuth:

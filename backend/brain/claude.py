@@ -1,6 +1,8 @@
 from __future__ import annotations
 import shutil
 import subprocess
+
+from winproc import _creationflags
 from brain.base import Brain, build_prompt
 from brain.isolation import sandbox_dir
 
@@ -31,7 +33,8 @@ class ClaudeBrain(Brain):
             input=prompt,
             capture_output=True,
             cwd=sandbox_dir(),
-            text=True,
+            creationflags=_creationflags(),
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout or self.timeout,
         )
         if proc.returncode != 0:

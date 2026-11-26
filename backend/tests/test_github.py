@@ -405,3 +405,9 @@ def test_login_outcome_reported_after_gh_exits():
         threading.Event().wait(0.02)
     st = auth.status()
     assert st.login_result == "failed" and "authorization denied" in st.login_error
+
+
+def test_status_parsed_even_when_check_mark_is_mis_decoded():
+    text = ("github.com\n  âœ“ Logged in to github.com account DamienBattistella (keyring)\n"
+            "  - Active account: true\n  - Token scopes: 'gist', 'read:org', 'repo'\n")
+    assert ghauth.parse_auth_status(text) == (True, "DamienBattistella", ["gist", "read:org", "repo"])

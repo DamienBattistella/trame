@@ -1,5 +1,7 @@
 from __future__ import annotations
 import subprocess
+
+from winproc import _creationflags
 from brain.base import Brain, build_prompt
 from brain.isolation import sandbox_dir
 
@@ -26,7 +28,8 @@ class CopilotBrain(Brain):
             capture_output=True,
             stdin=subprocess.DEVNULL,
             cwd=sandbox_dir(),
-            text=True,
+            creationflags=_creationflags(),
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout or self.timeout,
         )
         if proc.returncode != 0:

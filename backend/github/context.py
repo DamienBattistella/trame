@@ -7,6 +7,7 @@ import time
 from typing import Optional
 
 from models import GithubHit
+from winproc import _creationflags
 
 # Read-only GitHub context. Consulted only when a message looks repo/code related.
 # Never writes (no comment, issue or commit). Uses `gh` with the poste's tokens.
@@ -262,7 +263,8 @@ def _track_sso(args: list[str], ok: bool, stderr: str) -> None:
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                          stdin=subprocess.DEVNULL, creationflags=_creationflags())
 
 
 def _gh(args: list[str], timeout: float = 20) -> str:

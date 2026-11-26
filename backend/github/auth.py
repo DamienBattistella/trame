@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from pydantic import BaseModel, Field
 
 from github import context as ghctx
+from winproc import _creationflags
 from watcher import ActionError
 
 HOST = "github.com"
@@ -17,7 +18,7 @@ LOGIN_CMD = ["auth", "login", "--hostname", HOST, "--git-protocol", "https", "--
 STATUS_CMD = ["auth", "status", "--hostname", HOST]
 
 _ACCOUNT_RE = re.compile(
-    r"^\W*(?P<state>Logged in|Failed to log in|Timeout trying to log in) to (?P<host>\S+?)"
+    r"(?P<state>Logged in|Failed to log in|Timeout trying to log in) to (?P<host>\S+?)"
     r" (?:account|as) (?P<account>[^\s()]+)",
     re.IGNORECASE,
 )
@@ -53,7 +54,7 @@ def parse_auth_status(text: str, host: str = HOST) -> tuple[bool, Optional[str],
     blocks: list[dict] = []
     current: Optional[dict] = None
     for line in (text or "").splitlines():
-        m = _ACCOUNT_RE.match(line.strip())
+        m = _ACCOUNT_RE.search(line.strip())
         if m:
             current = None
             if m.group("host").lower() == host.lower():
@@ -104,18 +105,16 @@ def _env() -> dict:
     return env
 
 
-def _creationflags() -> int:
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
 def default_run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=_env(),
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=_env(),
                           stdin=subprocess.DEVNULL, creationflags=_creationflags())
 
 
 def default_spawn(cmd: list[str]) -> subprocess.Popen:
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1, env=_env(), creationflags=_creationflags())
+                            text=True, encoding="utf-8", errors="replace", bufsize=1, env=_env(), creationflags=_creationflags())
 
 
 class GithubAuth:
