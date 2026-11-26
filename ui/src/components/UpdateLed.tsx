@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChangelogDialog, type Release } from "@/components/Changelog";
-import { appVersion, getAvailableUpdate, installUpdate, onDesktopEvent, setAvailableUpdate, subscribeAvailableUpdate, type UpdateInfo } from "@/desktop";
+import { appVersion, getAvailableUpdate, installUpdate, isDesktop, onDesktopEvent, setAvailableUpdate, subscribeAvailableUpdate, type UpdateInfo } from "@/desktop";
 
 /** Changelog publié dans latest.json ; null si les notes ne sont pas du JSON (anciennes versions). */
 function parseNotes(notes: string | null): Release[] | null {
@@ -18,10 +18,18 @@ function parseNotes(notes: string | null): Release[] | null {
   }
 }
 
+/** Mode démo navigateur : `?update` (ou `?update=0.9.0`) simule une mise à jour disponible. */
+function demoUpdate(): UpdateInfo | null {
+  if (isDesktop()) return null;
+  const v = new URLSearchParams(window.location.search).get("update");
+  return v === null ? null : { version: v || "0.99.0", notes: null };
+}
+
 /**
- * En-tête, à droite : LED allumée quand une nouvelle version est publiée (vérifiée
- * toutes les 15 minutes par l'application de bureau). Un clic montre ce qui a changé
- * et propose de l'installer.
+ * En-tête, à droite : icône de téléchargement avec une pastille LED, affichée seulement
+ * quand une nouvelle version est publiée (vérifiée toutes les 15 minutes par l'application
+ * de bureau) : l'en-tête reste calme le reste du temps. Un clic montre ce qui a changé et
+ * propose de l'installer ; pendant l'installation, l'icône tourne et la pastille ne pulse plus.
  */
 export function UpdateLed() {
   const update = useSyncExternalStore(subscribeAvailableUpdate, getAvailableUpdate);
@@ -31,6 +39,8 @@ export function UpdateLed() {
 
   useEffect(() => {
     appVersion().then(setCurrent);
+    const demo = demoUpdate();
+    if (demo) setAvailableUpdate(demo);
     return onDesktopEvent<UpdateInfo>("update-ready", (u) => setAvailableUpdate(u));
   }, []);
 
@@ -56,14 +66,25 @@ export function UpdateLed() {
           >
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label={`Trame ${update.version} est disponible`} onClick={() => setOpen(true)}>
-                  <span className="relative grid size-2.5 place-items-center">
-                    <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-60 motion-reduce:animate-none" />
-                    <span className="relative size-2.5 rounded-full bg-primary shadow-[0_0_6px_var(--color-primary)]" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative"
+                  aria-label={installing ? `Installation de Trame ${update.version} en cours` : `Mise à jour ${update.version} disponible — installer`}
+                  aria-busy={installing || undefined}
+                  onClick={() => setOpen(true)}
+                >
+                  {installing ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                  {/* Pastille LED en coin : pulse tant que la mise à jour attend, fixe pendant l'installation. */}
+                  <span aria-hidden className="pointer-events-none absolute top-1.5 right-1.5 grid size-2 place-items-center">
+                    {!installing && <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-60 motion-reduce:animate-none" />}
+                    <span className="relative size-2 rounded-full bg-primary shadow-[0_0_6px_var(--color-primary)] ring-2 ring-sidebar" />
                   </span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Trame {update.version} est disponible</TooltipContent>
+              <TooltipContent>
+                {installing ? `Installation de Trame ${update.version}…` : `Mise à jour ${update.version} disponible — installer`}
+              </TooltipContent>
             </Tooltip>
           </motion.div>
         )}
