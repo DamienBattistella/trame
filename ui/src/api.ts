@@ -13,8 +13,10 @@ import {
   Person,
   PersonSuggestion,
   LogItem,
+  MessageHit,
   Mode,
   Notice,
+  SearchScope,
   Settings,
   SettingsPatch,
   Surface,
@@ -22,6 +24,7 @@ import {
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
+import { DemoArchive } from "@/lib/textSearch";
 
 const HTTP = "http://127.0.0.1:8731";
 const WS = "ws://127.0.0.1:8731/ws";
@@ -153,6 +156,19 @@ function mapBrief(b: any): Brief {
     sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
+function mapHit(h: any): MessageHit {
+  return {
+    threadId: h.thread_id,
+    conversation: h.conversation,
+    sender: h.sender,
+    at: h.at,
+    mine: Boolean(h.mine),
+    text: h.text,
+    excerpt: h.excerpt,
+    match: [h.match[0], h.match[1]],
+  };
+}
+
 function mapPeople(p: any): PeopleSummary {
   return {
     loaded: Boolean(p?.loaded),
@@ -335,6 +351,9 @@ let localSettings: Settings = {
   teamsWeb: { enabled: false },
 };
 const localBriefs = new Map<string, Brief>();
+// Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
+const demoArchive = new DemoArchive();
+for (const d of mockDrafts) demoArchive.add(d.threadId, [{ sender: d.from, text: d.incoming, at: d.receivedAt, mine: false }]);
 
 // GitHub du mode démo : non connecté au départ, connecté ~6 s après le début de la connexion.
 const DEMO_GITHUB_ACCOUNT = "Wifsimster";
@@ -771,15 +790,13 @@ export function useTrame() {
       if (demoStarted.has(threadId)) return { ok: true, messages: [], top: true };
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
-      return {
-        ok: true,
-        messages: [
-          { sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false },
-          { sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true },
-          { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
-        ],
-        top: true,
-      };
+      const messages: ThreadMessage[] = [
+        { sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false },
+        { sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true },
+        { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
+      ];
+      demoArchive.add(threadId, messages);
+      return { ok: true, messages, top: true };
     }
     const query = new URLSearchParams({ last: String(last), ...(fresh ? { fresh: "true" } : {}) });
     const res = await request<{ messages: ThreadMessage[]; top?: boolean }>(
@@ -787,6 +804,18 @@ export function useTrame() {
       `/api/threads/${encodeURIComponent(threadId)}/messages?${query}`
     );
     return res.ok ? { ...res, top: Boolean(res.top) } : res;
+  };
+  /** Recherche dans les messages déjà lus par le moteur (rien n'est relu dans Teams). */
+  const searchMessages = async (q: string): Promise<Result<{ results: MessageHit[]; scope: SearchScope }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(150);
+      const names = new Map(stateRef.current.watchlist.map((w) => [w.threadId, w.displayName]));
+      return { ok: true, results: demoArchive.search(q, names), scope: demoArchive.scope() };
+    }
+    const res = await request<{ results: any[]; scope: SearchScope }>("GET", `/api/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return res;
+    return { ok: true, results: res.results.map(mapHit), scope: res.scope };
   };
   const sendInThread = async (threadId: string, text: string): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});
@@ -1020,6 +1049,7 @@ export function useTrame() {
     getSoulTemplate,
     factoryReset,
     threadMessages,
+    searchMessages,
     sendInThread,
     suggestInThread,
     showInTeams,
