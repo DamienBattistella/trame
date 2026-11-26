@@ -492,6 +492,21 @@ class Watcher:
         self.log("draft", f"Réponse proposée via MCP pour {entity.display_name}")
         return next(d for d in self.state.drafts if d.thread_id == thread_id)
 
+    def mark_read(self, thread_id: str) -> None:
+        """The user read the conversation in Trame: Teams shows it read too, for them and
+        for their colleagues' read receipts. The conversation is not opened."""
+        entity = self._conversation(thread_id)
+        with self._ui_lock:
+            try:
+                ok = self.driver.mark_read(thread_id)
+            except Exception as e:
+                ok, self.driver.last_error = False, str(e)
+        if not ok:
+            self.log("warn", f"Marquer comme lu impossible pour {entity.display_name} : {self.driver.last_error or 'refusé par Teams'}")
+            raise ActionError(409, f"« {entity.display_name} » n'a pas pu être marquée comme lue dans Teams.")
+        with self._lock:
+            entity.unread = False
+
     def show_in_teams(self, thread_id: str) -> None:
         """Open the conversation in Teams for the user (Trame types nothing)."""
         name = next((w.display_name for w in self.state.watchlist if w.thread_id == thread_id), thread_id)

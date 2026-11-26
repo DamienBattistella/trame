@@ -825,6 +825,11 @@ export function useTrame() {
     if (!connectedRef.current) return demo(1500, { text: "Oui, je la relis cet après-midi et je te fais un retour avant 17 h." });
     return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`);
   };
+  /** Marque la conversation comme lue dans Teams, sans l'ouvrir. */
+  const markRead = async (threadId: string): Promise<Result> => {
+    if (!connectedRef.current) return demo(200, {});
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/read`);
+  };
   const showInTeams = async (threadId: string): Promise<Result> => {
     if (!connectedRef.current) return demo(400, {});
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/show`);
@@ -1053,6 +1058,7 @@ export function useTrame() {
     sendInThread,
     suggestInThread,
     showInTeams,
+    markRead,
     diagnoseTeams,
     teamsWebStatus,
     exportLogs,

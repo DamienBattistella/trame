@@ -128,6 +128,7 @@ class MockTeamsDriver(TeamsDriver):
         self._active: Optional[str] = None
         self.typed: list[tuple[str, str, bool]] = []
         self.opened: list[str] = []
+        self.marked_read: list[str] = []
         # Teams resolves anyone in the organization: the entourage is part of it.
         self.allow_anyone = True
 
@@ -196,12 +197,22 @@ class MockTeamsDriver(TeamsDriver):
         print(f"[mock] {action} -> {thread_id}: {text[:80]}")
         return True
 
+    def mark_read(self, thread_id: str) -> bool:
+        if not any(c.thread_id == thread_id for c in self._convs):
+            self.last_error = "conversation absente de la liste"
+            return False
+        self.marked_read.append(thread_id)
+        for c in self._convs:
+            if c.thread_id == thread_id:
+                c.unread = False
+        return True
+
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
         wanted = set(thread_ids) if thread_ids is not None else None
         now = datetime.now().strftime("%H:%M")
         out: list[IncomingMessage] = []
         for c in self._convs:
-            if c.thread_id not in _UNREAD or (wanted is not None and c.thread_id not in wanted):
+            if c.thread_id not in _UNREAD or c.thread_id in self.marked_read or (wanted is not None and c.thread_id not in wanted):
                 continue
             sender, text, mentions = _UNREAD[c.thread_id]
             out.append(IncomingMessage(
