@@ -168,9 +168,12 @@ jobs:
           if (-not (Test-Path $sig)) { Write-Host "::warning::Pas de signature : latest.json non publié."; exit 0 }
           $v = $env:VERSION
           $name = $setup.Name -replace ' ', '.'
+          # Les notes portent tout le changelog (JSON) : l'appli installée affiche ce qui
+          # a changé depuis sa version avant de proposer l'installation (LED de l'en-tête).
+          $notes = Get-Content src/changelog.json -Raw
           $manifest = [ordered]@{
             version = $v
-            notes = "Trame $v"
+            notes = $notes
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = @{
               "windows-x86_64" = @{

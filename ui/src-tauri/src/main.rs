@@ -135,17 +135,40 @@ async fn restart_backend(app: AppHandle) {
     spawn_backend(&app);
 }
 
+/// How often the running app looks for a new release (the LED in the header).
+const UPDATE_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// A release the UI can offer: its version and the release notes of latest.json
+/// (the app changelog, as JSON, since the build publishes it there).
+#[derive(Clone, serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+}
+
+impl From<&tauri_plugin_updater::Update> for UpdateInfo {
+    fn from(update: &tauri_plugin_updater::Update) -> Self {
+        Self { version: update.version.clone(), notes: update.body.clone() }
+    }
+}
+
 /// Trame lives in the tray and is rarely relaunched: look for a new release every
-/// 6 hours too, and let the UI offer it (« Mettre à jour »).
+/// 15 minutes too, and let the UI light its LED (once per version).
 async fn watch_updates(app: AppHandle) {
     if cfg!(debug_assertions) {
         return;
     }
+    let mut announced: Option<String> = None;
     loop {
-        pause_for(std::time::Duration::from_secs(6 * 60 * 60)).await;
-        if let Ok(updater) = app.updater() {
-            if let Ok(Some(update)) = updater.check().await {
-                let _ = app.emit("update-ready", update.version.clone());
+        pause_for(UPDATE_CHECK_EVERY).await;
+        if UPDATING.load(Ordering::SeqCst) {
+            continue;
+        }
+        let Ok(updater) = app.updater() else { continue };
+        if let Ok(Some(update)) = updater.check().await {
+            if announced.as_deref() != Some(update.version.as_str()) {
+                announced = Some(update.version.clone());
+                let _ = app.emit("update-ready", UpdateInfo::from(&update));
             }
         }
     }
@@ -157,10 +180,10 @@ async fn pause_for(d: std::time::Duration) {
 
 /// Réglages › Mises à jour : « Rechercher ».
 #[tauri::command]
-async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
-        Ok(Some(update)) => Ok(Some(update.version.clone())),
+        Ok(Some(update)) => Ok(Some(UpdateInfo::from(&update))),
         Ok(None) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Gauge, Sparkles, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -7,7 +7,7 @@ import { appVersion } from "@/desktop";
 import changelog from "@/changelog.json";
 
 type Entry = { title: string; details: string[] };
-type Release = { version: string; date: string; feat: Entry[]; fix: Entry[]; perf: Entry[] };
+export type Release = { version: string; date: string; feat: Entry[]; fix: Entry[]; perf: Entry[] };
 
 const RELEASES = changelog as Release[];
 const SEEN_KEY = "trame.seenVersion";
@@ -31,8 +31,8 @@ const longDate = (iso: string) => {
 };
 
 /** Versions publiées, de la plus récente à la plus ancienne ; `since` exclu. */
-function releasesAfter(since?: string | null, upTo?: string | null) {
-  return RELEASES.filter((r) => (!since || newer(r.version, since)) && (!upTo || !newer(r.version, upTo)));
+export function releasesAfter(since?: string | null, upTo?: string | null, releases: Release[] = RELEASES) {
+  return releases.filter((r) => (!since || newer(r.version, since)) && (!upTo || !newer(r.version, upTo)));
 }
 
 function ReleaseBlock({ release }: { release: Release }) {
@@ -76,15 +76,23 @@ export function ChangelogDialog({
   onOpenChange,
   since,
   upTo,
+  releases,
   title = "Nouveautés",
+  emptyText = "Rien de nouveau à afficher.",
+  footer,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   since?: string | null;
   upTo?: string | null;
+  /** Autre changelog que celui embarqué (celui d'une version pas encore installée). */
+  releases?: Release[];
   title?: string;
+  emptyText?: string;
+  /** Remplace le bouton « Continuer ». */
+  footer?: ReactNode;
 }) {
-  const list = useMemo(() => releasesAfter(since, upTo), [since, upTo]);
+  const list = useMemo(() => releasesAfter(since, upTo, releases), [since, upTo, releases]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(44rem,calc(100dvh-4rem))] flex-col gap-0 p-0 sm:max-w-xl">
@@ -97,14 +105,16 @@ export function ChangelogDialog({
         <ScrollArea className="min-h-0 flex-1 border-y">
           <div className="flex flex-col gap-8 px-6 py-5">
             {list.length ? list.map((r) => <ReleaseBlock key={r.version} release={r} />) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">Rien de nouveau à afficher.</p>
+              <p className="py-8 text-center text-sm text-muted-foreground">{emptyText}</p>
             )}
           </div>
         </ScrollArea>
         <DialogFooter className="px-6 py-4">
-          <Button className="rounded-full px-6" onClick={() => onOpenChange(false)}>
-            Continuer
-          </Button>
+          {footer ?? (
+            <Button className="rounded-full px-6" onClick={() => onOpenChange(false)}>
+              Continuer
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
