@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+import presence as presencemod
 from models import Surface
 
 # Teams v2 exposes each chat-list item as one accessibility label, e.g.
@@ -46,6 +47,10 @@ _TIME_RE = re.compile(r"\s(\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterd
 #   "Hugo Lannes 25/11"
 _WEB_RE = re.compile(r"^(?P<name>.+?)\s+(?P<time>\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterday|[Hh]ier)(?:\s+(?P<preview>.+))?$")
 _WEB_UNREAD_RE = re.compile(r"^(?:Non lus?|Unread)\s+(?=\S)")
+# Presence sits between the name and the preview of a UIA label; the preview itself may
+# contain the same words ("je suis disponible"), so it is cut off before searching.
+_PRESENCE_RE = re.compile(r"(?:^|\s)(" + "|".join(re.escape(w) for w in presencemod.WORDS) + r")(?=\s|$)", re.IGNORECASE)
+_PREVIEW_START_RE = re.compile(r"\s(?:Last message|Dernier message|You:|Vous ?:)")
 _SELF_SENDERS = {"you", "vous", "moi"}
 _SELF_RE = re.compile(r"\s*\((?:You|Vous|Moi)\)\s*$")
 
@@ -59,6 +64,7 @@ class RailLabel:
     preview_sender: Optional[str]
     preview: Optional[str]
     last_time: Optional[str] = None
+    presence: Optional[str] = None
 
 
 def parse(label: str) -> RailLabel:
@@ -107,8 +113,13 @@ def parse(label: str) -> RailLabel:
     last_time = None
     if t:
         last_time = {"yesterday": "Hier", "hier": "Hier"}.get(t.group(1).lower(), t.group(1))
+    presence = None
+    if not web and surface == Surface.dm and not is_self:
+        cut = _PREVIEW_START_RE.search(rest)
+        found = _PRESENCE_RE.search(rest[: cut.start()] if cut else rest)
+        presence = presencemod.from_label(found.group(1)) if found else None
     return RailLabel(name=name, surface=surface, unread=bool(lead or _UNREAD_RE.search(rest)), is_self=is_self, last_time=last_time,
-                     preview_sender=preview_sender, preview=preview or None)
+                     preview_sender=preview_sender, preview=preview or None, presence=presence)
 
 
 # Rail entries that are navigation, not conversations (Teams v2 chat list headers and

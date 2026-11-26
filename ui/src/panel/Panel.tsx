@@ -173,7 +173,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
               title="Ouvrir la conversation"
               className="-my-1 -ml-1 flex min-w-0 flex-1 items-center gap-3 rounded-xl py-1 pl-1 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/60"
             >
-              <InitialsAvatar name={c.displayName} className="size-8" />
+              <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
                 {c.namedPeople.length > 0 && (

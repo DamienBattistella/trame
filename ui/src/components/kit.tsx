@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Timer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import type { Presence } from "@/types";
 
 export const spring = { type: "spring", stiffness: 500, damping: 32 } as const;
 export const pop = { type: "spring", stiffness: 520, damping: 17 } as const;
@@ -28,9 +30,57 @@ export function avatarHue(name: string): number {
   return AVATAR_HUES[h % AVATAR_HUES.length];
 }
 
-/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom. */
-/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom. */
-export function InitialsAvatar({ name, className }: { name: string; className?: string }) {
+/** Libellé et pastille de chaque statut Teams, couleurs façon Teams. */
+export const PRESENCE: Record<Presence, { label: string; dot: string }> = {
+  available: { label: "Disponible", dot: "bg-success" },
+  busy: { label: "Occupé", dot: "bg-destructive" },
+  in_call: { label: "En appel", dot: "bg-destructive" },
+  in_meeting: { label: "En réunion", dot: "bg-destructive" },
+  presenting: { label: "En présentation", dot: "bg-destructive" },
+  dnd: { label: "Ne pas déranger", dot: "bg-destructive" },
+  brb: { label: "De retour bientôt", dot: "bg-warning" },
+  away: { label: "Absent", dot: "bg-warning" },
+  ooo: { label: "Absent du bureau", dot: "bg-[oklch(0.55_0.2_310)]" },
+  offline: { label: "Hors ligne", dot: "border-2 border-muted-foreground/70 bg-background" },
+};
+
+/** Pastille de présence posée sur le coin d'un avatar. */
+export function PresenceBadge({ presence, className }: { presence: Presence; className?: string }) {
+  const p = PRESENCE[presence];
+  if (!p) return null;
+  return (
+    <span
+      role="img"
+      aria-label={p.label}
+      data-presence={presence}
+      className={cn("grid size-3 place-items-center rounded-full ring-2 ring-background", p.dot, className)}
+    >
+      {presence === "dnd" && <span className="h-0.5 w-1.5 rounded-full bg-white" />}
+    </span>
+  );
+}
+
+/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom.
+ *  Avec une présence connue, la pastille Teams en bas à droite et son libellé au survol. */
+export function InitialsAvatar({ name, className, presence }: { name: string; className?: string; presence?: Presence | null }) {
+  const avatar = <PlainAvatar name={name} className={className} />;
+  if (!presence || !PRESENCE[presence]) return avatar;
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="relative inline-flex shrink-0">
+            {avatar}
+            <PresenceBadge presence={presence} className="absolute -bottom-0.5 -right-0.5" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{PRESENCE[presence].label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function PlainAvatar({ name, className }: { name: string; className?: string }) {
   return (
     <Avatar className={cn("size-9 shrink-0", className)} aria-hidden>
       <AvatarFallback

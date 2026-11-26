@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable, Optional
 
+import presence as presencemod
 from drivers import rail_label
 from drivers.base import SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
@@ -115,6 +116,11 @@ class WebBridgeDriver(TeamsDriver):
             # The web label carries no kind: group and meeting chats are told by their id.
             if label.surface == Surface.dm and "@thread." in thread_id:
                 label.surface = Surface.group
+            # The web label is the visible text: presence is only on the avatar badge,
+            # which the page reads apart (labels near the avatar, filtered here).
+            if label.surface == Surface.dm and not label.is_self:
+                label.presence = presencemod.first_of(it.get("presence")) or label.presence
+                self._note_presence(thread_id, label.presence)
             out.append({**it, "thread_id": thread_id, "parsed": label})
             self._names[thread_id] = label.name
             self._kinds[thread_id] = label.surface
@@ -133,7 +139,7 @@ class WebBridgeDriver(TeamsDriver):
             own = label.preview if label.preview_sender == "You" else None
             out.append(WatchEntity(thread_id=it["thread_id"], display_name=label.name, surface=label.surface,
                                    rank=rank, last_activity=label.last_time, unread=label.unread,
-                                   is_self=label.is_self, own_preview=own))
+                                   is_self=label.is_self, own_preview=own, presence=label.presence))
         return out
 
     def is_screen_sharing(self) -> bool:

@@ -344,7 +344,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               onClick={() => toggleWatch(c.threadId)}
               className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
             >
-              <InitialsAvatar name={c.displayName} className="size-8" />
+              <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
               <span className={cn("flex-1 truncate text-left transition-colors", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
               <ConversationMeta c={c} />
               <SelectCircle checked={c.watch} />
@@ -377,7 +377,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             }
             renderRow={(c) => (
               <div className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors duration-300", c.mode === "auto" && "bg-warning/[0.05]")}>
-                <InitialsAvatar name={c.displayName} className="size-8" />
+                <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
                 <div className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="truncate">{c.displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>

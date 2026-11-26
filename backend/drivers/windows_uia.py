@@ -141,9 +141,10 @@ class WindowsUIADriver(TeamsDriver):
             thread_id = self._thread_id_of(item)
             self._names[thread_id] = label.name
             own = label.preview if label.preview_sender == "You" else None
+            self._note_presence(thread_id, label.presence)
             out.append(WatchEntity(thread_id=thread_id, display_name=label.name, surface=label.surface,
                                    rank=rank, last_activity=label.last_time, unread=label.unread,
-                                   is_self=label.is_self, own_preview=own))
+                                   is_self=label.is_self, own_preview=own, presence=label.presence))
         return out
 
     def _rail_item_for(self, rail, thread_id: str):
@@ -515,6 +516,8 @@ class WindowsUIADriver(TeamsDriver):
         for item in items:
             label = self._label_of(item)
             tid = self._thread_id_of(item)
+            # Same pass as new-message detection: presence costs no extra UIA walk.
+            self._note_presence(tid, label.presence)
             convs[tid] = WatchEntity(thread_id=tid, display_name=label.name, surface=label.surface)
             labels.append((tid, item.Name or ""))
         return self._previews.diff(labels, convs)

@@ -8,7 +8,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { InitialsAvatar, Segment, shake } from "@/components/kit";
+import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { ThreadMessage, WatchEntity } from "@/types";
@@ -77,10 +77,10 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full gap-0 sm:max-w-[520px]" onOpenAutoFocus={(e) => e.preventDefault()}>
         <SheetHeader className="flex-row items-center gap-3 border-b pr-12">
-          <InitialsAvatar name={live.displayName} className="size-9" />
+          <InitialsAvatar name={live.displayName} presence={live.presence} className="size-9" />
           <div className="flex min-w-0 flex-1 flex-col">
             <SheetTitle className="truncate">{live.displayName}</SheetTitle>
-            <SheetDescription>{KIND[live.surface]}</SheetDescription>
+            <SheetDescription>{[KIND[live.surface], live.presence && PRESENCE[live.presence]?.label].filter(Boolean).join(" · ")}</SheetDescription>
           </div>
           <Button variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Ouvrir dans Teams" title="Ouvrir dans Teams" onClick={openInTeams}>
             <ExternalLink className="size-4" />

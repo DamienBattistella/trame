@@ -3,6 +3,8 @@ from enum import Enum
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
+from presence import Presence
+
 
 class Surface(str, Enum):
     dm = "dm"
@@ -27,6 +29,9 @@ class WatchEntity(BaseModel):
     unread: bool = False
     is_self: bool = False
     own_preview: Optional[str] = None
+    # Teams presence of the other person of a 1:1 chat, None when Teams does not say
+    # (or said it too long ago): never a guessed status.
+    presence: Optional[Presence] = None
 
 
 class IncomingMessage(BaseModel):

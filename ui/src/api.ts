@@ -57,6 +57,7 @@ function mapWatch(w: any): WatchEntity {
     rank: typeof w.rank === "number" ? w.rank : null,
     lastActivity: w.last_activity ?? null,
     unread: Boolean(w.unread),
+    presence: w.presence ?? null,
   };
 }
 function mapDraft(d: any): DraftItem {

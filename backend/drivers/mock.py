@@ -96,7 +96,18 @@ _HISTORY: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+# Simulated presence of the 1:1 chats, moving one step every PRESENCE_STEP seconds:
+# enough variety to see every dot, slow enough to look like a real day.
+_PRESENCE: dict[str, list[str]] = {
+    "19:aa11@thread.v2": ["available", "available", "in_meeting", "available", "busy"],
+    "19:bb22@thread.v2": ["in_meeting", "in_meeting", "available", "in_call", "away"],
+    "19:ee55@thread.v2": ["away", "brb", "available", "dnd", "offline"],
+}
+
+
 class MockTeamsDriver(TeamsDriver):
+    PRESENCE_STEP = 120.0
+
     def __init__(self, interval: float = 20.0):
         self.interval = interval
         self._convs = [c.model_copy() for c in _SEED]
@@ -108,7 +119,12 @@ class MockTeamsDriver(TeamsDriver):
         return True
 
     def list_conversations(self) -> list[WatchEntity]:
-        return [c.model_copy() for c in self._convs]
+        seen = self.presence()
+        return [c.model_copy(update={"presence": seen.get(c.thread_id)}) for c in self._convs]
+
+    def presence(self) -> dict[str, str]:
+        step = int(time.time() // self.PRESENCE_STEP)
+        return {tid: cycle[step % len(cycle)] for tid, cycle in _PRESENCE.items()}
 
     def is_screen_sharing(self) -> bool:
         return False

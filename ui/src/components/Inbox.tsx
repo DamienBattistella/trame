@@ -228,7 +228,7 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
       )}
     >
       {active && <motion.span layoutId="inbox-active" transition={spring} className="absolute inset-0 rounded-xl bg-secondary" />}
-      <InitialsAvatar name={c.displayName} className="relative size-8" />
+      <InitialsAvatar name={c.displayName} presence={c.presence} className="relative size-8" />
       <span className="relative flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
           <span className={cn("min-w-0 flex-1 truncate text-sm", (c.unread || draft) && "font-semibold", !c.watch && !draft && !c.unread && "text-muted-foreground")}>

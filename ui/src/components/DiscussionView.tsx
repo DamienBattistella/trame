@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { InitialsAvatar, Segment, shake } from "@/components/kit";
+import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
@@ -139,11 +139,11 @@ export function DiscussionView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-3 border-b px-5 py-3">
-        <InitialsAvatar name={c.displayName} className="size-9" />
+        <InitialsAvatar name={c.displayName} presence={c.presence} className="size-9" />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold">{c.displayName}</span>
           <span className="truncate text-xs text-muted-foreground">
-            {[KIND[c.surface], draft?.senderLabel].filter(Boolean).join(" · ")}
+            {[KIND[c.surface], c.presence && PRESENCE[c.presence]?.label, draft?.senderLabel].filter(Boolean).join(" · ")}
           </span>
         </div>
         <div className="flex items-center gap-3">

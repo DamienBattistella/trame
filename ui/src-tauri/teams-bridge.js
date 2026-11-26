@@ -7,11 +7,31 @@
   const norm = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const rail = () => document.querySelector('[role="tree"]');
   const items = () => Array.from(rail()?.querySelectorAll('[role="treeitem"]') || []);
+  // Présence : Teams web ne l'écrit pas dans le texte de la ligne, seulement sur le
+  // badge de l'avatar. On remonte les libellés courts trouvés autour de l'avatar ; le
+  // moteur ne garde qu'un statut connu (« En réunion », « Available »…), sinon rien.
+  const PRESENCE_NODES = '[class*="resence" i], [data-tid*="resence" i], [class*="Avatar" i], [role="img"], svg[aria-label]';
+  const presenceOf = (el) => {
+    const out = [];
+    for (const n of el.querySelectorAll(PRESENCE_NODES)) {
+      for (const v of [n.getAttribute("aria-label"), n.getAttribute("title")]) {
+        const t = (v || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 80) continue;
+        out.push(t);
+        // « Romain CUREAU, Disponible » : le statut est la dernière partie.
+        const tail = t.split(/[,–—]/).pop().trim();
+        if (tail && tail !== t) out.push(tail);
+      }
+      if (out.length >= 8) break;
+    }
+    return out.slice(0, 8);
+  };
   const railItems = () =>
     items().map((el) => ({
       label: label(el),
       aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
       id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
+      presence: presenceOf(el),
     }));
   const railScroller = () => {
     for (let el = rail(); el && el !== document.body; el = el.parentElement) {
@@ -268,6 +288,7 @@
       rail: Boolean(rail()),
       items: items().length,
       sample: items().slice(0, 6).map((el) => label(el).split(/\s+/).slice(0, 3).join(" ")),
+      presence_sample: items().slice(0, 6).map((el) => presenceOf(el).filter((t) => t.split(" ").length <= 4)),
       editor: Boolean(editor()),
       editor_info: (() => {
         const e = editor();
