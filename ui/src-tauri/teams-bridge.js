@@ -2705,6 +2705,9 @@
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
       // API internes repérées (structure seule : ni jeton, ni paramètre, ni contenu).
       api_capture: apiCapture.summary(),
+      // Empreinte du pont effectivement chargé (posée par l'hôte à l'injection) : permet de
+      // voir si une page garde encore un ancien pont après une mise à jour.
+      bridge: (typeof globalThis !== "undefined" && globalThis.__trameBridge) || null,
     }),
   };
 

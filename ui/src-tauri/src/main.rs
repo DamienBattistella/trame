@@ -129,7 +129,8 @@ fn engine_command(app: &AppHandle) -> Result<tauri_plugin_shell::process::Comman
     };
     Ok(cmd
         .env("TRAME_PARENT_PID", std::process::id().to_string())
-        .env("TRAME_VERSION", app.package_info().version.to_string()))
+        .env("TRAME_VERSION", app.package_info().version.to_string())
+        .env("TRAME_BRIDGE", bridge_fingerprint()))
 }
 
 /// The trial instance's icon: the Trame icon in amber, to tell the two apart in the
@@ -264,6 +265,57 @@ const TEAMS_WEB: &str = "teams-web";
 const TEAMS_URL: &str = "https://teams.microsoft.com/v2/";
 const TEAMS_BRIDGE: &str = include_str!("../teams-bridge.js");
 
+/// Empreinte du pont injecté : change dès que `teams-bridge.js` change (donc à chaque
+/// build qui le modifie), sans dépendre d'une montée de version.
+fn bridge_fingerprint() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    TEAMS_BRIDGE.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// Le script d'init réellement posé : l'empreinte d'abord (le pont et `diagnose` la
+/// relisent via `globalThis.__trameBridge`), puis le pont lui-même.
+fn teams_init_script() -> String {
+    format!("globalThis.__trameBridge={:?};\n{}", bridge_fingerprint(), TEAMS_BRIDGE)
+}
+
+fn bridge_marker(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_local_data_dir().ok().map(|d| d.join("teams-web").join(".bridge"))
+}
+
+/// Après une mise à jour, la fenêtre Teams cachée peut garder le pont injecté par la
+/// version précédente (document restauré par WebView2 au redémarrage). Si l'empreinte du
+/// pont a changé depuis la dernière ouverture, on recharge la page : le script d'init
+/// courant se réinjecte, et la session (profil WebView2) est conservée. Rien n'est envoyé
+/// nulle part — on recharge seulement une page Teams déjà affichée.
+fn reinject_if_stale(app: &AppHandle, w: &tauri::WebviewWindow) {
+    let fp = bridge_fingerprint();
+    let marker = bridge_marker(app);
+    let last = marker.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+    if last.as_deref() == Some(fp.as_str()) {
+        return;
+    }
+    if let Some(p) = &marker {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, &fp);
+    }
+    // Empreinte inconnue ou différente : le document restauré peut porter un ancien pont
+    // (y compris lors de la toute première version qui embarque ce correctif, où aucun
+    // repère n'existe encore). On laisse la navigation initiale se poser, puis on recharge
+    // si une page Teams est affichée — jamais l'écran de connexion. Fenêtre cachée : un
+    // rechargement de trop est invisible, et il n'arrive qu'une fois par empreinte.
+    let handle = w.clone();
+    tauri::async_runtime::spawn(async move {
+        pause_for(std::time::Duration::from_secs(3)).await;
+        if matches!(handle.url(), Ok(u) if is_teams_host(&u)) {
+            let _ = handle.eval("location.reload()");
+        }
+    });
+}
+
 /// Teams web runs in its own WebView2 profile, with background throttling and
 /// occlusion detection off: a page Chromium believes hidden is frozen, and Send
 /// then does nothing. "Hidden" therefore means parked off-screen, never hide().
@@ -294,6 +346,7 @@ async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
         if visible {
             unpark(&w);
         }
+        reinject_if_stale(&app, &w);
         return Ok(());
     }
     let url = TEAMS_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
@@ -306,7 +359,7 @@ async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
         .additional_browser_args(TEAMS_ARGS)
         // Toutes les frames : la transcription d'une réunion s'affiche dans une iframe
         // SharePoint, où le même script ne fait que la relire (voir teams-bridge.js).
-        .initialization_script_for_all_frames(TEAMS_BRIDGE)
+        .initialization_script_for_all_frames(&teams_init_script())
         .build()
         .map_err(|e| e.to_string())?;
     if visible {
@@ -314,6 +367,7 @@ async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
     } else {
         park(&w);
     }
+    reinject_if_stale(&app, &w);
     Ok(())
 }
 
