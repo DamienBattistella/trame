@@ -17,8 +17,10 @@ import {
   LogPage,
   MessageHit,
   Mode,
+  MessageRef,
   Notice,
   SearchScope,
+  Reaction,
   Settings,
   SettingsPatch,
   Surface,
@@ -29,8 +31,10 @@ import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive } from "@/lib/textSearch";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 
-const HTTP = "http://127.0.0.1:8731";
-const WS = "ws://127.0.0.1:8731/ws";
+/** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
+export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
+const HTTP = `http://${ENGINE}`;
+const WS = `ws://${ENGINE}/ws`;
 const SOUL_MAX_BYTES = 64 * 1024;
 
 export interface TrameState {
@@ -43,6 +47,8 @@ export interface TrameState {
   drafts: DraftItem[];
   logs: LogItem[];
   notices: Notice[];
+  /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
+  capabilities: { react: boolean; reply: boolean };
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -101,7 +107,12 @@ function mapState(s: any): TrameState {
       at: n.at,
       surface: n.surface as Surface,
     })),
+    capabilities: { react: Boolean(s.capabilities?.react), reply: Boolean(s.capabilities?.reply) },
   };
+}
+/** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
+function messageRef(m: MessageRef) {
+  return { id: m.id ?? null, sender: m.sender, text: m.text, at: m.at };
 }
 function mapSettings(s: any): Settings {
   const g = s?.github ?? {};
@@ -321,7 +332,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false } };
   }
   return {
     paused: false,
@@ -333,6 +344,7 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
+    capabilities: { react: true, reply: true },
   };
 }
 
@@ -357,6 +369,8 @@ const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
 const demoArchive = new DemoArchive();
 for (const d of mockDrafts) demoArchive.add(d.threadId, [{ sender: d.from, text: d.incoming, at: d.receivedAt, mine: false }]);
+/** Démo : réactions posées, par conversation et message. */
+const demoReactions = new Map<string, Reaction[]>();
 
 // GitHub du mode démo : non connecté au départ, connecté ~6 s après le début de la connexion.
 const DEMO_GITHUB_ACCOUNT = "Wifsimster";
@@ -550,8 +564,10 @@ export function useTrame() {
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
-  const sendDraft = (id: string, text: string): Promise<Result> =>
-    connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text }) : demo(700, {});
+  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null): Promise<Result> =>
+    connectedRef.current
+      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null })
+      : demo(700, {});
   /** Ouvre la conversation dans Teams et tape le texte, sans envoyer. */
   const composeDraft = (id: string, text: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/compose`, { text }) : demo(900, {});
@@ -794,9 +810,9 @@ export function useTrame() {
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
       const messages: ThreadMessage[] = [
-        { sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false },
-        { sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true },
-        { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
+        { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
+        { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
+        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [] },
       ];
       demoArchive.add(threadId, messages);
       return { ok: true, messages, top: true };
@@ -820,13 +836,32 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, results: res.results.map(mapHit), scope: res.scope };
   };
-  const sendInThread = async (threadId: string, text: string): Promise<Result> => {
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});
-    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text });
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null });
   };
-  const suggestInThread = async (threadId: string): Promise<Result<{ text: string }>> => {
-    if (!connectedRef.current) return demo(1500, { text: "Oui, je la relis cet après-midi et je te fais un retour avant 17 h." });
-    return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`);
+  /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis). */
+  const suggestInThread = async (threadId: string, target?: MessageRef | null): Promise<Result<{ text: string }>> => {
+    if (!connectedRef.current) {
+      const text = target
+        ? `Bien vu pour « ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} » : je m'en occupe et je te dis.`
+        : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
+      return demo(1500, { text });
+    }
+    return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`, target ? { message: messageRef(target) } : undefined);
+  };
+  /** Réaction en un clic sur un message précis. Réussie seulement si Teams l'affiche. */
+  const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction): Promise<Result> => {
+    if (!connectedRef.current) {
+      const res = await demo(500, {});
+      if (res.ok && target.id) {
+        const key = `${threadId}/${target.id}`;
+        const mine = demoReactions.get(key) ?? [];
+        if (!mine.includes(reaction)) demoReactions.set(key, [...mine, reaction]);
+      }
+      return res;
+    }
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/react`, { message: messageRef(target), reaction });
   };
   /** Marque la conversation comme lue dans Teams, sans l'ouvrir. */
   const markRead = async (threadId: string): Promise<Result> => {
@@ -1073,6 +1108,7 @@ export function useTrame() {
     factoryReset,
     threadMessages,
     searchMessages,
+    reactInThread,
     sendInThread,
     suggestInThread,
     showInTeams,

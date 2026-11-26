@@ -34,6 +34,18 @@ class WatchEntity(BaseModel):
     presence: Optional[Presence] = None
 
 
+# Le petit jeu de réactions de Teams : clé stable côté moteur, emoji côté interface.
+REACTIONS: dict[str, str] = {
+    "like": "👍",
+    "heart": "❤️",
+    "laugh": "😆",
+    "surprised": "😮",
+    "sad": "😢",
+    "angry": "😡",
+}
+Reaction = Literal["like", "heart", "laugh", "surprised", "sad", "angry"]
+
+
 class IncomingMessage(BaseModel):
     thread_id: str
     sender: str
@@ -41,6 +53,21 @@ class IncomingMessage(BaseModel):
     received_at: str
     surface: Surface
     mentions: list[str] = Field(default_factory=list)
+    # Identifiant du message dans Teams quand le pilote le connaît, et réactions que
+    # l'utilisateur y a déjà mises (clés de REACTIONS).
+    id: Optional[str] = None
+    reactions: list[str] = Field(default_factory=list)
+
+
+class MessageRef(BaseModel):
+    """Un message précis du fil, pour y réagir ou y répondre. Le pilote le retrouve par
+    son id, puis vérifie l'auteur et le début du texte : jamais d'action sur un message
+    qui ne correspond pas à ce que l'utilisateur a vu."""
+
+    id: Optional[str] = Field(default=None, max_length=200)
+    sender: str = Field(default="", max_length=200)
+    text: str = Field(min_length=1, max_length=8000)
+    at: str = Field(default="", max_length=40)
 
 
 class Draft(BaseModel):
@@ -80,6 +107,12 @@ class LogItem(BaseModel):
     text: str
 
 
+class Capabilities(BaseModel):
+    """Ce que le pilote Teams actif sait faire en plus de lire et d'écrire."""
+    react: bool = False
+    reply: bool = False
+
+
 class AppState(BaseModel):
     onboarded: bool = False
     paused: bool = False
@@ -90,6 +123,7 @@ class AppState(BaseModel):
     drafts: list[Draft] = Field(default_factory=list)
     logs: list[LogItem] = Field(default_factory=list)
     notices: list[Notice] = Field(default_factory=list)
+    capabilities: Capabilities = Field(default_factory=Capabilities)
 
 
 class GithubHit(BaseModel):

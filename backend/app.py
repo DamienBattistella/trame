@@ -22,6 +22,7 @@ from mcp_server import make_router as make_mcp_router
 import settings as settingsmod
 from settings import SettingsPatch
 from watcher import ActionError, Watcher
+from models import MessageRef, Reaction
 from brain.base import Brain
 from brain.claude import ClaudeBrain
 from brain.copilot import CopilotBrain
@@ -114,6 +115,18 @@ class ModeBody(BaseModel):
 
 class TextBody(BaseModel):
     text: Optional[str] = None
+    # Répondre à ce message précis du fil (citation Teams), pas seulement à la conversation.
+    reply_to: Optional[MessageRef] = None
+
+
+class ReactBody(BaseModel):
+    message: MessageRef
+    reaction: Reaction = "like"
+
+
+class SuggestBody(BaseModel):
+    # Proposer une réponse à ce message précis plutôt qu'au dernier reçu.
+    message: Optional[MessageRef] = None
 
 
 class WatchlistItem(BaseModel):
@@ -251,12 +264,12 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[TextBody] = None):
-        watcher.send_draft(draft_id, body.text if body else None)
+        watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None)
         return {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/compose")
     def compose_draft(draft_id: str, body: Optional[TextBody] = None):
-        watcher.compose_draft(draft_id, body.text if body else None)
+        watcher.compose_draft(draft_id, body.text if body else None, body.reply_to if body else None)
         return {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/dismiss")
@@ -293,12 +306,17 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):
-        watcher.send_manual(thread_id, body.text or "")
+        watcher.send_manual(thread_id, body.text or "", body.reply_to)
+        return {"ok": True}
+
+    @app.post("/api/threads/{thread_id:path}/react")
+    def thread_react(thread_id: str, body: ReactBody):
+        watcher.react(thread_id, body.message, body.reaction)
         return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/suggest")
-    def thread_suggest(thread_id: str):
-        return {"ok": True, "text": watcher.suggest_reply(thread_id)}
+    def thread_suggest(thread_id: str, body: Optional[SuggestBody] = None):
+        return {"ok": True, "text": watcher.suggest_reply(thread_id, target=body.message if body else None)}
 
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):

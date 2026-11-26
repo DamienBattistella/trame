@@ -128,11 +128,28 @@ export interface Brief {
   sources: { messages: number; reposSearched: number };
 }
 
+/** Le petit jeu de réactions de Teams. */
+export type Reaction = "like" | "heart" | "laugh" | "surprised" | "sad" | "angry";
+export const REACTIONS: { key: Reaction; emoji: string; label: string }[] = [
+  { key: "like", emoji: "👍", label: "J'aime" },
+  { key: "heart", emoji: "❤️", label: "Cœur" },
+  { key: "laugh", emoji: "😆", label: "Rire" },
+  { key: "surprised", emoji: "😮", label: "Surpris" },
+  { key: "sad", emoji: "😢", label: "Triste" },
+  { key: "angry", emoji: "😡", label: "En colère" },
+];
+
 export interface ThreadMessage {
+  /** Identifiant du message dans Teams, quand le pilote le connaît. */
+  id?: string | null;
   sender: string;
   text: string;
   at: string;
   mine: boolean;
+  /** Réactions que tu as mises sur ce message. */
+  reactions?: Reaction[];
+  /** Message auquel celui-ci répond (affiché en citation). */
+  replyTo?: MessageRef | null;
 }
 
 /** Un message trouvé par la recherche dans l'historique déjà lu par Trame. */
@@ -155,6 +172,8 @@ export interface SearchScope {
   /** Date ISO du démarrage du moteur (ou de sa réinitialisation). */
   since: string;
 }
+/** Un message précis du fil, cible d'une réaction ou d'une réponse. */
+export type MessageRef = Pick<ThreadMessage, "id" | "sender" | "text" | "at">;
 
 /** Une personne de l'entourage, telle que Trame la décrit au cerveau. */
 export interface Person {

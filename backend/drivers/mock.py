@@ -3,8 +3,8 @@ import itertools
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional
-from models import IncomingMessage, Surface, WatchEntity
-from drivers.base import TeamsDriver
+from models import IncomingMessage, MessageRef, Surface, WatchEntity
+from drivers.base import TeamsDriver, same_message
 
 _SEED = [
     WatchEntity(thread_id="19:aa11@thread.v2", display_name="Sofia Marino", surface=Surface.dm, watch=True, mode="auto"),
@@ -121,6 +121,8 @@ class MockTeamsDriver(TeamsDriver):
     PRESENCE_STEP = 120.0
     can_start_chat = True
     can_search_people = True
+    supports_reactions = True
+    supports_reply = True
 
     def __init__(self, interval: float = 20.0):
         self.interval = interval
@@ -131,6 +133,21 @@ class MockTeamsDriver(TeamsDriver):
         self.marked_read: list[str] = []
         # Teams resolves anyone in the organization: the entourage is part of it.
         self.allow_anyone = True
+        # Gestes simulés : réponses citant un message, réactions posées (par id de message).
+        self.replies: list[tuple[str, str, str, bool]] = []
+        self.reactions: dict[str, list[str]] = {}
+
+    def _thread(self, thread_id: str) -> list[tuple[str, str, str, str]]:
+        """(id, heure, auteur, texte) : ids stables, à la position du message dans le fil."""
+        return [(f"m{i}", at, sender, text) for i, (at, sender, text) in enumerate(_HISTORY.get(thread_id, []))]
+
+    def _find(self, thread_id: str, ref: MessageRef) -> Optional[str]:
+        """Id of the message ref points at, None unless its author and text match."""
+        rows = self._thread(thread_id)
+        if ref.id:
+            row = next((r for r in rows if r[0] == ref.id), None)
+            return row[0] if row and same_message(ref, row[2], row[3]) else None
+        return next((r[0] for r in reversed(rows) if same_message(ref, r[2], r[3])), None)
 
     def selftest(self) -> bool:
         return True
@@ -148,10 +165,11 @@ class MockTeamsDriver(TeamsDriver):
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         surface = next((c.surface for c in self._convs if c.thread_id == thread_id), Surface.dm)
-        history = _HISTORY.get(thread_id, [])[-last_n:] if last_n > 0 else []
+        history = self._thread(thread_id)[-last_n:] if last_n > 0 else []
         return [
-            IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at=at, surface=surface)
-            for at, sender, text in history
+            IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at=at, surface=surface,
+                            id=mid, reactions=list(self.reactions.get(f"{thread_id}/{mid}", [])))
+            for mid, at, sender, text in history
         ]
 
     def open_thread(self, thread_id: str) -> bool:
@@ -205,6 +223,29 @@ class MockTeamsDriver(TeamsDriver):
         for c in self._convs:
             if c.thread_id == thread_id:
                 c.unread = False
+        return True
+
+    def _reply_in_active(self, thread_id: str, target: MessageRef, text: str, send: bool) -> bool:
+        if self._active != thread_id:
+            return False
+        if self._find(thread_id, target) is None:
+            raise RuntimeError("message cité introuvable dans la conversation")
+        self.typed.append((thread_id, text, send))
+        self.replies.append((thread_id, target.text, text, send))
+        action = "RÉPONSE ENVOYÉE" if send else "RÉPONSE SAISIE"
+        print(f"[mock] {action} -> {thread_id} (à « {target.text[:30]} »): {text[:80]}")
+        return True
+
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
+        if self._active != thread_id:
+            return False
+        mid = self._find(thread_id, target)
+        if mid is None:
+            raise RuntimeError("message introuvable dans la conversation")
+        mine = self.reactions.setdefault(f"{thread_id}/{mid}", [])
+        if reaction not in mine:
+            mine.append(reaction)
+        print(f"[mock] RÉACTION {reaction} -> {thread_id}/{mid}")
         return True
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

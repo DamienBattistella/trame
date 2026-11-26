@@ -18,8 +18,9 @@ import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, Surface, WatchEntity
-from drivers.base import Focus, SendUncertain, TeamsDriver
+from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Draft, IncomingMessage, LogItem,
+                    MessageRef, Notice, Surface, WatchEntity)
+from drivers.base import Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
 
@@ -54,6 +55,8 @@ class Watcher:
             onboarded=bool(self.cfg.get("onboarded", False)),
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
+            capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
+                                      reply=bool(getattr(driver, "supports_reply", False))),
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -300,7 +303,8 @@ class Watcher:
         reason = getattr(self._why, "reason", None)
         return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
 
-    def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False) -> bool:
+    def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False,
+                 reply_to: Optional[MessageRef] = None) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
         restore=True puts the user's previous conversation back afterwards. Pause (for
         automatic sends) and screen share are re-checked under the UI lock, right before
@@ -315,8 +319,12 @@ class Watcher:
                 self.log("warn", "Partage d'écran en cours : aucune saisie dans Teams.")
                 return False
             try:
-                with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto) as sp:
-                    focus = self.driver.type_focused(thread_id, text, send, restore)
+                with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto,
+                                    reply=reply_to is not None) as sp:
+                    if reply_to is None:
+                        focus = self.driver.type_focused(thread_id, text, send, restore)
+                    else:
+                        focus = self.driver.type_focused(thread_id, text, send, restore, reply_to=reply_to)
                     telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
             except SendUncertain as e:
                 # Never report "nothing was sent" here: a resend could duplicate it.
@@ -396,11 +404,21 @@ class Watcher:
             with self._lock:
                 self._in_flight.discard(draft_id)
 
-    def send_draft(self, draft_id: str, text: Optional[str] = None) -> None:
+    def _require(self, gesture: str) -> None:
+        """Refuse up front a gesture the active Teams driver cannot do."""
+        caps = self.state.capabilities
+        if gesture == "reply" and not caps.reply:
+            raise ActionError(501, "Répondre à un message précis n'est pas possible avec ce pilote Teams.")
+        if gesture == "react" and not caps.react:
+            raise ActionError(501, "Réagir à un message n'est pas possible avec ce pilote Teams.")
+
+    def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None) -> None:
+        if reply_to is not None:
+            self._require("reply")
         with self._claim(draft_id) as d:
             body = text.strip() if text and text.strip() else d.proposal
             self._typing_allowed()
-            if not self._deliver(d.thread_id, body, send=True, restore=True):
+            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to):
                 with self._lock:
                     d.proposal = body
                 self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
@@ -409,15 +427,17 @@ class Watcher:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
         self._history.pop(d.thread_id, None)
         self._thread_cache.pop(d.thread_id, None)
-        self.log("sent", f"Envoyé à {d.from_}")
+        self.log("sent", f"Envoyé à {d.from_}{self._in_reply(reply_to)}")
 
-    def compose_draft(self, draft_id: str, text: Optional[str] = None) -> None:
+    def compose_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None) -> None:
+        if reply_to is not None:
+            self._require("reply")
         with self._claim(draft_id) as d:
             body = text.strip() if text and text.strip() else d.proposal
             self._typing_allowed()
             with self._lock:
                 d.proposal = body
-            if not self._deliver(d.thread_id, body, send=False, restore=False):
+            if not self._deliver(d.thread_id, body, send=False, restore=False, reply_to=reply_to):
                 self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
                 raise ActionError(409, f"Rien n'a été saisi dans Teams.{self._because()}")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
@@ -443,7 +463,8 @@ class Watcher:
                 return out[-last_n:], top and len(out) <= last_n
         entity = self._conversation(thread_id)
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
-        out = [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
+        out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
+                "reactions": list(m.reactions)} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
@@ -454,22 +475,97 @@ class Watcher:
         results = self.archive.search(query, names, self._is_mine, limit)
         return {"results": results, "scope": self.archive.scope()}
 
-    def send_manual(self, thread_id: str, text: str) -> None:
+    @staticmethod
+    def _in_reply(ref: Optional[MessageRef]) -> str:
+        if ref is None:
+            return ""
+        who = f"{ref.sender} : " if ref.sender else ""
+        return f", en réponse à « {who}{ref.text[:40]} »"
+
+    def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None) -> None:
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body:
             raise ActionError(422, "Le message est vide.")
+        if reply_to is not None:
+            self._require("reply")
         self._typing_allowed()
-        if not self._deliver(thread_id, body, send=True, restore=True):
+        if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to):
             self.log("warn", f"Envoi à {entity.display_name} refusé.{self._because()}")
             raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)
         self._thread_cache.pop(thread_id, None)
-        self.log("sent", f"Envoyé à {entity.display_name} : « {body[:60]} »")
+        self.log("sent", f"Envoyé à {entity.display_name}{self._in_reply(reply_to)} : « {body[:60]} »")
 
-    def suggest_reply(self, thread_id: str, last_n: int = 15) -> str:
+    def react(self, thread_id: str, target: MessageRef, reaction: str) -> None:
+        """One click reaction on a precise message. Same guards as typing: screen share,
+        UI lock, conversation confirmed by its title, message checked by author and text.
+        Success only once Teams shows the reaction: never a false « fait »."""
+        entity = self._conversation(thread_id)
+        if reaction not in REACTIONS:
+            raise ActionError(422, "Réaction inconnue.")
+        self._require("react")
+        self._typing_allowed()
+        emoji = REACTIONS[reaction]
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : aucune action dans Teams.")
+            try:
+                with telemetry.span("teams.react", conversation=thread_id, reaction=reaction) as sp:
+                    focus = self.driver.react_focused(thread_id, target, reaction, restore=True)
+                    telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
+            except ReactUncertain as e:
+                self.log("warn", f"Réaction {emoji} non confirmée dans « {entity.display_name} » : {e}")
+                raise ActionError(409, f"Réaction non confirmée : vérifie dans Teams avant de recommencer. ({e})")
+            except NotSupported as e:
+                raise ActionError(501, str(e))
+            except Exception as e:
+                self.log("warn", f"Réaction impossible dans « {entity.display_name} » : {e}")
+                raise ActionError(409, f"Aucune réaction posée. Raison : {e}.")
+        self._warn_if_not_restored(focus)
+        if not focus.ok:
+            reason = focus.reason or "conversation non confirmée dans Teams"
+            self.log("warn", f"Réaction refusée dans « {entity.display_name} » : {reason}")
+            raise ActionError(409, f"Aucune réaction posée. Raison : {reason}.")
+        with self._lock:
+            cached = self._thread_cache.get(thread_id)
+            for m in reversed(cached[1] if cached else []):
+                if (m.get("id") == target.id) if target.id else same_message(target, m["sender"], m["text"]):
+                    if reaction not in m.setdefault("reactions", []):
+                        m["reactions"].append(reaction)
+                    break
+        who = f" de {target.sender}" if target.sender else ""
+        self.log("info", f"Réaction {emoji} au message{who} dans « {entity.display_name} »")
+
+    def _locate(self, msgs: list[IncomingMessage], target: MessageRef) -> Optional[int]:
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if (not target.id or m.id == target.id) and same_message(target, m.sender, m.text):
+                return i
+        return None
+
+    def suggest_reply(self, thread_id: str, last_n: int = 15, target: Optional[MessageRef] = None) -> str:
+        """Proposal for the last message from someone else, or for target: the brain
+        then answers that very message, with the thread up to it as context."""
         entity = self._conversation(thread_id)
         msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
+        if target is not None:
+            idx = self._locate(msgs, target)
+            if idx is None:
+                # Older than the read window: answer it with the recent thread as context.
+                last = IncomingMessage(thread_id=thread_id, sender=target.sender or entity.display_name, text=target.text,
+                                       received_at=target.at, surface=entity.surface, id=target.id)
+                before = msgs
+            else:
+                last, before = msgs[idx], msgs[:idx]
+            summary = "\n".join(f"{m.sender}: {m.text}" for m in before)
+            summary += f"\n(La réponse cite et répond précisément au message suivant de {last.sender}, pas au dernier du fil.)"
+            try:
+                reply = self.brain.draft(self.soul, summary.strip(), last.text, "", self._people_context(last, summary))
+            except Exception as e:
+                raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
+            return reply.strip()
         theirs = [m for m in msgs if not self._is_mine(m.sender)]
         if not theirs:
             raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
