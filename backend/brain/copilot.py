@@ -12,11 +12,17 @@ class CopilotBrain(Brain):
     """Alternative brain via the GitHub Copilot CLI (`gh copilot`). Separate channel
     from Claude, same interface. Exact invocation is version-dependent — A CALER."""
 
-    def __init__(self, command: str = "gh", args: list[str] | None = None, timeout: float = 60.0):
+    def __init__(self, command: str = "gh", args: list[str] | None = None, timeout: float = 60.0, model: str = ""):
         self.command = command
         # `gh copilot suggest` (old extension) is an interactive shell-command helper that
         # hangs until the timeout: older configs carrying it get the non-interactive form.
-        self.args = list(args) if args and "suggest" not in args else list(DEFAULT_ARGS)
+        args = list(args) if args and "suggest" not in args else list(DEFAULT_ARGS)
+        if model and "--model" not in args:
+            # Before -p, whose value is the prompt appended last.
+            i = args.index("-p") if "-p" in args else len(args)
+            args[i:i] = ["--model", model]
+        self.model = model
+        self.args = args
         self.timeout = timeout
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:

@@ -28,6 +28,7 @@ import { LogExportButtons } from "@/components/LogExportButtons";
 import { McpSettings } from "@/components/McpSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
 import { ChangelogRow } from "@/components/Changelog";
+import { ModelPicker } from "@/components/ModelPicker";
 import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
@@ -393,13 +394,21 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       desc: "Qui rédige tes réponses, et son état de connexion.",
       state: save.brain,
       body: (
-      <motion.div animate={brainCtl}>
+      <motion.div animate={brainCtl} className="flex flex-col gap-6">
         <BrainChoice
           trame={trame}
           value={settings.brain}
           onChange={(brain) => brain !== settings.brain && update("brain", { brain })}
           size="md"
         />
+        <div>
+          <SectionLabel>Modèle et effort</SectionLabel>
+          <ModelPicker
+            brain={settings.brain}
+            value={settings.models}
+            onChange={(models) => update("brain", { models: { ...settings.models, ...models } })}
+          />
+        </div>
       </motion.div>
       ),
     },

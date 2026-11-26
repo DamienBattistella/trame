@@ -7,6 +7,28 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 BrainName = Literal["claude", "copilot"]
+Effort = Literal["", "low", "medium", "high", "xhigh", "max"]
+# A model is passed as a command-line value: alias or full name only, never an option.
+_MODEL = re.compile(r"^(|[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79})$")
+
+
+def _model(v: object) -> str:
+    v = str(v or "").strip()
+    if not _MODEL.match(v):
+        raise ValueError("nom de modèle invalide (lettres, chiffres, . _ - : [ ])")
+    return v
+
+
+class ModelSettings(BaseModel):
+    """Empty values keep the CLI's own default (the user's Claude Code / Copilot setting)."""
+    claude_model: str = ""
+    claude_effort: Effort = ""
+    copilot_model: str = ""
+
+    @field_validator("claude_model", "copilot_model", mode="before")
+    @classmethod
+    def _check(cls, v):
+        return _model(v)
 
 
 class GithubSettings(BaseModel):
@@ -58,6 +80,7 @@ class TeamsWebSettings(BaseModel):
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
+    models: ModelSettings = ModelSettings()
     github: GithubSettings
     safety: SafetySettings
     brief: BriefSettings
@@ -68,6 +91,17 @@ class Settings(BaseModel):
 
 class _Patch(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ModelsPatch(_Patch):
+    claude_model: Optional[str] = None
+    claude_effort: Optional[Effort] = None
+    copilot_model: Optional[str] = None
+
+    @field_validator("claude_model", "copilot_model", mode="before")
+    @classmethod
+    def _check(cls, v):
+        return None if v is None else _model(v)
 
 
 class GithubPatch(_Patch):
@@ -106,6 +140,7 @@ class TeamsWebPatch(_Patch):
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
+    models: Optional[ModelsPatch] = None
     github: Optional[GithubPatch] = None
     safety: Optional[SafetyPatch] = None
     brief: Optional[BriefPatch] = None
@@ -121,6 +156,16 @@ def _int(value, default: int, lo: int, hi: int) -> int:
         return default
 
 
+def _models(brain: dict) -> ModelSettings:
+    claude, copilot = brain.get("claude", {}) or {}, brain.get("copilot", {}) or {}
+    effort = claude.get("effort", "")
+    try:
+        return ModelSettings(claude_model=claude.get("model", ""), copilot_model=copilot.get("model", ""),
+                             claude_effort=effort if effort in ("low", "medium", "high", "xhigh", "max") else "")
+    except ValueError:
+        return ModelSettings()
+
+
 def from_config(cfg: dict) -> Settings:
     """Tolerates hand-edited config.json: out-of-range or wrong-typed values fall back
     to safe values instead of breaking the settings API."""
@@ -131,6 +176,7 @@ def from_config(cfg: dict) -> Settings:
     return Settings(
         onboarded=bool(cfg.get("onboarded", False)),
         brain="copilot" if cfg.get("brain", {}).get("provider") == "copilot" else "claude",
+        models=_models(cfg.get("brain", {})),
         github=GithubSettings(enabled=bool(gh.get("enabled", True)), all_repos=gh.get("repos", "all") == "all"),
         safety=SafetySettings(
             auto_pause_on_screen_share=bool(safety.get("auto_pause_on_screen_share", True)),
@@ -175,7 +221,11 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
         merged.mcp.token = secrets.token_urlsafe(24)
     out = copy.deepcopy(cfg)
     out["onboarded"] = merged.onboarded
-    out.setdefault("brain", {})["provider"] = merged.brain
+    brain_cfg = out.setdefault("brain", {})
+    brain_cfg["provider"] = merged.brain
+    claude = brain_cfg.setdefault("claude", {})
+    claude["model"], claude["effort"] = merged.models.claude_model, merged.models.claude_effort
+    brain_cfg.setdefault("copilot", {})["model"] = merged.models.copilot_model
     gh = out.setdefault("context", {}).setdefault("github", {})
     gh["enabled"] = merged.github.enabled
     gh["repos"] = "all" if merged.github.all_repos else "allowlist"

@@ -146,6 +146,7 @@ def test_settings_get(make_client):
     assert r["settings"] == {
         "onboarded": False,
         "brain": "claude",
+        "models": {"claude_model": "", "claude_effort": "", "copilot_model": ""},
         "github": {"enabled": True, "all_repos": True},
         "safety": {
             "auto_pause_on_screen_share": True,
@@ -391,3 +392,28 @@ def test_logs_export(make_client, fresh_home):
     text = r["text"]
     assert "## Journal" in text and "Envoyé à Lucas" in text and "mot de passe 1234" not in text
     assert "Traceback: boom" in text and "## OpenTelemetry" in text
+
+
+def test_model_and_effort_reach_the_cli(make_client):
+    from app import make_brain
+    from brain.claude import ClaudeBrain
+    from brain.copilot import CopilotBrain
+    client, watcher, _d = make_client()
+    r = client.put("/api/settings", json={"models": {"claude_model": "opus", "claude_effort": "high"}})
+    assert r.status_code == 200 and r.json()["settings"]["models"]["claude_effort"] == "high"
+    b = make_brain(watcher.cfg)
+    assert isinstance(b, ClaudeBrain)
+    assert b.args[b.args.index("--model") + 1] == "opus" and b.args[b.args.index("--effort") + 1] == "high"
+    assert b.timeout == 90.0 and "--tools" in b.args
+    r = client.put("/api/settings", json={"brain": "copilot", "models": {"copilot_model": "gpt-5"}})
+    c = make_brain(watcher.cfg)
+    assert isinstance(c, CopilotBrain) and c.args[c.args.index("--model") + 1] == "gpt-5"
+    assert c.args.index("--model") < c.args.index("-p")
+
+
+def test_model_cannot_inject_options(make_client):
+    client, _w, _d = make_client()
+    for bad in ["--dangerously-skip-permissions", "opus --tools Bash", "-x"]:
+        r = client.put("/api/settings", json={"models": {"claude_model": bad}})
+        assert r.status_code == 422, bad
+    assert client.put("/api/settings", json={"models": {"claude_effort": "turbo"}}).status_code == 422

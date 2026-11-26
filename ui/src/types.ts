@@ -36,9 +36,13 @@ export interface LogItem {
 
 export type Brain = "claude" | "copilot";
 
+export type Effort = "" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface Settings {
   onboarded: boolean;
   brain: Brain;
+  /** Vide : le réglage par défaut de Claude Code ou de Copilot. */
+  models: { claudeModel: string; claudeEffort: Effort; copilotModel: string };
   github: { enabled: boolean; allRepos: boolean };
   safety: {
     autoPauseOnScreenShare: boolean;
@@ -55,6 +59,7 @@ export interface Settings {
 export interface SettingsPatch {
   onboarded?: boolean;
   brain?: Brain;
+  models?: Partial<Settings["models"]>;
   github?: Partial<Settings["github"]>;
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;

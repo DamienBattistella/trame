@@ -536,7 +536,8 @@ class Watcher:
         transcript = "\n".join(f"[{m.received_at}] {m.sender}: {m.text}" if m.received_at else f"{m.sender}: {m.text}" for m in msgs)
 
         try:
-            raw = self.brain.complete(build_brief_prompt(name, transcript), timeout=self.BRIEF_TIMEOUT)
+            raw = self.brain.complete(build_brief_prompt(name, transcript),
+                                      timeout=max(self.BRIEF_TIMEOUT, 2 * float(getattr(self.brain, "timeout", 0) or 0)))
         except Exception as e:
             self.log("warn", f"Résumé impossible pour {name} : le cerveau a échoué ({str(e)[:120]})")
             raise ActionError(502, "Le cerveau n'a pas pu produire le résumé. Rien n'a été perdu, tu peux réessayer.")
@@ -616,7 +617,8 @@ class Watcher:
                 detail = errors[0].get("msg", str(e)) if errors else str(e)
                 raise ActionError(422, f"Réglage invalide : {detail.removeprefix('Value error, ')}")
             new_brain = None
-            if merged.brain != self.get_settings().brain and self.brain_factory is not None:
+            before = self.get_settings()
+            if (merged.brain, merged.models) != (before.brain, before.models) and self.brain_factory is not None:
                 try:
                     new_brain = self.brain_factory(new_cfg)
                 except Exception as e:

@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import config as cfgmod
 import soul_template as soultpl
 from mcp_server import make_router as make_mcp_router
+import settings as settingsmod
 from settings import SettingsPatch
 from watcher import ActionError, Watcher
 from brain.base import Brain
@@ -53,11 +54,13 @@ def make_brain(cfg: dict) -> Brain:
         from brain.mock import MockBrain
         return MockBrain()
     prov = cfg.get("brain", {}).get("provider", "claude")
+    models = settingsmod.from_config(cfg).models
     if prov == "copilot":
         c = cfg["brain"].get("copilot", {})
-        return CopilotBrain(command=c.get("command", "gh"), args=c.get("args"))
+        return CopilotBrain(command=c.get("command", "gh"), args=c.get("args"), model=models.copilot_model)
     c = cfg.get("brain", {}).get("claude", {})
-    return ClaudeBrain(command=c.get("command", "claude"), args=c.get("args"))
+    return ClaudeBrain(command=c.get("command", "claude"), args=c.get("args"), model=models.claude_model,
+                       effort=models.claude_effort)
 
 
 # Packaged app (Tauri) and the Vite dev / preview servers only.

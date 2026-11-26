@@ -3,6 +3,7 @@ import {
   Brain,
   Brief,
   DraftItem,
+  Effort,
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
@@ -88,6 +89,11 @@ function mapSettings(s: any): Settings {
   return {
     onboarded: Boolean(s?.onboarded),
     brain: s?.brain === "copilot" ? "copilot" : "claude",
+    models: {
+      claudeModel: String(s?.models?.claude_model ?? ""),
+      claudeEffort: (s?.models?.claude_effort ?? "") as Effort,
+      copilotModel: String(s?.models?.copilot_model ?? ""),
+    },
     github: { enabled: Boolean(g.enabled), allRepos: Boolean(g.all_repos) },
     safety: {
       autoPauseOnScreenShare: Boolean(f.auto_pause_on_screen_share),
@@ -171,6 +177,13 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (p.onboarded !== undefined) out.onboarded = p.onboarded;
   if (p.brain !== undefined) out.brain = p.brain;
+  if (p.models) {
+    const m: Record<string, unknown> = {};
+    if (p.models.claudeModel !== undefined) m.claude_model = p.models.claudeModel;
+    if (p.models.claudeEffort !== undefined) m.claude_effort = p.models.claudeEffort;
+    if (p.models.copilotModel !== undefined) m.copilot_model = p.models.copilotModel;
+    out.models = m;
+  }
   if (p.github) {
     const g: Record<string, unknown> = {};
     if (p.github.enabled !== undefined) g.enabled = p.github.enabled;
@@ -214,6 +227,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     ...s,
     ...(p.onboarded !== undefined && { onboarded: p.onboarded }),
     ...(p.brain !== undefined && { brain: p.brain }),
+    models: { ...s.models, ...p.models },
     github: { ...s.github, ...p.github },
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
@@ -249,6 +263,7 @@ function mockState(): TrameState {
 let localSettings: Settings = {
   onboarded: false,
   brain: "claude",
+  models: { claudeModel: "", claudeEffort: "", copilotModel: "" },
   github: { enabled: true, allRepos: true },
   safety: {
     autoPauseOnScreenShare: true,
