@@ -122,6 +122,74 @@
       if (line) ed.model.change((writer) => ed.model.insertContent(writer.createText(line), ed.model.document.selection));
     });
   };
+  // --- Code partagé en Markdown : ``` … ``` en bloc de code, `…` en code en ligne ---
+  // L'analyseur HTML de l'éditeur de Teams range un <pre><code> en bloc de code (élément
+  // « codeBlock » de son schéma) et un <code> en attribut « code » du texte : on lui
+  // donne ce HTML plutôt que de dessiner nous-mêmes dans son modèle.
+  const FENCE_OPEN = /^ {0,3}```[^`]*$/;
+  const FENCE_CLOSE = /^ {0,3}```\s*$/;
+  const INLINE = /`([^`\n]+)`/g;
+  // Blocs de prose et blocs de code ; une clôture absente laisse les ``` en texte.
+  const codeParts = (text) => {
+    const lines = String(text).split(/\r?\n/);
+    const parts = [];
+    let prose = [];
+    const flush = () => {
+      // Les lignes vides collées à un bloc de code : Teams espace déjà les blocs.
+      const s = prose.join("\n").replace(/^\n+|\n+$/g, "");
+      if (s) parts.push({ text: s });
+      prose = [];
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const end = FENCE_OPEN.test(lines[i]) ? lines.findIndex((l, j) => j > i && FENCE_CLOSE.test(l)) : -1;
+      if (end < 0) {
+        prose.push(lines[i]);
+        continue;
+      }
+      flush();
+      parts.push({ block: lines.slice(i + 1, end).join("\n") });
+      i = end;
+    }
+    flush();
+    return parts;
+  };
+  const hasCode = (text) => codeParts(text).some((p) => "block" in p || /`[^`\n]+`/.test(p.text));
+  // Texte tel que Teams l'affiche une fois le message mis en forme (sans les marques).
+  const shownOf = (text) =>
+    hasCode(text) ? codeParts(text).map((p) => ("block" in p ? p.block : p.text.replace(INLINE, "$1"))).join("\n") : text;
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Hors <pre>, le HTML replie les espaces : on garde ceux du texte.
+  const keepSpaces = (s) => s.replace(/ {2}/g, " \u00a0").replace(/^ /, "\u00a0");
+  const codeHtml = (text) =>
+    codeParts(text)
+      .map((p) =>
+        "block" in p
+          ? `<pre><code>${esc(p.block)}</code></pre>`
+          : `<p>${p.text
+              .split("\n")
+              .map((line) => keepSpaces(esc(line)).replace(INLINE, (_, c) => `<code>${c}</code>`))
+              .join("<br>")}</p>`,
+      )
+      .join("");
+  const typeCode = (box, text) => {
+    const ed = cke(box);
+    if (!ed) throw new Error("pas d'instance CKEditor");
+    const frag = ed.data.parse(codeHtml(text));
+    // Chaque bloc et chaque code en ligne doivent avoir survécu à l'analyse : sinon le
+    // schéma de Teams a changé et on repasse en texte brut plutôt qu'en code perdu.
+    let blocks = 0;
+    let inline = 0;
+    for (const step of ed.model.createRangeIn(frag)) {
+      if (step.type === "elementStart" && step.item.name === "codeBlock") blocks++;
+      if (step.type === "text" && step.item.hasAttribute("code")) inline++;
+    }
+    const parts = codeParts(text);
+    const wantBlocks = parts.filter((p) => "block" in p).length;
+    const wantInline = parts.reduce((n, p) => n + ("text" in p ? (p.text.match(INLINE) || []).length : 0), 0);
+    // Deux codes en ligne collés ne font qu'un texte dans le modèle : on n'exige que leur présence.
+    if (blocks < wantBlocks || (wantInline && !inline)) throw new Error("mise en forme du code refusée par l'éditeur");
+    ed.model.change(() => ed.model.insertContent(frag, ed.model.document.selection));
+  };
   const clear = (box) => {
     try {
       const ed = cke(box);
@@ -145,15 +213,18 @@
   // La fenêtre Teams de Trame est cachée : sans focus, execCommand n'insère souvent
   // rien. Le collage simulé puis l'événement beforeinput passent par l'éditeur de
   // Teams lui-même, sans focus.
+  // Rend « code » quand le Markdown de code a été mis en forme : le texte affiché est alors
+  // sans ses marques (shownOf). Sinon les ``` et ` restent tels quels, comme tapés.
   const insert = async (box, text) => {
-    const key = flat(text).slice(0, 20);
     // Visible dans la zone ET connu de l'éditeur, quand son modèle est lisible.
-    const ok = () => {
+    const ok = (key) => () => {
       if (!flat(box.innerText).includes(key)) return false;
       const known = modelText(box);
       return known === null || known.includes(key);
     };
+    const raw = flat(text).slice(0, 20);
     const tries = [
+      ...(hasCode(text) ? [["code", () => typeCode(box, text), flat(shownOf(text)).slice(0, 20)]] : []),
       ["ckeditor", () => typeInModel(box, text)],
       ["execCommand", () => document.execCommand("insertText", false, text)],
       [
@@ -171,14 +242,14 @@
         },
       ],
     ];
-    for (const [name, run] of tries) {
+    for (const [name, run, key = raw] of tries) {
       caretAtEnd(box);
       try {
         run();
       } catch {
         continue;
       }
-      if (await waitFor(ok, 600)) return name;
+      if (await waitFor(ok(key), 600)) return name;
       if (box.innerText.trim()) clear(box);
     }
     return null;
@@ -494,6 +565,8 @@
     if (!wanted) return fail("mention absente du texte");
     // Le message cité peut lui-même contenir des mentions : on compte à partir d'ici.
     const base = mentionsIn(box);
+    // Un morceau avec du code tapé brut (mise en forme refusée) garde ses marques à l'écran.
+    let rawCode = false;
     for (const part of parts) {
       if (late()) return fail("délai dépassé pendant la saisie");
       if (!isOpen(name)) return fail("conversation changée pendant la saisie");
@@ -506,7 +579,9 @@
       const chunk = endsWithSpace(box) ? part.text.replace(/^[  ]/, "") : part.text;
       if (!chunk) continue;
       caretAtEnd(box);
-      if (!(await insert(box, chunk))) return fail("texte non inséré après une mention");
+      const how = await insert(box, chunk);
+      if (!how) return fail("texte non inséré après une mention");
+      if (hasCode(chunk) && how !== "code") rawCode = true;
     }
     // Un essai de saisie raté vide la zone : toutes les mentions doivent y être encore.
     if (mentionsIn(box) !== base + wanted) return fail("mentions perdues pendant la saisie");
@@ -514,7 +589,7 @@
     if (!isOpen(name)) return fail("conversation changée avant l'envoi");
     if (late()) return fail("délai dépassé avant l'envoi");
     // Une fois envoyée, la mention s'affiche sans « @ » : on cherche le texte sans.
-    const shownText = mentions.reduce((t, m) => t.split("@" + m).join(m), text);
+    const shownText = mentions.reduce((t, m) => t.split("@" + m).join(m), rawCode ? text : shownOf(text));
     const key = flat(shownText).slice(0, 40);
     const before = lastMessages(3).filter((t) => t.includes(key)).length;
     await waitFor(sendReady, 1500);
@@ -980,7 +1055,7 @@
       if (!isOpen(name)) return fail("conversation changée avant l'envoi");
       if (late()) return fail("délai dépassé avant l'envoi");
       // Un message sans texte se reconnaît au nom de son premier fichier.
-      const key = text ? flat(text).slice(0, 40) : flat(files[0].name);
+      const key = text ? flat(how === "code" ? shownOf(text) : text).slice(0, 40) : flat(files[0].name);
       const before = lastMessages(3).filter((t) => t.includes(key)).length;
       // Teams active Envoyer une fois le texte pris en compte : lui laisser le temps.
       await waitFor(sendReady, 1500);
