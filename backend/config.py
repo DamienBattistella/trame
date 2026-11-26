@@ -46,6 +46,19 @@ def save(cfg: dict) -> None:
     os.replace(tmp, CONFIG_PATH)
 
 
+def factory_reset() -> dict:
+    """Back to the shipped config and SOUL.md (onboarding to redo, nothing followed)."""
+    with open(BUNDLE / "config.json", encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg["onboarded"] = False
+    cfg["watchlist"] = []
+    save(cfg)
+    source, target = BUNDLE / "SOUL.md", HOME / "SOUL.md"
+    if source.exists() and source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    return cfg
+
+
 def load_soul() -> str:
     active = load().get("persona", {}).get("active_soul", "SOUL.md")
     path = HOME / active
@@ -55,6 +68,16 @@ def load_soul() -> str:
 
 
 SOUL_MAX_BYTES = 64 * 1024
+
+
+def soul_is_custom() -> bool:
+    """True when the user dropped their own SOUL.md (not the shipped default)."""
+    path, shipped = HOME / "SOUL.md", BUNDLE / "SOUL.md"
+    if not path.exists():
+        return False
+    if not shipped.exists() or path.resolve() == shipped.resolve():
+        return path.resolve() != shipped.resolve()
+    return path.read_bytes() != shipped.read_bytes()
 
 
 def save_soul(content: str) -> Path:

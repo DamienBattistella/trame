@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -25,10 +25,9 @@ import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shak
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
-import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
+import { appVersion, autostartEnabled, isDesktop, setAutostart } from "@/desktop";
 import { DraftItem, LogItem, Settings, SettingsPatch, Surface } from "@/types";
 
-const SURFACE = { dm: "1:1", group: "Groupe", channel: "Canal" } as const;
 
 type OpenBrief = (t: BriefTarget) => void;
 
@@ -59,10 +58,22 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
   );
 }
 
-export function Panel({ trame }: { trame: Trame }) {
+export type PanelTab = "drafts" | "watchlist" | "logs" | "settings";
+
+export function Panel({
+  trame,
+  tab,
+  onTab,
+  onRestartSetup,
+}: {
+  trame: Trame;
+  tab: PanelTab;
+  onTab: (t: PanelTab) => void;
+  onRestartSetup: () => void;
+}) {
   const { state } = trame;
   const [briefFor, setBriefFor] = useState<BriefTarget | null>(null);
-  const [tab, setTab] = useState("drafts");
+  const setTab = (t: string) => onTab(t as PanelTab);
   // Le brief n'est chargé qu'à la première ouverture, puis reste monté pour ses animations.
   const [briefUsed, setBriefUsed] = useState(false);
   useEffect(() => {
@@ -123,7 +134,7 @@ export function Panel({ trame }: { trame: Trame }) {
           <Logs logs={state.logs} />
         </TabsContent>
         <TabsContent value="settings" className="flex-1 overflow-auto">
-          <SettingsView trame={trame} />
+          <SettingsView trame={trame} onRestartSetup={onRestartSetup} />
         </TabsContent>
       </Tabs>
       {briefUsed && (
@@ -334,7 +345,7 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
         )}
       >
         <header className="flex items-center gap-3">
-          <InitialsAvatar name={d.from} className="size-8" />
+          <InitialsAvatar name={d.from} surface={d.surface} className="size-8" />
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="truncate font-medium">{d.from}</span>
@@ -462,13 +473,12 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
         className="h-[52vh]"
         renderRow={(c) => (
           <div className="group flex min-h-14 items-center gap-3 px-4 py-2">
-            <InitialsAvatar name={c.displayName} className={cn("size-8", !c.watch && "opacity-50")} />
+            <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
             <div className="flex min-w-0 flex-1 flex-col">
               <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground")}>{c.displayName}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                {SURFACE[c.surface]}
-                {c.namedPeople.length > 0 && ` · réagit à ${c.namedPeople.join(", ")}`}
-              </span>
+              {c.namedPeople.length > 0 && (
+                <span className="truncate text-xs text-muted-foreground">réagit à {c.namedPeople.join(", ")}</span>
+              )}
             </div>
             <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
               <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
@@ -573,7 +583,7 @@ function SectionHeader({ children, state }: { children: React.ReactNode; state: 
   );
 }
 
-function SettingsView({ trame }: { trame: Trame }) {
+function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle" });
@@ -748,7 +758,104 @@ function SettingsView({ trame }: { trame: Trame }) {
           />
         </GroupList>
       </motion.div>
+
+      <div className="pb-4">
+        <SectionLabel>Configuration</SectionLabel>
+        <GroupList>
+          <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
+              <RotateCcw className="size-4" />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium">Reprendre la configuration</span>
+              <span className="text-xs text-muted-foreground">Repasser par les étapes du premier lancement, réglages gardés.</span>
+            </div>
+            <Button variant="outline" size="sm" className="rounded-full" onClick={onRestartSetup}>
+              Reprendre
+            </Button>
+          </div>
+        </GroupList>
+      </div>
+
+      <DangerZone trame={trame} onReset={onRestartSetup} />
+      <AppVersion />
     </div>
+  );
+}
+
+function AppVersion() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    appVersion().then(setVersion);
+  }, []);
+  return (
+    <p className="pb-6 text-center text-xs text-muted-foreground tabular-nums">
+      Trame {version ? `version ${version}` : "· version de développement"}
+    </p>
+  );
+}
+
+function DangerZone({ trame, onReset }: { trame: Trame; onReset: () => void }) {
+  const [step, setStep] = useState<"idle" | "confirm" | "run">("idle");
+  const controls = useAnimationControls();
+  const reset = async () => {
+    setStep("run");
+    const res = await trame.factoryReset();
+    if (!res.ok) {
+      setStep("confirm");
+      controls.start(shake);
+      toast.error("Réinitialisation impossible", { description: `${res.error} Rien n'a été effacé.` });
+      return;
+    }
+    toast.success("Trame réinitialisé", { description: "On reprend la configuration depuis le début." });
+    onReset();
+  };
+  return (
+    <motion.div animate={controls} className="pb-2">
+      <SectionLabel>Zone de danger</SectionLabel>
+      <div className="overflow-hidden rounded-2xl border border-destructive/40 bg-destructive/5">
+        <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-destructive/15 text-destructive">
+            <Trash2 className="size-4" />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-sm font-medium">Réinitialiser Trame</span>
+            <span className="text-xs text-muted-foreground">
+              Réglages par défaut ; conversations suivies, brouillons, SOUL.md et entourage effacés. Tes connexions Claude et GitHub sont gardées.
+            </span>
+          </div>
+          <AnimatePresence mode="popLayout" initial={false}>
+            {step === "idle" ? (
+              <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setStep("confirm")}
+                >
+                  Réinitialiser
+                </Button>
+              </motion.div>
+            ) : (
+              <motion.div key="confirm" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" className="rounded-full" disabled={step === "run"} onClick={() => setStep("idle")}>
+                  Annuler
+                </Button>
+                <Button
+                  size="sm"
+                  className="rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  disabled={step === "run"}
+                  onClick={reset}
+                >
+                  {step === "run" && <Loader2 className="size-4 animate-spin" />}
+                  Tout effacer
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 

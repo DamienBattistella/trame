@@ -191,3 +191,23 @@ def test_engine_starts_when_teams_driver_cannot_load(monkeypatch, make_client):
     client, watcher, _ = make_client(driver=driver)
     assert client.get("/api/state").status_code == 200 and watcher.state.selftest_ok is False
     assert driver.type_focused("19:x@thread.v2", "hello", True, True).ok is False
+
+
+def test_merge_takes_names_from_teams_and_migrates_raw_labels(make_client):
+    from models import WatchEntity, Surface
+    _c, watcher, _d = make_client()
+    watcher.state.watchlist = [
+        WatchEntity(thread_id="name:Chat Bertrand GAUTHIER Offline Last message salut 25/11",
+                    display_name="Chat Bertrand GAUTHIER Offline Last message salut 25/11", surface=Surface.dm,
+                    watch=True, mode="auto"),
+        WatchEntity(thread_id="19:old@thread.v2", display_name="Ancien nom", surface=Surface.dm, watch=False),
+        WatchEntity(thread_id="19:gone@thread.v2", display_name="Disparu suivi", surface=Surface.dm, watch=True),
+    ]
+    merged = watcher._merge([
+        WatchEntity(thread_id="name:Bertrand GAUTHIER", display_name="Bertrand GAUTHIER", surface=Surface.dm),
+        WatchEntity(thread_id="19:old@thread.v2", display_name="Nouveau nom", surface=Surface.group),
+    ])
+    by = {w.thread_id: w for w in merged}
+    assert by["name:Bertrand GAUTHIER"].watch and by["name:Bertrand GAUTHIER"].mode == "auto"
+    assert by["19:old@thread.v2"].display_name == "Nouveau nom" and by["19:old@thread.v2"].surface == Surface.group
+    assert "19:gone@thread.v2" in by and not any(t.startswith("name:Chat ") for t in by)

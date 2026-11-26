@@ -348,3 +348,26 @@ def test_soul_preview_uses_given_persona_without_saving(make_client, fresh_home)
     assert r.status_code == 200 and r.json()["reply"] == "Réponse de test" and "PR #214" in r.json()["incoming"]
     assert (fresh_home / "SOUL.md").read_text(encoding="utf-8") == before
     assert client.post("/api/soul/preview", json={"content": ""}).status_code == 422
+
+
+def test_factory_reset(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    client.put("/api/settings", json={"onboarded": True, "safety": {"countdown_seconds": 10}})
+    client.post("/api/watch/19:ee55@thread.v2", json={"watch": True})
+    client.post("/api/soul", json={"filename": "moi.md", "content": "# Moi"})
+    client.post("/api/people", json={"filename": "e.json", "content": '{"people": [{"name": "A B"}]}'})
+    assert client.post("/api/reset", json={}).status_code == 422
+    assert client.post("/api/reset", json={"confirm": "RESET"}).json() == {"ok": True}
+    s = client.get("/api/settings").json()["settings"]
+    assert s["onboarded"] is False and s["safety"]["countdown_seconds"] == 5
+    assert not any(w.watch for w in watcher.state.watchlist) and watcher.state.drafts == []
+    assert watcher.soul != "# Moi" and not (fresh_home / "ENTOURAGE.json").exists()
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["watchlist"] == [] and saved["onboarded"] is False
+
+
+def test_get_soul_returns_custom_persona_only(make_client, fresh_home):
+    client, _w, _d = make_client()
+    assert client.get("/api/soul").json()["soul"] == {"custom": False, "filename": "SOUL.md", "content": ""}
+    client.post("/api/soul", json={"filename": "moi.md", "content": "# Moi\nDirect."})
+    assert client.get("/api/soul").json()["soul"] == {"custom": True, "filename": "SOUL.md", "content": "# Moi\nDirect."}

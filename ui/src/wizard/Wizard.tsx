@@ -134,6 +134,15 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   // « Réglages » (qui marque l'onboarding comme fait) passe en dernier : un échec avant
   // laisse le wizard à refaire, jamais un panneau sans watchlist.
+  // En reprenant la configuration, le SOUL.md déjà déposé réapparaît.
+  const soulTouched = useRef(false);
+  useEffect(() => {
+    if (!connected || soulTouched.current) return;
+    trame.getSoul().then((res) => {
+      if (res.ok && res.soul && !soulTouched.current) setSoul({ name: res.soul.filename, content: res.soul.content });
+    });
+  }, [connected]);
+
   // Première arrivée sur l'étape de vérification : elle se lance toute seule.
   useEffect(() => {
     if (step === 2 && probe === "idle" && live) runProbe();
@@ -286,7 +295,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               onClick={() => toggleWatch(c.threadId)}
               className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
             >
-              <InitialsAvatar name={c.displayName} className={cn("size-8", !c.watch && "opacity-50")} />
+              <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
               <span className={cn("flex-1 truncate text-left transition-colors", !c.watch && "text-muted-foreground")}>{c.displayName}</span>
               <SelectCircle checked={c.watch} />
             </motion.button>
@@ -318,7 +327,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             }
             renderRow={(c) => (
               <div className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors duration-300", c.mode === "auto" && "bg-warning/[0.05]")}>
-                <InitialsAvatar name={c.displayName} className="size-8" />
+                <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
                 <div className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="truncate">{c.displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>
@@ -337,7 +346,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       sub: "Dépose ton SOUL.md : ta façon d'écrire, ton rôle, ce que Trame doit refuser.",
       body: (
         <div className="flex w-full flex-col items-center gap-3">
-          <SoulDrop value={soul} onChange={setSoul} />
+          <SoulDrop
+            value={soul}
+            onChange={(v) => {
+              soulTouched.current = true;
+              setSoul(v);
+            }}
+          />
           {soul ? <SoulInsight trame={trame} content={soul.content} /> : <SoulHelp />}
         </div>
       ),
@@ -519,6 +534,9 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
 function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul) => void }) {
   const [state, setState] = useState<"idle" | "drag" | "ok" | "error">(value ? "ok" : "idle");
+  useEffect(() => {
+    if (value) setState((cur) => (cur === "idle" ? "ok" : cur));
+  }, [value]);
   const [error, setError] = useState("");
   const file = value ? { name: value.name, lines: value.content.split("\n").length } : null;
   const input = useRef<HTMLInputElement>(null);

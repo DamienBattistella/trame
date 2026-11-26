@@ -10,6 +10,7 @@ from typing import Iterator, Callable, Iterable, Optional
 import config as cfgmod
 import safety
 import people as peoplemod
+from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
@@ -65,6 +66,7 @@ class Watcher:
         self.log("info", f"Vérification de Teams : {'OK' if self.state.selftest_ok else 'échec, tout reste en brouillon'}")
         try:
             self.state.watchlist = self._merge(self.driver.list_conversations())
+            self._persist_watchlist()
         except Exception:
             pass
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -529,6 +531,40 @@ class Watcher:
             raise ActionError(502, "Le cerveau a rendu une réponse vide.")
         return reply.strip()
 
+    def factory_reset(self) -> None:
+        """Danger zone: default settings, nothing followed, no draft, default persona,
+        no entourage; the wizard runs again. Claude / GitHub sign-ins are untouched."""
+        try:
+            cfg = cfgmod.factory_reset()
+        except Exception as e:
+            raise ActionError(500, f"Réinitialisation impossible : {e}")
+        new_brain = None
+        if self.brain_factory is not None:
+            try:
+                new_brain = self.brain_factory(cfg)
+            except Exception:
+                new_brain = None
+        with self._lock:
+            self.cfg = cfg
+            if new_brain is not None:
+                self.brain = new_brain
+            self.soul = cfgmod.load_soul()
+            self.people = peoplemod.remove()
+            self._briefs.clear()
+            self._history.clear()
+            self._sent_recent.clear()
+            self.state.drafts = []
+            self.state.logs = []
+            self.state.paused = False
+            self.state.onboarded = False
+            self.state.brain = cfg.get("brain", {}).get("provider", "claude")
+            try:
+                discovered = self.driver.list_conversations()
+            except Exception:
+                discovered = []
+            self.state.watchlist = [w.model_copy(update={"watch": False, "mode": "draft"}) for w in discovered]
+        self.log("info", "Trame réinitialisé : configuration à refaire")
+
     def set_soul(self, content: str) -> None:
         with self._lock:
             try:
@@ -573,15 +609,35 @@ class Watcher:
         return text
 
     def _merge(self, discovered: list[WatchEntity]) -> list[WatchEntity]:
+        """Teams is the source of names and kinds; the saved list only keeps the user's
+        choices (followed, mode, named people). Entries saved by older versions under the
+        raw rail label ("name:Chat X Offline Last message …") are carried over to the
+        clean id, then dropped."""
+        if not discovered:
+            return self.state.watchlist
         by_id = {w.thread_id: w for w in self.state.watchlist}
+        for w in self.state.watchlist:
+            if w.thread_id.startswith("name:"):
+                clean = "name:" + rail_label.parse(w.thread_id[5:]).name
+                if clean != w.thread_id:
+                    prev = by_id.get(clean)
+                    if prev is None or (w.watch and not prev.watch):
+                        by_id[clean] = w
+        found = {d.thread_id for d in discovered}
         out: list[WatchEntity] = []
         for d in discovered:
             saved = by_id.get(d.thread_id)
-            out.append(saved if saved else d)
+            if saved is None:
+                out.append(d)
+            else:
+                out.append(d.model_copy(update={"watch": saved.watch, "mode": saved.mode,
+                                                "named_people": saved.named_people or d.named_people}))
+        legacy = {w.thread_id for w in self.state.watchlist if w.thread_id.startswith("name:")
+                  and "name:" + rail_label.parse(w.thread_id[5:]).name != w.thread_id}
         for w in self.state.watchlist:
-            if w.thread_id not in {d.thread_id for d in discovered}:
+            if w.thread_id not in found and w.thread_id not in legacy and w.watch:
                 out.append(w)
-        return out or self.state.watchlist
+        return out
 
     def log(self, level, text: str) -> None:
         self.state.logs = [LogItem(at=datetime.now().strftime("%H:%M:%S"), level=level, text=text), *self.state.logs][:200]

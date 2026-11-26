@@ -9,6 +9,16 @@ function tauri(): TauriGlobal | null {
 
 export const isDesktop = () => tauri() !== null;
 
+/** Version de l'application installée (celle de la release), null hors application. */
+export async function appVersion(): Promise<string | null> {
+  try {
+    const v = await tauri()?.core?.invoke("plugin:app|version");
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Relance le moteur embarqué (application de bureau uniquement). */
 export async function restartBackend(): Promise<boolean> {
   try {

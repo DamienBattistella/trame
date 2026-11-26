@@ -120,6 +120,10 @@ class SoulPreviewBody(BaseModel):
     content: str = Field(min_length=1, max_length=64 * 1024)
 
 
+class ResetBody(BaseModel):
+    confirm: Literal["RESET"]
+
+
 class SoulBody(BaseModel):
     filename: str
     content: str
@@ -297,9 +301,19 @@ def create_app(
         watcher.clear_people()
         return {"ok": True}
 
+    @app.get("/api/soul")
+    def get_soul():
+        custom = cfgmod.soul_is_custom()
+        return {"ok": True, "soul": {"custom": custom, "filename": "SOUL.md", "content": watcher.soul if custom else ""}}
+
     @app.post("/api/soul/preview")
     def soul_preview(body: SoulPreviewBody):
         return {"ok": True, "incoming": SOUL_SAMPLE, "reply": watcher.preview_soul(body.content, SOUL_SAMPLE)}
+
+    @app.post("/api/reset")
+    def reset(body: ResetBody):
+        watcher.factory_reset()
+        return {"ok": True}
 
     @app.post("/api/selftest")
     def selftest():

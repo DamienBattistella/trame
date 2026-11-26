@@ -7,6 +7,7 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
+import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,7 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [view, setView] = useState<"wizard" | "panel" | null>(null);
   const trame = useTrame();
+  const [panelTab, setPanelTab] = useState<PanelTab>("drafts");
   const configured = view === "panel";
 
   // Une fois le moteur joint, c'est lui qui dit si le wizard a déjà été fait ; hors ligne, wizard d'abord.
@@ -163,11 +165,11 @@ export default function App() {
             {configured && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Reprendre la configuration" onClick={() => { firstRun.current = false; setView("wizard"); }}>
+                  <Button variant="ghost" size="icon" aria-label="Réglages" aria-pressed={panelTab === "settings"} onClick={() => setPanelTab("settings")}>
                     <Settings2 className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Reprendre la configuration</TooltipContent>
+                <TooltipContent>Réglages</TooltipContent>
               </Tooltip>
             )}
 
@@ -203,7 +205,18 @@ export default function App() {
             ) : (
               <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
                 <Suspense fallback={null}>
-                  {configured ? <Panel trame={trame} /> : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
+                  {configured ? (
+                    <Panel
+                      trame={trame}
+                      tab={panelTab}
+                      onTab={setPanelTab}
+                      onRestartSetup={() => {
+                        firstRun.current = false;
+                        setPanelTab("drafts");
+                        setView("wizard");
+                      }}
+                    />
+                  ) : <Wizard trame={trame} onStart={() => setView((v) => v ?? "wizard")} onFinish={() => { setView("panel"); if (firstRun.current) setAutostart(true); }} />}
                 </Suspense>
               </motion.div>
             )}

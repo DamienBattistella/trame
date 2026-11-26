@@ -517,6 +517,14 @@ export function useTrame() {
     return request("DELETE", "/api/people");
   };
 
+  /** SOUL.md déposé précédemment (null si c'est encore celui livré par défaut). */
+  const getSoul = async (): Promise<Result<{ soul: { filename: string; content: string } | null }>> => {
+    if (!connectedRef.current) return { ok: true, soul: null };
+    const res = await request<{ soul: { custom: boolean; filename: string; content: string } }>("GET", "/api/soul");
+    if (!res.ok) return res;
+    return { ok: true, soul: res.soul.custom ? { filename: res.soul.filename, content: res.soul.content } : null };
+  };
+
   /** Réponse type rédigée avec ce persona (rien n'est enregistré). */
   const previewSoul = async (content: string): Promise<Result<{ incoming: string; reply: string }>> => {
     if (!connectedRef.current) {
@@ -529,6 +537,17 @@ export function useTrame() {
       };
     }
     return request<{ incoming: string; reply: string }>("POST", "/api/soul/preview", { content });
+  };
+
+  /** Zone de danger : réglages par défaut, plus rien de suivi, configuration à refaire. */
+  const factoryReset = async (): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(600);
+      setState((s) => ({ ...s, drafts: [], logs: [], onboarded: false, watchlist: s.watchlist.map((w) => ({ ...w, watch: false, mode: "draft" })) }));
+      return { ok: true };
+    }
+    return request("POST", "/api/reset", { confirm: "RESET" });
   };
 
   const uploadSoul = async (filename: string, content: string): Promise<Result> => {
@@ -708,6 +727,8 @@ export function useTrame() {
     cancelGithubLogin,
     saveWatchlist,
     uploadSoul,
+    getSoul,
+    factoryReset,
     previewSoul,
     getPeople,
     uploadPeople,
