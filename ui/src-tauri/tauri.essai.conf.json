@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Trame (essai)",
+  "identifier": "ovh.battistella.trame.essai",
+  "build": {
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "npm run dev:essai"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Trame (essai)",
+        "shadow": true,
+        "width": 1040,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 520,
+        "decorations": false,
+        "transparent": false,
+        "resizable": true,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

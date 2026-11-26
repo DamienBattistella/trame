@@ -55,4 +55,6 @@ if __name__ == "__main__":
     parent = os.environ.get("TRAME_PARENT_PID", "")
     if parent.isdigit():
         threading.Thread(target=_exit_with_parent, args=(int(parent),), daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=8731, reload=False)
+    # TRAME_PORT only serves the trial instance (« Trame (essai) »), beside the installed one.
+    port = int(os.environ.get("TRAME_PORT") or 8731)
+    uvicorn.run(app, host="127.0.0.1", port=port, reload=False)

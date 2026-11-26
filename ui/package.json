@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "test": "node --test \"tests/*.test.ts\"",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:essai": "vite --mode essai --port 5174 --strictPort",
+    "tauri:essai": "tauri dev --config src-tauri/tauri.essai.conf.json"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
