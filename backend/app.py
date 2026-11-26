@@ -409,6 +409,11 @@ def create_app(
         watcher.mark_read(thread_id)
         return {"ok": True}
 
+    @app.post("/api/threads/{thread_id:path}/clear-compose")
+    def clear_compose(thread_id: str):
+        watcher.clear_compose(thread_id)
+        return {"ok": True}
+
     @app.post("/api/threads/{thread_id:path}/show")
     def show_thread(thread_id: str):
         watcher.show_in_teams(thread_id)

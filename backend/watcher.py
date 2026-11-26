@@ -572,7 +572,7 @@ class Watcher:
                                  files=files):
                 with self._lock:
                     d.proposal = body
-                self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
+                self.log("warn", f"Envoi à {d.from_} refusé, réponse conservée.{self._because()}")
                 raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
@@ -865,6 +865,25 @@ class Watcher:
         self._queue_draft(msg, body[:4000], "draft", None)
         self.log("draft", f"Réponse proposée via MCP pour {entity.display_name}")
         return next(d for d in self.state.drafts if d.thread_id == thread_id)
+
+    def clear_compose(self, thread_id: str) -> None:
+        """Empty the Teams compose box of a conversation, asked by the user after a refusal
+        « zone de saisie non vide »: text, pending attachment or pasted item left there
+        would otherwise block every send (and could leave with the next one)."""
+        entity = self._conversation(thread_id)
+        with self._ui_lock:
+            if self.driver._current() != thread_id and self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame n'ouvre pas d'autre conversation dans Teams.")
+            try:
+                ok = self.driver.clear_compose(thread_id)
+            except Exception as e:
+                ok, self.driver.last_error = False, str(e)
+        if not ok:
+            self.log("warn", f"Zone de saisie de {entity.display_name} non vidée : {self.driver.last_error or 'refusé par Teams'}")
+            raise ActionError(409, f"La zone de saisie de « {entity.display_name} » n'a pas pu être vidée dans Teams. "
+                                   f"{self.driver.last_error or ''}".strip())
+        self.log("info", f"Zone de saisie de {entity.display_name} vidée dans Teams")
 
     def mark_read(self, thread_id: str) -> None:
         """The user read the conversation in Trame: Teams shows it read too, for them and

@@ -120,6 +120,23 @@ class TeamsDriver(ABC):
         self.last_error = "marquer comme lu n'est pas pris en charge par ce pilote"
         return False
 
+    def clear_compose(self, thread_id: str) -> bool:
+        """Empty the compose box of thread_id (text, pending attachments, pasted items), at
+        the user's explicit request: a leftover there blocks every send. Opens the
+        conversation, then puts back the previous one. True only once it is empty."""
+        with self.focused(thread_id, restore=True) as focus:
+            if not focus.ok:
+                return False
+            try:
+                return bool(self._clear_active(thread_id))
+            except Exception as e:
+                self.last_error = str(e)
+                return False
+
+    def _clear_active(self, thread_id: str) -> bool:
+        self.last_error = "vider la zone de saisie n'est pas pris en charge par ce pilote"
+        return False
+
     def show_thread(self, thread_id: str) -> bool:
         """Bring Teams to the front on this conversation, for the user to read it there.
         Nothing is typed, so no strict confirmation is needed. False if not found."""

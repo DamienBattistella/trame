@@ -1099,6 +1099,11 @@ export function useTrame() {
     if (!connectedRef.current) return demo(200, {});
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/read`);
   };
+  /** Vide la zone de saisie de la conversation dans Teams (texte, pièce jointe en attente). */
+  const clearCompose = async (threadId: string): Promise<Result> => {
+    if (!connectedRef.current) return demo(400, {});
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/clear-compose`);
+  };
   const showInTeams = async (threadId: string): Promise<Result> => {
     if (!connectedRef.current) return demo(400, {});
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/show`);
@@ -1353,6 +1358,7 @@ export function useTrame() {
     cancelReflection,
     showInTeams,
     markRead,
+    clearCompose,
     diagnoseTeams,
     teamsWebStatus,
     exportLogs,

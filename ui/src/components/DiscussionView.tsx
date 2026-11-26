@@ -437,6 +437,24 @@ export function DiscussionView({
     setBusy("idle");
     if (!res.ok) {
       const kept = files.length ? "Ton message et tes fichiers sont conservés." : "Ton message est conservé.";
+      // Quelque chose occupe déjà la zone de saisie dans Teams (reste d'un envoi raté,
+      // brouillon tapé dans Teams) : tant qu'il y est, aucun envoi ne passe. On propose
+      // de la vider, en le disant.
+      if (/zone de saisie non vide/.test(res.error)) {
+        controls.start(shake);
+        return void toast.error(`Envoi impossible à ${c.displayName}`, {
+          description: `${res.error} ${kept}`,
+          duration: 15000,
+          action: {
+            label: "Vider dans Teams",
+            onClick: async () => {
+              const r = await trame.clearCompose(c.threadId);
+              if (r.ok) toast.success("Zone de saisie vidée dans Teams", { description: "Tu peux renvoyer ton message." });
+              else toast.error("Zone de saisie non vidée", { description: r.error });
+            },
+          },
+        });
+      }
       return fail(`Envoi impossible à ${c.displayName}`, `${res.error} ${kept}`);
     }
     if (draft) trame.removeDraft(draft.id);

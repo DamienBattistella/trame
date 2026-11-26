@@ -160,6 +160,7 @@ class MockTeamsDriver(TeamsDriver):
         self.sent_files: list[tuple[str, str, list[tuple[str, int]]]] = []
         self.opened: list[str] = []
         self.marked_read: list[str] = []
+        self.cleared: list[str] = []
         # Teams resolves anyone in the organization: the entourage is part of it.
         self.allow_anyone = True
         # Gestes simulés : réponses citant un message, réactions posées (par id de message).
@@ -287,6 +288,12 @@ class MockTeamsDriver(TeamsDriver):
             return False
         self.sent_files.append((thread_id, text, [(f.name, f.size) for f in files]))
         print(f"[mock] ENVOYÉ + {len(files)} fichier(s) -> {thread_id}: {text[:80]}")
+        return True
+
+    def _clear_active(self, thread_id: str) -> bool:
+        if self._active != thread_id:
+            return False
+        self.cleared.append(thread_id)
         return True
 
     def mark_read(self, thread_id: str) -> bool:
