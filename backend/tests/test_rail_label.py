@@ -55,6 +55,10 @@ def test_teams_v2_calibration():
     assert is_structural("Hexagone", "expanded=true;level=1")
     assert not is_structural("Foundation 🧱", "expanded=false;level=2;selected=false")
     assert same_name("Romain  CUREAU", "romain cureau")
+    # Comme le pont (norm) : sans accents. Teams affiche « Sébastien », on tape « Sebastien ».
+    assert same_name("Sébastien Hug De Larauze", "Sebastien  Hug de larauze")
+    assert same_name("Élodie Faure", "elodie faure")
+    assert not same_name("Sébastien Hug", "Sébastien Tan")
 
 
 def test_french_self_preview_is_own():

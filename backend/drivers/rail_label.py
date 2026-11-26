@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
@@ -156,5 +157,12 @@ def title_conversation(window_name: str) -> Optional[str]:
     return None
 
 
+def _name_key(s: str) -> str:
+    # Sans accents, casse ni espaces en trop : comme norm() dans teams-bridge.js, pour que
+    # le moteur et le pont reconnaissent le même nom (« Sebastien » = « Sébastien »).
+    flat = unicodedata.normalize("NFD", " ".join((s or "").split()))
+    return "".join(c for c in flat if not unicodedata.combining(c)).casefold()
+
+
 def same_name(a: str, b: str) -> bool:
-    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
+    return _name_key(a) == _name_key(b)
