@@ -174,6 +174,37 @@ class WebBridgeDriver(TeamsDriver):
                            f" ({(res or {}).get('error') or 'titre affiché : ' + (shown or 'aucun')})")
         return False
 
+    # Teams web: « Nouvelle conversation », the person picked in the « À » field. Teams'
+    # people search is not offered on its own: only the name the user chose is resolved.
+    can_start_chat = True
+
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        name = " ".join((name or "").split())
+        try:
+            res = self._rpc("newchat", name=name, timeout=25) or {}
+        except Exception as e:
+            self.last_error = str(e)
+            return None
+        shown = rail_label.title_conversation(res.get("title") or "") or ""
+        if not (res.get("ok") and rail_label.same_name(shown, name)):
+            self.last_error = (f"Teams intégré : conversation avec « {name} » pas ouverte"
+                               f" ({res.get('error') or 'titre affiché : ' + (shown or 'aucun')})")
+            return None
+        # A chat that already had messages is in the list with its stable id; a brand-new
+        # one only appears there after its first message: it goes by its name until then.
+        thread_id = next((t for t, n in self._names.items()
+                          if rail_label.same_name(n, shown) and self._kinds.get(t) == Surface.dm), None)
+        if thread_id is None:
+            try:
+                thread_id = next((it["thread_id"] for it in self._items()
+                                  if rail_label.same_name(it["parsed"].name, shown) and it["parsed"].surface == Surface.dm), None)
+            except Exception:
+                thread_id = None
+        thread_id = thread_id or f"name:{shown}"
+        self._names[thread_id] = shown
+        self._kinds[thread_id] = Surface.dm
+        return WatchEntity(thread_id=thread_id, display_name=shown, surface=Surface.dm)
+
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         surface = self._kinds.get(thread_id, Surface.dm)
         msgs = self._rpc("read", last=last_n) or []

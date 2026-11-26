@@ -62,6 +62,9 @@ class Watcher:
         self._thread_cache: dict[str, tuple[float, list[dict]]] = {}
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
+        # Conversations started from Trame: kept in the list even unfollowed, until Teams
+        # lists them itself (a brand-new chat only shows up there after its first message).
+        self._started: set[str] = set()
 
     # --- lifecycle ---
     def teams_ready(self, ready: bool) -> None:
@@ -479,6 +482,78 @@ class Watcher:
         if not ok:
             raise ActionError(404, f"« {name} » est introuvable dans la liste de Teams. Fais-la défiler dans Teams puis réessaie.")
 
+    # --- new conversation with someone not in the list yet ---
+    def _dm_named(self, name: str) -> Optional[WatchEntity]:
+        return next((w for w in self.state.watchlist
+                     if w.surface == Surface.dm and rail_label.same_name(w.display_name, name)), None)
+
+    def people_search(self, query: str, limit: int = 8) -> dict:
+        """Suggestions for « Nouvelle conversation »: the entourage first, then the people
+        Teams finds (when the driver can search). An existing private chat is pointed at."""
+        limit = max(1, min(20, limit))
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def add(name: str, person: Optional[peoplemod.Person], source: str) -> None:
+            key = peoplemod._key(name)
+            if not key or key in seen:
+                return
+            seen.add(key)
+            dm = self._dm_named(name)
+            out.append({"name": name, "role": person.role if person else None, "team": person.team if person else None,
+                        "manager": person.manager if person else None, "source": source,
+                        "thread_id": dm.thread_id if dm else None})
+
+        for p in self.people.search(query, limit):
+            add(p.name, p, "entourage")
+        teams_error = None
+        if self.driver.can_search_people and (query or "").strip() and len(out) < limit:
+            with self._ui_lock:
+                try:
+                    names = [] if self._screen_share_guarded() else self.driver.search_people(query, limit)
+                except Exception as e:
+                    names, teams_error = [], str(e)
+            for n in names:
+                add(n, self.people.find(n), "teams")
+        return {"people": out[:limit], "can_start": bool(self.driver.can_start_chat),
+                "teams_search": bool(self.driver.can_search_people), "teams_error": teams_error,
+                "unsupported": None if self.driver.can_start_chat else self.driver.start_chat_unsupported}
+
+    def start_conversation(self, name: str) -> WatchEntity:
+        """Open (or create) the private chat with `name` in Teams and add it to the list,
+        unfollowed. Nothing is typed. Refused unless Teams shows that very name."""
+        name = " ".join((name or "").split())
+        if not name:
+            raise ActionError(422, "Choisis une personne.")
+        known = self._dm_named(name)
+        if known is not None:
+            return known
+        if not self.driver.can_start_chat:
+            raise ActionError(501, f"Nouvelle conversation impossible : {self.driver.start_chat_unsupported}. "
+                                   "Écris-lui une première fois dans Teams, la conversation apparaîtra ici.")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : aucune conversation ouverte dans Teams.")
+            self.driver.last_error = None
+            try:
+                entity = self.driver.start_chat(name)
+            except Exception as e:
+                entity, self.driver.last_error = None, str(e)
+        if entity is None or not rail_label.same_name(entity.display_name, name):
+            reason = self.driver.last_error or (f"Teams affiche « {entity.display_name} »" if entity else None)
+            self.log("warn", f"Nouvelle conversation avec {name} refusée : {reason or 'non confirmée'}")
+            raise ActionError(409, f"Conversation avec « {name} » non ouverte : {reason or 'non confirmée dans Teams'}.")
+        with self._lock:
+            entity = next((w for w in self.state.watchlist if w.thread_id == entity.thread_id), None) or entity
+            if entity not in self.state.watchlist:
+                self.state.watchlist = [entity, *self.state.watchlist]
+            self._started.add(entity.thread_id)
+        self._persist_watchlist()
+        self._thread_cache.pop(entity.thread_id, None)
+        self.log("info", f"Conversation ouverte avec {entity.display_name}")
+        return entity
+
     def edit_draft(self, draft_id: str, text: str) -> Draft:
         body = (text or "").strip()
         if not body:
@@ -860,6 +935,16 @@ class Watcher:
                     prev = by_id.get(clean)
                     if prev is None or (w.watch and not prev.watch):
                         by_id[clean] = w
+        # A chat started from Trame under its name, now listed by Teams with its id.
+        moved: set[str] = set()
+        for w in self.state.watchlist:
+            if w.thread_id in self._started and w.thread_id.startswith("name:"):
+                target = by_name.get(w.thread_id[5:].casefold())
+                if target and target != w.thread_id:
+                    by_id.setdefault(target, w)
+                    moved.add(w.thread_id)
+                    self._started.discard(w.thread_id)
+                    self._started.add(target)
         found = {d.thread_id for d in discovered}
         out: list[WatchEntity] = []
         for d in discovered:
@@ -874,7 +959,9 @@ class Watcher:
         legacy |= {w.thread_id for w in self.state.watchlist
                    if not w.thread_id.startswith("name:") and rail_label.stable_id(w.thread_id) is None}
         for w in self.state.watchlist:
-            if w.thread_id not in found and w.thread_id not in legacy and w.watch:
+            if w.thread_id in moved:
+                continue
+            if w.thread_id not in found and w.thread_id not in legacy and (w.watch or w.thread_id in self._started):
                 out.append(w)
         return out
 

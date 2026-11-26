@@ -106,6 +106,24 @@ class TeamsDriver(ABC):
         now = time.monotonic()
         return {tid: value for tid, (at, value) in list(cache.items()) if now - at <= self.PRESENCE_TTL}
 
+    # --- new conversation: someone who is not in the list yet ---
+    can_start_chat: bool = False
+    """True when the driver can open a private chat with someone by name."""
+    can_search_people: bool = False
+    """True when the driver can search people in Teams (beyond the entourage)."""
+    start_chat_unsupported = "ce pilote Teams ne sait pas démarrer une conversation"
+
+    def search_people(self, query: str, limit: int = 8) -> list[str]:
+        """Names Teams suggests for query (only when can_search_people)."""
+        return []
+
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        """Open (or create) the private chat with `name` and leave it active. Returns the
+        conversation only once Teams shows it under that name (title check), None
+        otherwise with the reason in last_error. Nothing is typed."""
+        self.last_error = self.start_chat_unsupported
+        return None
+
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         """Calibration report (structure only, no message text)."""
         return {"driver": type(self).__name__}

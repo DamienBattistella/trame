@@ -11,6 +11,8 @@ class UnavailableDriver(TeamsDriver):
     install). The engine still starts, so the UI shows "Teams non repéré" instead of
     "moteur injoignable"; nothing is read and nothing is ever typed."""
 
+    start_chat_unsupported = "Teams n'est pas repéré"
+
     def __init__(self, reason: str):
         self.reason = reason
 
