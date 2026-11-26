@@ -22,7 +22,7 @@ const EFFORTS = [
 ] as const;
 
 const EFFORT_HINT: Record<Effort, string> = {
-  "": "Le réglage de Claude Code.",
+  "": "Le réglage de l'outil.",
   low: "Réponses les plus rapides, pour les échanges simples.",
   medium: "Bon équilibre entre vitesse et soin.",
   high: "Plus réfléchi, un peu plus lent.",
@@ -73,10 +73,21 @@ export function ModelPicker({
       <GroupList>
         <div className="flex flex-col gap-2 px-4 py-3">
           <span className="text-sm font-medium">Modèle Copilot</span>
-          <ModelInput value={value.copilotModel} placeholder="Par défaut (réglage de Copilot)" onCommit={(copilotModel) => onChange({ copilotModel })} />
+          <ModelInput value={value.copilotModel} placeholder="Réglage de Copilot" onCommit={(copilotModel) => onChange({ copilotModel })} />
           <span className="text-xs text-muted-foreground">
-            Le nom exact tel que Copilot le liste (commande <code className="font-mono">/model</code> dans <code className="font-mono">copilot</code>).
+            GPT-6 Luna par défaut (<code className="font-mono">gpt-6-luna</code>). Sinon, le nom exact listé par{" "}
+            <code className="font-mono">/model</code> dans <code className="font-mono">copilot</code> ; vide reprend le réglage de Copilot.
           </span>
+        </div>
+        <div className="flex flex-col gap-2.5 px-4 py-3">
+          <span className="text-sm font-medium">Effort</span>
+          <Segment
+            label="Effort Copilot"
+            value={value.copilotEffort}
+            options={EFFORTS.filter((e) => e.value !== "max")}
+            onChange={(copilotEffort) => onChange({ copilotEffort })}
+          />
+          <span className="text-xs text-muted-foreground">{EFFORT_HINT[value.copilotEffort]}</span>
         </div>
       </GroupList>
     );

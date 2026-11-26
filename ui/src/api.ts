@@ -92,7 +92,8 @@ function mapSettings(s: any): Settings {
     models: {
       claudeModel: String(s?.models?.claude_model ?? "haiku"),
       claudeEffort: (s?.models?.claude_effort ?? "") as Effort,
-      copilotModel: String(s?.models?.copilot_model ?? ""),
+      copilotModel: String(s?.models?.copilot_model ?? "gpt-6-luna"),
+      copilotEffort: (s?.models?.copilot_effort ?? "low") as Effort,
     },
     github: { enabled: Boolean(g.enabled), allRepos: Boolean(g.all_repos) },
     safety: {
@@ -182,6 +183,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.models.claudeModel !== undefined) m.claude_model = p.models.claudeModel;
     if (p.models.claudeEffort !== undefined) m.claude_effort = p.models.claudeEffort;
     if (p.models.copilotModel !== undefined) m.copilot_model = p.models.copilotModel;
+    if (p.models.copilotEffort !== undefined) m.copilot_effort = p.models.copilotEffort;
     out.models = m;
   }
   if (p.github) {
@@ -263,7 +265,7 @@ function mockState(): TrameState {
 let localSettings: Settings = {
   onboarded: false,
   brain: "claude",
-  models: { claudeModel: "haiku", claudeEffort: "", copilotModel: "" },
+  models: { claudeModel: "haiku", claudeEffort: "", copilotModel: "gpt-6-luna", copilotEffort: "low" },
   github: { enabled: true, allRepos: true },
   safety: {
     autoPauseOnScreenShare: true,

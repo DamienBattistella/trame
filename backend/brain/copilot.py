@@ -12,18 +12,22 @@ class CopilotBrain(Brain):
     """Alternative brain via the GitHub Copilot CLI (`gh copilot`). Separate channel
     from Claude, same interface. Exact invocation is version-dependent — A CALER."""
 
-    def __init__(self, command: str = "gh", args: list[str] | None = None, timeout: float = 60.0, model: str = ""):
+    TIMEOUTS = {"": 60.0, "low": 45.0, "medium": 60.0, "high": 90.0, "xhigh": 150.0, "max": 240.0}
+
+    def __init__(self, command: str = "gh", args: list[str] | None = None, timeout: float | None = None,
+                 model: str = "", effort: str = ""):
         self.command = command
         # `gh copilot suggest` (old extension) is an interactive shell-command helper that
         # hangs until the timeout: older configs carrying it get the non-interactive form.
         args = list(args) if args and "suggest" not in args else list(DEFAULT_ARGS)
-        if model and "--model" not in args:
-            # Before -p, whose value is the prompt appended last.
-            i = args.index("-p") if "-p" in args else len(args)
-            args[i:i] = ["--model", model]
-        self.model = model
+        # Before -p, whose value is the prompt appended last.
+        extra = (["--model", model] if model and "--model" not in args else []) + \
+                (["--reasoning-effort", effort] if effort and "--reasoning-effort" not in args else [])
+        i = args.index("-p") if "-p" in args else len(args)
+        args[i:i] = extra
+        self.model, self.effort = model, effort
         self.args = args
-        self.timeout = timeout
+        self.timeout = timeout or self.TIMEOUTS.get(effort, 60.0)
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         return self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context))

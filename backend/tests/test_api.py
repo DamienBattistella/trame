@@ -146,7 +146,7 @@ def test_settings_get(make_client):
     assert r["settings"] == {
         "onboarded": False,
         "brain": "claude",
-        "models": {"claude_model": "haiku", "claude_effort": "", "copilot_model": ""},
+        "models": {"claude_model": "haiku", "claude_effort": "", "copilot_model": "gpt-6-luna", "copilot_effort": "low"},
         "github": {"enabled": True, "all_repos": True},
         "safety": {
             "auto_pause_on_screen_share": True,
@@ -425,3 +425,11 @@ def test_claude_defaults_to_haiku():
     assert b.args[b.args.index("--model") + 1] == "haiku" and "--effort" not in b.args
     b = make_brain({"brain": {"provider": "claude", "claude": {"model": ""}}})
     assert "--model" not in b.args
+
+
+def test_copilot_defaults_to_gpt_6_luna_low():
+    from app import make_brain
+    c = make_brain({"brain": {"provider": "copilot"}})
+    assert c.args[c.args.index("--model") + 1] == "gpt-6-luna"
+    assert c.args[c.args.index("--reasoning-effort") + 1] == "low"
+    assert c.args.index("--reasoning-effort") < c.args.index("-p") and c.timeout == 45.0

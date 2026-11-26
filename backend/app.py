@@ -57,7 +57,8 @@ def make_brain(cfg: dict) -> Brain:
     models = settingsmod.from_config(cfg).models
     if prov == "copilot":
         c = cfg["brain"].get("copilot", {})
-        return CopilotBrain(command=c.get("command", "gh"), args=c.get("args"), model=models.copilot_model)
+        return CopilotBrain(command=c.get("command", "gh"), args=c.get("args"), model=models.copilot_model,
+                            effort=models.copilot_effort)
     c = cfg.get("brain", {}).get("claude", {})
     return ClaudeBrain(command=c.get("command", "claude"), args=c.get("args"), model=models.claude_model,
                        effort=models.claude_effort)

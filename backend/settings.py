@@ -24,7 +24,8 @@ class ModelSettings(BaseModel):
     the CLI's own default (the user's Claude Code / Copilot setting)."""
     claude_model: str = "haiku"
     claude_effort: Effort = ""
-    copilot_model: str = ""
+    copilot_model: str = "gpt-6-luna"
+    copilot_effort: Effort = "low"
 
     @field_validator("claude_model", "copilot_model", mode="before")
     @classmethod
@@ -98,6 +99,7 @@ class ModelsPatch(_Patch):
     claude_model: Optional[str] = None
     claude_effort: Optional[Effort] = None
     copilot_model: Optional[str] = None
+    copilot_effort: Optional[Effort] = None
 
     @field_validator("claude_model", "copilot_model", mode="before")
     @classmethod
@@ -159,10 +161,12 @@ def _int(value, default: int, lo: int, hi: int) -> int:
 
 def _models(brain: dict) -> ModelSettings:
     claude, copilot = brain.get("claude", {}) or {}, brain.get("copilot", {}) or {}
-    effort = claude.get("effort", "")
+    levels = ("low", "medium", "high", "xhigh", "max")
+    effort, cop_effort = claude.get("effort", ""), copilot.get("effort", "low")
     try:
-        return ModelSettings(claude_model=claude.get("model", "haiku"), copilot_model=copilot.get("model", ""),
-                             claude_effort=effort if effort in ("low", "medium", "high", "xhigh", "max") else "")
+        return ModelSettings(claude_model=claude.get("model", "haiku"), copilot_model=copilot.get("model", "gpt-6-luna"),
+                             claude_effort=effort if effort in levels else "",
+                             copilot_effort=cop_effort if cop_effort in levels else "")
     except ValueError:
         return ModelSettings()
 
@@ -226,7 +230,8 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     brain_cfg["provider"] = merged.brain
     claude = brain_cfg.setdefault("claude", {})
     claude["model"], claude["effort"] = merged.models.claude_model, merged.models.claude_effort
-    brain_cfg.setdefault("copilot", {})["model"] = merged.models.copilot_model
+    copilot = brain_cfg.setdefault("copilot", {})
+    copilot["model"], copilot["effort"] = merged.models.copilot_model, merged.models.copilot_effort
     gh = out.setdefault("context", {}).setdefault("github", {})
     gh["enabled"] = merged.github.enabled
     gh["repos"] = "all" if merged.github.all_repos else "allowlist"

@@ -42,7 +42,7 @@ export interface Settings {
   onboarded: boolean;
   brain: Brain;
   /** Vide : le réglage par défaut de Claude Code ou de Copilot. */
-  models: { claudeModel: string; claudeEffort: Effort; copilotModel: string };
+  models: { claudeModel: string; claudeEffort: Effort; copilotModel: string; copilotEffort: Effort };
   github: { enabled: boolean; allRepos: boolean };
   safety: {
     autoPauseOnScreenShare: boolean;
