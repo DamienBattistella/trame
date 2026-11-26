@@ -62,3 +62,19 @@ def test_french_self_preview_is_own():
     assert r.preview_sender == "You" and r.preview == "je regarde"
     r = parse("Chat Chloé Julenon Away Last message You: J'arrive 09:12")
     assert r.preview_sender == "You"
+
+
+def test_teams_web_label_without_prefix_or_marker():
+    r = parse("Romain CUREAU 25/11 je vais préparer ça")
+    assert (r.name, r.last_time, r.preview, r.preview_sender) == ("Romain CUREAU", "25/11", "je vais préparer ça", "Romain CUREAU")
+    r = parse("Hexagone 10 - Developers 24/11 Chloé: merci je regarde ça")
+    assert (r.name, r.preview_sender, r.preview) == ("Hexagone 10 - Developers", "Chloé", "merci je regarde ça")
+    r = parse("Hugo Lannes 25/11")
+    assert (r.name, r.last_time, r.preview) == ("Hugo Lannes", "25/11", None)
+    assert parse("Romain CUREAU 10:41 Vous : je regarde").preview_sender == "You"
+    assert parse("Damien Battistella (You) Hier note").is_self
+    r = parse("Non lu Sébastien Hug De Larauze 09:49 nouvelle config")
+    assert (r.name, r.unread, r.preview) == ("Sébastien Hug De Larauze", True, "nouvelle config")
+    assert not parse("Romain CUREAU 25/11 je vais préparer ça").unread
+    from drivers.rail_label import is_structural
+    assert is_structural("Enregistré")

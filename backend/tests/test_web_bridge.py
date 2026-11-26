@@ -109,3 +109,22 @@ def test_teams_ready_marks_checked_and_reads_conversations(make_client):
     assert any(l.text == "Teams connecté" for l in watcher.state.logs)
     watcher.teams_ready(True)
     assert sum(l.text == "Teams connecté" for l in watcher.state.logs) == 1
+
+
+def test_teams_web_labels_give_clean_names_stable_ids_and_new_messages():
+    """Teams web exposes "name time preview", not the desktop "Chat … Last message …"."""
+    d = WebBridgeDriver()
+    rail = [{"label": "Romain CUREAU 25/11 je vais préparer ça", "id": ""},
+            {"label": "Hexagone 10 - Developers 24/11 Chloé: merci", "id": "title-19:95@thread.v2"}]
+    d._rpc = lambda op, **_: rail
+    convs = d.list_conversations()
+    assert [(c.thread_id, c.display_name, c.surface) for c in convs] == [
+        ("name:Romain CUREAU", "Romain CUREAU", Surface.dm),
+        ("title-19:95@thread.v2", "Hexagone 10 - Developers", Surface.group)]
+    w = PreviewWatcher()
+    assert w.diff([("name:Romain CUREAU", rail[0]["label"])], {}) == []
+    rail[0]["label"] = "Romain CUREAU 10:41 tu as vu ma PR ?"
+    assert d.list_conversations()[0].thread_id == "name:Romain CUREAU"
+    new = w.diff([("name:Romain CUREAU", rail[0]["label"])], {})
+    assert len(new) == 1 and (new[0].sender, new[0].text) == ("Romain CUREAU", "tu as vu ma PR ?")
+    assert w.diff([("name:Romain CUREAU", "Romain CUREAU 10:42 Vous : oui")], {}) == []

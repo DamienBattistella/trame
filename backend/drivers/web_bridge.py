@@ -107,6 +107,9 @@ class WebBridgeDriver(TeamsDriver):
             if not label.name or rail_label.is_structural(label.name, it.get("aria") or ""):
                 continue
             thread_id = rail_label.stable_id(it.get("id") or "") or f"name:{label.name}"
+            # The web label carries no kind: group and meeting chats are told by their id.
+            if label.surface == Surface.dm and "@thread." in thread_id:
+                label.surface = Surface.group
             out.append({**it, "thread_id": thread_id, "parsed": label})
             self._names[thread_id] = label.name
             self._kinds[thread_id] = label.surface

@@ -17,7 +17,8 @@
     const n = norm(name);
     const all = items();
     const exact = all.filter((el) => {
-      const l = norm(label(el)).replace(KIND, "");
+      // Teams web prefixes an unread conversation with "Non lu" / "Unread".
+      const l = norm(label(el)).replace(KIND, "").replace(/^(non lus?|unread)\s+/, "");
       return l === n || l.startsWith(n + " ");
     });
     return exact.sort((a, b) => label(a).length - label(b).length)[0] || null;
