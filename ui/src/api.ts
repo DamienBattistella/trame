@@ -6,6 +6,7 @@ import {
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
+  ThreadMessage,
   PeopleSummary,
   LogItem,
   Mode,
@@ -556,6 +557,37 @@ export function useTrame() {
     return request<{ incoming: string; reply: string }>("POST", "/api/soul/preview", { content });
   };
 
+  /** Mode manuel : historique d'une conversation, réponse tapée à la main, proposition, ouverture dans Teams. */
+  const threadMessages = async (threadId: string): Promise<Result<{ messages: ThreadMessage[] }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(700);
+      const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
+      const who = conv?.displayName ?? "Quelqu'un";
+      return {
+        ok: true,
+        messages: [
+          { sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false },
+          { sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true },
+          { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
+        ],
+      };
+    }
+    return request<{ messages: ThreadMessage[] }>("GET", `/api/threads/${encodeURIComponent(threadId)}/messages`);
+  };
+  const sendInThread = async (threadId: string, text: string): Promise<Result> => {
+    if (!connectedRef.current) return demo(800, {});
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text });
+  };
+  const suggestInThread = async (threadId: string): Promise<Result<{ text: string }>> => {
+    if (!connectedRef.current) return demo(1500, { text: "Oui, je la relis cet après-midi et je te fais un retour avant 17 h." });
+    return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`);
+  };
+  const showInTeams = async (threadId: string): Promise<Result> => {
+    if (!connectedRef.current) return demo(400, {});
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/show`);
+  };
+
   /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
   const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
     if (!connectedRef.current) {
@@ -757,6 +789,10 @@ export function useTrame() {
     getSoul,
     getSoulTemplate,
     factoryReset,
+    threadMessages,
+    sendInThread,
+    suggestInThread,
+    showInTeams,
     diagnoseTeams,
     previewSoul,
     getPeople,

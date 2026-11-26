@@ -23,12 +23,13 @@ import { GithubConnect } from "@/components/GithubConnect";
 import { EntourageSection } from "@/components/EntourageSection";
 import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
+import { ConversationSheet } from "@/components/ConversationSheet";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
 import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
-import { DraftItem, LogItem, Settings, SettingsPatch, Surface } from "@/types";
+import { DraftItem, LogItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
 
 
 type OpenBrief = (t: BriefTarget) => void;
@@ -454,6 +455,7 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
 }
 
 function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
+  const [open, setOpen] = useState<WatchEntity | null>(null);
   const report = (what: string) => (res: Result) => {
     if (!res.ok) toast.error(what, { description: `${res.error} Rien n'a été modifié.` });
   };
@@ -466,13 +468,20 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
         className="h-[52vh]"
         renderRow={(c) => (
           <div className="group flex min-h-14 items-center gap-3 px-4 py-2">
-            <InitialsAvatar name={c.displayName} className="size-8" />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
-              {c.namedPeople.length > 0 && (
-                <span className="truncate text-xs text-muted-foreground">réagit à {c.namedPeople.join(", ")}</span>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(c)}
+              title="Ouvrir la conversation"
+              className="-my-1 -ml-1 flex min-w-0 flex-1 items-center gap-3 rounded-xl py-1 pl-1 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <InitialsAvatar name={c.displayName} className="size-8" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
+                {c.namedPeople.length > 0 && (
+                  <span className="truncate text-xs text-muted-foreground">réagit à {c.namedPeople.join(", ")}</span>
+                )}
+              </span>
+            </button>
             <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
               <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
             </span>
@@ -504,6 +513,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
           </div>
         )}
       />
+      <ConversationSheet trame={trame} conversation={open} onClose={() => setOpen(null)} />
     </div>
   );
 }

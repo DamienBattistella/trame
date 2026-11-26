@@ -69,6 +69,11 @@ class TeamsDriver(ABC):
                 except Exception:
                     focus.restored = False
 
+    def show_thread(self, thread_id: str) -> bool:
+        """Bring Teams to the front on this conversation, for the user to read it there.
+        Nothing is typed, so no strict confirmation is needed. False if not found."""
+        return bool(self.open_thread(thread_id))
+
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         """Calibration report (structure only, no message text)."""
         return {"driver": type(self).__name__}

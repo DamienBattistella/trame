@@ -294,6 +294,53 @@ class Watcher:
                 raise ActionError(409, "Impossible de confirmer la conversation dans Teams : rien n'a été saisi.")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
 
+    # --- manual mode: read a conversation, reply by hand, or ask for a proposal ---
+    def _is_mine(self, sender: str) -> bool:
+        names = self.cfg.get("triggers", {}).get("self_names", ["Damien"])
+        s = (sender or "").strip().casefold()
+        return s in ("you", "vous", "moi") or any(s == n.strip().casefold() for n in names if n.strip())
+
+    def thread_messages(self, thread_id: str, last_n: int = 30) -> list[dict]:
+        entity = self._conversation(thread_id)
+        msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
+        return [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
+
+    def send_manual(self, thread_id: str, text: str) -> None:
+        entity = self._conversation(thread_id)
+        body = text.strip()
+        if not body:
+            raise ActionError(422, "Le message est vide.")
+        self._typing_allowed()
+        if not self._deliver(thread_id, body, send=True, restore=True):
+            raise ActionError(409, f"Impossible de confirmer « {entity.display_name} » dans Teams : rien n'a été envoyé.")
+        self._history.pop(thread_id, None)
+        self.log("sent", f"Envoyé à {entity.display_name} : « {body[:60]} »")
+
+    def suggest_reply(self, thread_id: str, last_n: int = 15) -> str:
+        entity = self._conversation(thread_id)
+        msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
+        theirs = [m for m in msgs if not self._is_mine(m.sender)]
+        if not theirs:
+            raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
+        last = theirs[-1]
+        summary = "\n".join(f"{m.sender}: {m.text}" for m in msgs[:-1])
+        try:
+            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary))
+        except Exception as e:
+            raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
+        return reply.strip()
+
+    def show_in_teams(self, thread_id: str) -> None:
+        """Open the conversation in Teams for the user (Trame types nothing)."""
+        name = next((w.display_name for w in self.state.watchlist if w.thread_id == thread_id), thread_id)
+        with self._ui_lock:
+            try:
+                ok = self.driver.show_thread(thread_id)
+            except Exception:
+                ok = False
+        if not ok:
+            raise ActionError(404, f"« {name} » est introuvable dans la liste de Teams. Fais-la défiler dans Teams puis réessaie.")
+
     def dismiss_draft(self, draft_id: str) -> None:
         with self._lock:
             self.state.drafts = [x for x in self.state.drafts if x.id != draft_id]
@@ -439,7 +486,7 @@ class Watcher:
         self.log("info", f"Résumé généré pour {name} ({len(msgs)} message(s){gh_part})")
         return brief
 
-    def _read_focused(self, thread_id: str, name: str, last_n: int) -> list[IncomingMessage]:
+    def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé") -> list[IncomingMessage]:
         """Open the conversation just long enough to read it, then reopen the previous one."""
         with self._ui_lock:
             if self.driver._current() != thread_id and self._screen_share_guarded():
@@ -451,12 +498,12 @@ class Watcher:
                     if focus.ok:
                         msgs = self.driver.read_context(thread_id, last_n)
             except Exception as e:
-                self.log("warn", f"Résumé impossible pour {name} : lecture de la conversation échouée ({e})")
+                self.log("warn", f"{purpose} impossible pour {name} : lecture de la conversation échouée ({e})")
                 raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
         self._warn_if_not_restored(focus)
         if not focus.ok:
-            self.log("warn", f"Résumé impossible pour {name} : conversation non confirmée dans Teams")
-            raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams : rien n'a été résumé.")
+            self.log("warn", f"{purpose} impossible pour {name} : conversation non confirmée dans Teams")
+            raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams.")
         return msgs
 
     def cached_brief(self, thread_id: str) -> Optional[Brief]:

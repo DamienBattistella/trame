@@ -82,6 +82,13 @@ export interface Brief {
   sources: { messages: number; reposSearched: number };
 }
 
+export interface ThreadMessage {
+  sender: string;
+  text: string;
+  at: string;
+  mine: boolean;
+}
+
 export interface PeopleSummary {
   loaded: boolean;
   count: number;

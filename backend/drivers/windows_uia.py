@@ -189,6 +189,27 @@ class WindowsUIADriver(TeamsDriver):
         except Exception:
             return False
 
+    def show_thread(self, thread_id: str) -> bool:
+        try:
+            win = self._window()
+            try:
+                if win.IsMinimize():
+                    win.ShowWindow(self.auto.SW.Restore)
+            except Exception:
+                pass
+            try:
+                win.SetActive()
+            except Exception:
+                pass
+            rail = self._find_rail(win)
+            item = self._rail_item_for(rail, thread_id) if rail is not None else None
+            if item is None:
+                return False
+            item.Click(simulateMove=False, waitTime=0.1)
+            return True
+        except Exception:
+            return False
+
     def is_screen_sharing(self) -> bool:
         win = self._window()
         # Teams shows a "Stop sharing" / "Arrêter le partage" affordance while sharing.

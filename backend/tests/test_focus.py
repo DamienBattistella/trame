@@ -211,3 +211,28 @@ def test_merge_takes_names_from_teams_and_migrates_raw_labels(make_client):
     assert by["name:Bertrand GAUTHIER"].watch and by["name:Bertrand GAUTHIER"].mode == "auto"
     assert by["19:old@thread.v2"].display_name == "Nouveau nom" and by["19:old@thread.v2"].surface == Surface.group
     assert "19:gone@thread.v2" in by and not any(t.startswith("name:Chat ") for t in by)
+
+
+def test_show_in_teams_opens_without_typing(make_client):
+    client, _watcher, driver = make_client()
+    r = client.post("/api/threads/19%3Abb22%40thread.v2/show")
+    assert r.status_code == 200 and driver.active_thread() == "19:bb22@thread.v2" and driver.typed == []
+    assert client.post("/api/threads/19%3Ainconnu%40thread.v2/show").status_code == 404
+
+
+def test_manual_mode_read_suggest_send(make_client):
+    client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)))
+    t = "19%3Abb22%40thread.v2"
+    msgs = client.get(f"/api/threads/{t}/messages").json()["messages"]
+    assert msgs and all({"sender", "text", "at", "mine"} <= m.keys() for m in msgs)
+    assert driver.active_thread() == USER_VIEW
+    assert client.post(f"/api/threads/{t}/suggest").json()["text"] == "Réponse de test"
+    assert client.post(f"/api/threads/{t}/send", json={"text": "   "}).status_code == 422
+    assert client.post(f"/api/threads/{t}/send", json={"text": "C'est noté."}).json() == {"ok": True}
+    assert driver.typed[-1] == (DM_DRAFT, "C'est noté.", True) and driver.active_thread() == USER_VIEW
+
+
+def test_manual_send_blocked_during_screen_share(make_client):
+    client, _watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
+    r = client.post("/api/threads/19%3Abb22%40thread.v2/send", json={"text": "Coucou"})
+    assert r.status_code == 409 and driver.typed == []

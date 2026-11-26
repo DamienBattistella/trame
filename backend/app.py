@@ -248,6 +248,24 @@ def create_app(
         brief = watcher.generate_brief(thread_id, body.last_messages if body else None)
         return {"ok": True, "brief": brief.model_dump()}
 
+    @app.get("/api/threads/{thread_id:path}/messages")
+    def thread_messages(thread_id: str, last: int = 30):
+        return {"ok": True, "messages": watcher.thread_messages(thread_id, max(5, min(100, last)))}
+
+    @app.post("/api/threads/{thread_id:path}/send")
+    def thread_send(thread_id: str, body: TextBody):
+        watcher.send_manual(thread_id, body.text or "")
+        return {"ok": True}
+
+    @app.post("/api/threads/{thread_id:path}/suggest")
+    def thread_suggest(thread_id: str):
+        return {"ok": True, "text": watcher.suggest_reply(thread_id)}
+
+    @app.post("/api/threads/{thread_id:path}/show")
+    def show_thread(thread_id: str):
+        watcher.show_in_teams(thread_id)
+        return {"ok": True}
+
     @app.get("/api/threads/{thread_id:path}/brief")
     def get_brief(thread_id: str):
         brief = watcher.cached_brief(thread_id)
