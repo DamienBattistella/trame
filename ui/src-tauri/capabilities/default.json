@@ -28,6 +28,12 @@
         }
       ]
     },
-    "shell:allow-open"
+    "shell:allow-open",
+    "allow-restart-backend",
+    "allow-check-update",
+    "allow-install-update",
+    "allow-teams-web-open",
+    "allow-teams-web-hide",
+    "allow-teams-web-eval"
   ]
 }

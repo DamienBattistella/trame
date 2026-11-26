@@ -26,6 +26,7 @@ import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
 import { McpSettings } from "@/components/McpSettings";
+import { TeamsWebSettings } from "@/components/TeamsWebSettings";
 import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
@@ -543,6 +544,22 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       desc: "Configuration et réinitialisation.",
       body: (
         <div className="flex flex-col gap-6">
+          <div>
+            <SectionLabel>Teams intégré</SectionLabel>
+            <TeamsWebSettings
+              trame={trame}
+              enabled={settings.teamsWeb.enabled}
+              onToggle={async (enabled) => {
+                const res = await trame.updateSettings({ teamsWeb: { enabled } });
+                if (!res.ok) {
+                  toast.error("Réglage non enregistré", { description: res.error });
+                  return false;
+                }
+                setSettings(res.settings);
+                return true;
+              }}
+            />
+          </div>
       <div className="pb-4">
         <GroupList>
           <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">

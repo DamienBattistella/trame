@@ -5,6 +5,7 @@ from typing import Callable, Iterable, Optional
 from models import IncomingMessage, Surface, WatchEntity
 from drivers.base import TeamsDriver
 from drivers import rail_label
+from drivers.preview_watch import PreviewWatcher
 
 # Real driver — Windows only. Imported lazily so the backend runs on any OS with
 # the mock. Teams v2 is a WebView2 (Chromium) app: the UIA tree is the web DOM
@@ -23,6 +24,7 @@ class WindowsUIADriver(TeamsDriver):
         self._win = None
         self._fingerprints: dict[str, str] = {}
         self._names: dict[str, str] = {}
+        self._previews = PreviewWatcher()
 
     def _window(self):
         if self._win is None or not self._win.Exists(0, 0):
@@ -459,4 +461,15 @@ class WindowsUIADriver(TeamsDriver):
         return report
 
     def _poll_new(self) -> list[IncomingMessage]:
-        return []  # A CALER: rail badge diff + open-thread fingerprint diff.
+        rail = self._find_rail(self._window())
+        if rail is None:
+            return []
+        items = self._rail_items(rail)
+        convs = {}
+        labels = []
+        for item in items:
+            label = self._label_of(item)
+            tid = self._thread_id_of(item)
+            convs[tid] = WatchEntity(thread_id=tid, display_name=label.name, surface=label.surface)
+            labels.append((tid, item.Name or ""))
+        return self._previews.diff(labels, convs)

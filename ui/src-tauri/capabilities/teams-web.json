@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "teams-web",
+  "description": "Teams intégré : la page Teams web ne peut appeler qu'une commande, la réponse du pont.",
+  "windows": ["teams-web"],
+  "remote": {
+    "urls": ["https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*"]
+  },
+  "permissions": ["allow-teams-bridge-reply"]
+}

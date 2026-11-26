@@ -162,6 +162,53 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+const TEAMS_WEB: &str = "teams-web";
+const TEAMS_URL: &str = "https://teams.microsoft.com/v2/";
+const TEAMS_BRIDGE: &str = include_str!("../teams-bridge.js");
+
+/// « Teams intégré » (expérimental) : Teams web in a Trame window, hidden once the
+/// user has signed in. Its page may only call `teams_bridge_reply`.
+#[tauri::command]
+fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(TEAMS_WEB) {
+        if visible {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        return Ok(());
+    }
+    let url = TEAMS_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+    tauri::WebviewWindowBuilder::new(&app, TEAMS_WEB, tauri::WebviewUrl::External(url))
+        .title("Teams · Trame")
+        .inner_size(1100.0, 760.0)
+        .visible(visible)
+        .initialization_script(TEAMS_BRIDGE)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn teams_web_hide(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(TEAMS_WEB) {
+        let _ = w.hide();
+    }
+}
+
+/// Relay from the Trame UI: run one bridge command inside the Teams page.
+#[tauri::command]
+fn teams_web_eval(app: AppHandle, script: String) -> Result<(), String> {
+    let w = app.get_webview_window(TEAMS_WEB).ok_or("Teams intégré n'est pas ouvert")?;
+    w.eval(&script).map_err(|e| e.to_string())
+}
+
+/// The Teams page answers here; the Trame UI forwards the answer to the engine.
+#[tauri::command]
+fn teams_bridge_reply(app: AppHandle, payload: serde_json::Value) {
+    let _ = app.emit_to("main", "teams-bridge-reply", payload);
+}
+
 fn quit(app: &AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
     stop_backend(app);
@@ -179,7 +226,15 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![restart_backend, check_update, install_update])
+        .invoke_handler(tauri::generate_handler![
+            restart_backend,
+            check_update,
+            install_update,
+            teams_web_open,
+            teams_web_hide,
+            teams_web_eval,
+            teams_bridge_reply
+        ])
         .setup(|app| {
             spawn_backend(app.handle());
 

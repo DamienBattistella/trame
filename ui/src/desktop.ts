@@ -41,6 +41,31 @@ export async function installUpdate(): Promise<string | null> {
   }
 }
 
+/** Teams intégré (expérimental) : fenêtre Teams web de Trame. */
+export async function teamsWebOpen(visible: boolean): Promise<string | null> {
+  try {
+    await tauri()?.core?.invoke("teams_web_open", { visible });
+    return null;
+  } catch (e) {
+    return String(e);
+  }
+}
+export async function teamsWebHide(): Promise<void> {
+  try {
+    await tauri()?.core?.invoke("teams_web_hide");
+  } catch {
+    /* fenêtre absente */
+  }
+}
+export async function teamsWebEval(script: string): Promise<boolean> {
+  try {
+    await tauri()?.core?.invoke("teams_web_eval", { script });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Relance le moteur embarqué (application de bureau uniquement). */
 export async function restartBackend(): Promise<boolean> {
   try {

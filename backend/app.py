@@ -6,7 +6,7 @@ from datetime import datetime
 import re
 from contextlib import asynccontextmanager
 from pathlib import PurePath
-from typing import Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
@@ -29,8 +29,13 @@ from brain.auth import ClaudeAuth
 
 
 def make_driver() -> TeamsDriver:
-    # Real UIA driver on Windows; mock elsewhere so the API runs anywhere.
-    if os.name == "nt" and os.environ.get("TRAME_DRIVER", "uia") != "mock":
+    # « Teams intégré » (expérimental) when enabled, else the real UIA driver on
+    # Windows; mock elsewhere so the API runs anywhere.
+    mode = os.environ.get("TRAME_DRIVER") or ("web" if cfgmod.load().get("teams_web", {}).get("enabled") else "uia")
+    if mode == "web":
+        from drivers.web_bridge import WebBridgeDriver
+        return WebBridgeDriver()
+    if os.name == "nt" and mode != "mock":
         try:
             from drivers.windows_uia import WindowsUIADriver
             return WindowsUIADriver()
@@ -121,6 +126,13 @@ SOUL_SAMPLE = "Salut, tu peux jeter un œil à la PR #214 avant demain ? Je bloq
 
 class SoulPreviewBody(BaseModel):
     content: str = Field(min_length=1, max_length=64 * 1024)
+
+
+class BridgeReply(BaseModel):
+    id: int
+    ok: bool
+    result: Optional[Any] = None
+    error: Optional[str] = None
 
 
 class DiagnosticBody(BaseModel):
@@ -349,6 +361,31 @@ def create_app(
         return {"ok": True}
 
     app.include_router(make_mcp_router(watcher))
+
+    def _bridge():
+        from drivers.web_bridge import WebBridgeDriver
+        d = watcher.driver
+        if not isinstance(d, WebBridgeDriver):
+            raise ActionError(409, "Teams intégré n'est pas activé.")
+        return d
+
+    @app.get("/api/teams-web/poll")
+    def teams_web_poll():
+        cmd = _bridge().next_command(20.0)
+        return {"ok": True, "command": cmd}
+
+    @app.post("/api/teams-web/reply")
+    def teams_web_reply(body: BridgeReply):
+        _bridge().deliver(body.id, body.ok, body.result, body.error)
+        return {"ok": True}
+
+    @app.get("/api/teams-web/status")
+    def teams_web_status():
+        from drivers.web_bridge import WebBridgeDriver
+        d = watcher.driver
+        if not isinstance(d, WebBridgeDriver):
+            return {"ok": True, "status": {"enabled": False}}
+        return {"ok": True, "status": {"enabled": True, **d.status()}}
 
     @app.get("/api/logs/export")
     def logs_export():

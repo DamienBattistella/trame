@@ -107,6 +107,7 @@ function mapSettings(s: any): Settings {
       includeContent: Boolean(s?.telemetry?.include_content),
     },
     mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? "") },
+    teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
   };
 }
 function mapBrief(b: any): Brief {
@@ -204,6 +205,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.mcp.regenerateToken) m.regenerate_token = true;
     out.mcp = m;
   }
+  if (p.teamsWeb?.enabled !== undefined) out.teams_web = { enabled: p.teamsWeb.enabled };
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -215,6 +217,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
     telemetry: { ...s.telemetry, ...p.telemetry },
+    teamsWeb: { enabled: p.teamsWeb?.enabled ?? s.teamsWeb.enabled },
     mcp: {
       enabled: p.mcp?.enabled ?? s.mcp.enabled,
       token: p.mcp?.enabled && !s.mcp.token ? "demo-jeton-local" : s.mcp.token,
@@ -254,6 +257,7 @@ let localSettings: Settings = {
   brief: { enabled: true, lastMessages: 30 },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "" },
+  teamsWeb: { enabled: false },
 };
 const localBriefs = new Map<string, Brief>();
 
@@ -627,6 +631,12 @@ export function useTrame() {
     return request<{ filename: string; text: string }>("GET", "/api/logs/export");
   };
 
+  /** Teams intégré : état du pont (relais, page prête, titre). */
+  const teamsWebStatus = async (): Promise<Result<{ status: { enabled: boolean; relay?: boolean; ready?: boolean; title?: string; error?: string } }>> => {
+    if (!connectedRef.current) return demo(200, { status: { enabled: false } });
+    return request("GET", "/api/teams-web/status");
+  };
+
   /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
   const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
     if (!connectedRef.current) {
@@ -833,6 +843,7 @@ export function useTrame() {
     suggestInThread,
     showInTeams,
     diagnoseTeams,
+    teamsWebStatus,
     exportLogs,
     previewSoul,
     getPeople,

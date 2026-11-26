@@ -50,6 +50,10 @@ class McpSettings(BaseModel):
     token: str = ""
 
 
+class TeamsWebSettings(BaseModel):
+    enabled: bool = False
+
+
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
@@ -58,6 +62,7 @@ class Settings(BaseModel):
     brief: BriefSettings
     telemetry: TelemetrySettings = TelemetrySettings()
     mcp: McpSettings = McpSettings()
+    teams_web: TeamsWebSettings = TeamsWebSettings()
 
 
 class _Patch(BaseModel):
@@ -92,6 +97,10 @@ class McpPatch(_Patch):
     regenerate_token: Optional[bool] = None
 
 
+class TeamsWebPatch(_Patch):
+    enabled: Optional[bool] = None
+
+
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
@@ -100,6 +109,7 @@ class SettingsPatch(_Patch):
     brief: Optional[BriefPatch] = None
     telemetry: Optional[TelemetryPatch] = None
     mcp: Optional[McpPatch] = None
+    teams_web: Optional[TeamsWebPatch] = None
 
 
 def _int(value, default: int, lo: int, hi: int) -> int:
@@ -133,6 +143,7 @@ def from_config(cfg: dict) -> Settings:
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
         telemetry=_telemetry(cfg.get("telemetry", {})),
+        teams_web=TeamsWebSettings(enabled=bool(cfg.get("teams_web", {}).get("enabled", False))),
         mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or "")),
     )
 
@@ -175,4 +186,5 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     out["telemetry"] = merged.telemetry.model_dump()
     out["mcp"] = merged.mcp.model_dump()
+    out["teams_web"] = merged.teams_web.model_dump()
     return out, merged

@@ -49,6 +49,7 @@ export interface Settings {
   brief: { enabled: boolean; lastMessages: number };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
   mcp: { enabled: boolean; token: string };
+  teamsWeb: { enabled: boolean };
 }
 
 export interface SettingsPatch {
@@ -59,6 +60,7 @@ export interface SettingsPatch {
   brief?: Partial<Settings["brief"]>;
   telemetry?: Partial<Settings["telemetry"]>;
   mcp?: { enabled?: boolean; regenerateToken?: boolean };
+  teamsWeb?: { enabled?: boolean };
 }
 
 export type GithubKind = "pr" | "issue" | "commit";

@@ -232,3 +232,13 @@ Check-list UI appliquée écran par écran ; choix assumés, avec leur raison :
 - **États vides** : chacun dit pourquoi et quoi faire (« Aucune conversation suivie » → « Choisir des conversations » ; recherche sans résultat → « Tout afficher »).
 - **Données** : hors moteur, l'en-tête affiche « Données d'exemple » en clair, pas seulement dans une infobulle.
 - **Textes** : pas de tiret cadratin, d'emoji, de flèche, de majuscules d'emphase ni de synonymes en alternance (« résumé » partout, jamais « brief » à l'écran).
+
+## Teams intégré (expérimental, 2026-11-26)
+
+Option dans Réglages › Avancé, désactivée par défaut. Le pilotage de l'appli Teams par l'accessibilité (UIA) reste le mode normal.
+
+- **Pourquoi** : l'arbre d'accessibilité de Teams v2 n'expose ni sélection ni identifiant stable, et lire une conversation oblige à basculer la vue de l'utilisateur. Une copie de Teams web, pilotée par son DOM, lit et écrit sans jamais toucher sa fenêtre.
+- **Pas un navigateur sans interface** : l'accès conditionnel classe généralement ces navigateurs comme plateforme non prise en charge, et Microsoft les détecte. On utilise une vraie fenêtre WebView2 de Trame, connectée une fois de façon interactive, puis masquée.
+- **Pont** : script injecté (`ui/src-tauri/teams-bridge.js`) → la page ne peut appeler qu'une commande Tauri, `teams_bridge_reply` (capacité `teams-web` limitée à teams.microsoft.com). Le moteur envoie ses ordres par `/api/teams-web/poll`, relayés par l'interface (`teams_web_eval`), réponses par `/api/teams-web/reply`. Confirmation de la conversation par `document.title`, saisie refusée si la zone n'est pas vide ou si une autre conversation est ouverte.
+- **Contreparties assumées et affichées** : deuxième session (nouvel appareil dans les connexions), accusés de lecture possibles, refus possible par l'accès conditionnel. Jamais d'envoi sans clic ou mode Auto.
+- **Nouveaux messages** : détectés dans les deux pilotes par le changement d'aperçu dans la liste des conversations (`drivers/preview_watch.py`).
