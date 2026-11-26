@@ -101,6 +101,11 @@ function mapSettings(s: any): Settings {
       enabled: b.enabled === undefined ? true : Boolean(b.enabled),
       lastMessages: Number(b.last_messages ?? 30),
     },
+    telemetry: {
+      enabled: Boolean(s?.telemetry?.enabled),
+      endpoint: String(s?.telemetry?.endpoint ?? ""),
+      includeContent: Boolean(s?.telemetry?.include_content),
+    },
   };
 }
 function mapBrief(b: any): Brief {
@@ -185,6 +190,13 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.brief.lastMessages !== undefined) b.last_messages = p.brief.lastMessages;
     out.brief = b;
   }
+  if (p.telemetry) {
+    const t: Record<string, unknown> = {};
+    if (p.telemetry.enabled !== undefined) t.enabled = p.telemetry.enabled;
+    if (p.telemetry.endpoint !== undefined) t.endpoint = p.telemetry.endpoint;
+    if (p.telemetry.includeContent !== undefined) t.include_content = p.telemetry.includeContent;
+    out.telemetry = t;
+  }
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -195,6 +207,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     github: { ...s.github, ...p.github },
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
+    telemetry: { ...s.telemetry, ...p.telemetry },
   };
 }
 
@@ -228,6 +241,7 @@ let localSettings: Settings = {
     neverAutoSendIfMessageContains: ["RH", "confidentiel", "salaire"],
   },
   brief: { enabled: true, lastMessages: 30 },
+  telemetry: { enabled: false, endpoint: "", includeContent: false },
 };
 const localBriefs = new Map<string, Brief>();
 

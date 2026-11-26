@@ -47,6 +47,7 @@ export interface Settings {
     neverAutoSendIfMessageContains: string[];
   };
   brief: { enabled: boolean; lastMessages: number };
+  telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
 }
 
 export interface SettingsPatch {
@@ -55,6 +56,7 @@ export interface SettingsPatch {
   github?: Partial<Settings["github"]>;
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;
+  telemetry?: Partial<Settings["telemetry"]>;
 }
 
 export type GithubKind = "pr" | "issue" | "commit";

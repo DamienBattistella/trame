@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -29,12 +30,27 @@ class BriefSettings(BaseModel):
     last_messages: int = Field(ge=10, le=100)
 
 
+class TelemetrySettings(BaseModel):
+    enabled: bool = False
+    endpoint: str = Field(default="", max_length=300)
+    include_content: bool = False
+
+    @field_validator("endpoint")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.match(r"^https?://[^\s]+$", v):
+            raise ValueError("URL OTLP/HTTP attendue (http://… ou https://…), ou vide pour un fichier local")
+        return v
+
+
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
     github: GithubSettings
     safety: SafetySettings
     brief: BriefSettings
+    telemetry: TelemetrySettings = TelemetrySettings()
 
 
 class _Patch(BaseModel):
@@ -58,12 +74,19 @@ class BriefPatch(_Patch):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
 
+class TelemetryPatch(_Patch):
+    enabled: Optional[bool] = None
+    endpoint: Optional[str] = Field(default=None, max_length=300)
+    include_content: Optional[bool] = None
+
+
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
     github: Optional[GithubPatch] = None
     safety: Optional[SafetyPatch] = None
     brief: Optional[BriefPatch] = None
+    telemetry: Optional[TelemetryPatch] = None
 
 
 def _int(value, default: int, lo: int, hi: int) -> int:
@@ -96,7 +119,16 @@ def from_config(cfg: dict) -> Settings:
             enabled=bool(brief.get("enabled", True)),
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
+        telemetry=_telemetry(cfg.get("telemetry", {})),
     )
+
+
+def _telemetry(t: dict) -> TelemetrySettings:
+    try:
+        return TelemetrySettings(enabled=bool(t.get("enabled", False)), endpoint=str(t.get("endpoint", "") or ""),
+                                 include_content=bool(t.get("include_content", False)))
+    except Exception:
+        return TelemetrySettings()
 
 
 def _merge(base: dict, patch: dict) -> dict:
@@ -123,4 +155,5 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["auto_pause_on_screen_share"] = merged.safety.auto_pause_on_screen_share
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
+    out["telemetry"] = merged.telemetry.model_dump()
     return out, merged

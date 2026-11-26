@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -240,7 +240,7 @@ function Logs({ logs }: { logs: LogItem[] }) {
   );
 }
 
-type Section = "brain" | "github" | "safety" | "brief";
+type Section = "brain" | "github" | "safety" | "brief" | "telemetry";
 type SaveState = "idle" | "saving" | "saved";
 
 const COUNTDOWNS = [3, 5, 10];
@@ -274,20 +274,21 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "advanced";
+type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "telemetry" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle" });
-  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0 });
+  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", telemetry: "idle" });
+  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, telemetry: 0 });
   const timers = useRef<Partial<Record<Section, ReturnType<typeof setTimeout>>>>({});
   const brainCtl = useAnimationControls();
   const githubCtl = useAnimationControls();
   const safetyCtl = useAnimationControls();
   const briefCtl = useAnimationControls();
-  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl };
+  const telemetryCtl = useAnimationControls();
+  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, telemetry: telemetryCtl };
 
   const load = async () => {
     setLoadError(null);
@@ -500,6 +501,21 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       ),
     },
     {
+      id: "telemetry",
+      label: "Journaux",
+      icon: Activity,
+      desc: "Traces et journaux OpenTelemetry pour comprendre ce que fait Trame.",
+      state: save.telemetry,
+      body: (
+        <motion.div animate={telemetryCtl}>
+          <TelemetrySettingsBody
+            value={settings.telemetry}
+            onChange={(telemetry) => update("telemetry", { telemetry: { ...settings.telemetry, ...telemetry } })}
+          />
+        </motion.div>
+      ),
+    },
+    {
       id: "advanced",
       label: "Avancé",
       icon: SlidersHorizontal,
@@ -579,6 +595,54 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
           </motion.section>
         </AnimatePresence>
       </ScrollArea>
+    </div>
+  );
+}
+
+function TelemetrySettingsBody({
+  value,
+  onChange,
+}: {
+  value: Settings["telemetry"];
+  onChange: (t: Partial<Settings["telemetry"]>) => void;
+}) {
+  const [endpoint, setEndpoint] = useState(value.endpoint);
+  useEffect(() => setEndpoint(value.endpoint), [value.endpoint]);
+  const commit = () => endpoint.trim() !== value.endpoint && onChange({ endpoint: endpoint.trim() });
+  return (
+    <div className="flex flex-col gap-3">
+      <GroupList>
+        <ToggleRow label="Exporter les journaux OpenTelemetry" checked={value.enabled} onChange={(enabled) => onChange({ enabled })} />
+        <div className="flex flex-col gap-1.5 px-4 py-3">
+          <Label htmlFor="otel-endpoint" className={cn("font-normal", !value.enabled && "text-muted-foreground")}>
+            Collecteur OTLP/HTTP
+          </Label>
+          <Input
+            id="otel-endpoint"
+            value={endpoint}
+            disabled={!value.enabled}
+            placeholder="http://localhost:4318"
+            onChange={(e) => setEndpoint(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+            className="rounded-full font-mono text-sm"
+            spellCheck={false}
+          />
+          <span className="text-xs text-muted-foreground">
+            Vide : fichier local %APPDATA%\Trame\otel.jsonl (10 Mo, puis rotation).
+          </span>
+        </div>
+        <ToggleRow
+          label="Inclure le texte des messages"
+          checked={value.includeContent}
+          disabled={!value.enabled}
+          onChange={(includeContent) => onChange({ includeContent })}
+        />
+        <div className="px-4 py-2.5 text-xs text-muted-foreground">
+          Service « trame » : une trace par message traité (rédaction, recherche GitHub, lecture et saisie dans Teams) et
+          chaque ligne du Journal. Sans cette option, le texte des messages n'est jamais exporté.
+        </div>
+      </GroupList>
     </div>
   );
 }

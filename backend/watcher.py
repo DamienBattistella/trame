@@ -10,6 +10,7 @@ from typing import Iterator, Callable, Iterable, Optional
 import config as cfgmod
 import safety
 import people as peoplemod
+import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
@@ -43,6 +44,7 @@ class Watcher:
         self.cfg = cfgmod.load()
         self.soul = cfgmod.load_soul()
         self.people = peoplemod.Directory.load()
+        self.telemetry_error = telemetry.configure(self.cfg.get("telemetry"))
         self.state = AppState(
             onboarded=bool(self.cfg.get("onboarded", False)),
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
@@ -70,6 +72,8 @@ class Watcher:
             self._persist_watchlist()
         except Exception:
             pass
+        if self.telemetry_error:
+            self.log("warn", self.telemetry_error)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -84,6 +88,13 @@ class Watcher:
         self._process(msg)
 
     def _process(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
+        with telemetry.span("message", conversation=msg.thread_id, surface=msg.surface.value, force_draft=force_draft,
+                            text=telemetry.content(msg.text)) as sp:
+            outcome = self._process_inner(msg, force_draft)
+            telemetry.set_attrs(sp, outcome=outcome or "ignored")
+            return outcome
+
+    def _process_inner(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
         """Run one message through the pipeline. Returns "draft", "sent" or None."""
         if self.state.paused:
             return None
@@ -114,7 +125,8 @@ class Watcher:
             def _fetch_github() -> None:
                 try:
                     repos = gh.list_repos() if gh_cfg.get("repos", "all") == "all" else gh_cfg.get("repos_allowlist", [])
-                    gh_result[0] = gh.fetch(msg.text, repos, True)
+                    with telemetry.span("github.fetch", repos=len(repos)):
+                        gh_result[0] = gh.fetch(msg.text, repos, True)
                 except Exception:
                     gh_result[0] = ""
 
@@ -126,7 +138,9 @@ class Watcher:
         gh_ctx = gh_result[0]
 
         try:
-            proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary))
+            with telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
+                                github=bool(gh_ctx)):
+                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary))
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -206,7 +220,9 @@ class Watcher:
                 self.log("warn", "Partage d'écran en cours : aucune saisie dans Teams.")
                 return False
             try:
-                focus = self.driver.type_focused(thread_id, text, send, restore)
+                with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto) as sp:
+                    focus = self.driver.type_focused(thread_id, text, send, restore)
+                    telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
             except Exception as e:
                 self.log("warn", f"Saisie impossible: {e}")
                 return False
@@ -503,9 +519,11 @@ class Watcher:
                 raise ActionError(409, "Partage d'écran en cours : Trame n'ouvre pas d'autre conversation dans Teams.")
             msgs: list[IncomingMessage] = []
             try:
-                with self.driver.focused(thread_id, restore=True) as focus:
+                with telemetry.span("teams.read", conversation=name, purpose=purpose, last_n=last_n) as sp, \
+                        self.driver.focused(thread_id, restore=True) as focus:
                     if focus.ok:
                         msgs = self.driver.read_context(thread_id, last_n)
+                    telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs))
             except Exception as e:
                 self.log("warn", f"{purpose} impossible pour {name} : lecture de la conversation échouée ({e})")
                 raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
@@ -526,7 +544,12 @@ class Watcher:
 
     def update_settings(self, patch: settingsmod.SettingsPatch) -> settingsmod.Settings:
         with self._lock:
-            new_cfg, merged = settingsmod.apply(self.cfg, patch)
+            try:
+                new_cfg, merged = settingsmod.apply(self.cfg, patch)
+            except ValueError as e:
+                errors = getattr(e, "errors", lambda: [])()
+                detail = errors[0].get("msg", str(e)) if errors else str(e)
+                raise ActionError(422, f"Réglage invalide : {detail.removeprefix('Value error, ')}")
             new_brain = None
             if merged.brain != self.get_settings().brain and self.brain_factory is not None:
                 try:
@@ -537,6 +560,8 @@ class Watcher:
                 cfgmod.save(new_cfg)
             except Exception as e:
                 raise ActionError(500, f"Sauvegarde des réglages impossible: {e}")
+            if new_cfg.get("telemetry") != self.cfg.get("telemetry"):
+                self.telemetry_error = telemetry.configure(new_cfg.get("telemetry"))
             self.cfg = new_cfg
             if new_brain is not None:
                 self.brain = new_brain
@@ -698,4 +723,5 @@ class Watcher:
         return out
 
     def log(self, level, text: str) -> None:
+        telemetry.event(level, text)
         self.state.logs = [LogItem(at=datetime.now().strftime("%H:%M:%S"), level=level, text=text), *self.state.logs][:200]

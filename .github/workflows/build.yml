@@ -75,6 +75,10 @@ jobs:
             --hidden-import uvicorn.protocols.websockets.auto `
             --hidden-import uvicorn.lifespan.on `
             --collect-all uiautomation `
+            --collect-submodules opentelemetry `
+            --copy-metadata opentelemetry-api `
+            --copy-metadata opentelemetry-sdk `
+            --copy-metadata opentelemetry-exporter-otlp-proto-http `
             --collect-submodules comtypes `
             --add-data "..\config.json;." `
             --add-data "..\SOUL.md;." `
@@ -89,6 +93,7 @@ jobs:
         run: |
           $env:TRAME_HOME = Join-Path $env:RUNNER_TEMP "trame-smoke"
           $env:TRAME_BRAIN = "mock"
+          $env:TRAME_OTEL_FILE = "1"
           $p = Start-Process -FilePath backend\dist\trame-backend.exe -PassThru
           $ok = $false
           for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
@@ -98,6 +103,7 @@ jobs:
           Get-Content (Join-Path $env:TRAME_HOME "backend.log") -ErrorAction SilentlyContinue | Select-Object -Last 40
           taskkill /T /F /PID $p.Id | Out-Null
           if (-not $ok) { Write-Error "Le moteur empaqueté ne répond pas sur 127.0.0.1:8731"; exit 1 }
+          if (-not (Test-Path (Join-Path $env:TRAME_HOME "otel.jsonl"))) { Write-Error "OpenTelemetry ne démarre pas dans le moteur empaqueté"; exit 1 }
           Write-Host "Moteur OK, auto-test Teams : $($r.selftest_ok)"
 
       - name: Setup Node
