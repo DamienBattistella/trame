@@ -126,3 +126,33 @@ def test_prompts_and_settings_hide_token(make_client):
     assert not err and "soul" in persona
     err, who = _tool(client, token, "lookup_person", name="Quelqu'un")
     assert not err and who["found"] is False
+
+
+def test_own_status_tools(make_client):
+    client, watcher, driver = make_client()
+    token = _enable(client)
+    names = {t["name"] for t in _call(client, token, "tools/list").json()["result"]["tools"]}
+    assert {"get_my_status", "set_my_status"} <= names
+    assert _tool(client, token, "set_my_status", presence="dnd", message="  En atelier  ") == (
+        False, {"ok": True, "presence": "dnd", "message": "En atelier"})
+    assert driver.my_presence == "dnd" and driver.my_message == "En atelier"
+    assert _tool(client, token, "get_my_status") == (False, {"presence": "dnd", "message": "En atelier"})
+    assert _tool(client, token, "get_status")[1]["my_presence"] == "dnd"
+    # Effacer le message seulement : le statut ne bouge pas.
+    assert _tool(client, token, "set_my_status", message="")[0] is False
+    assert driver.my_presence == "dnd" and driver.my_message == ""
+
+
+def test_set_my_status_refusals(make_client):
+    from drivers.mock import MockTeamsDriver
+
+    class Stubborn(MockTeamsDriver):
+        def set_my_status(self, choice):
+            return "dnd"
+
+    client, _watcher, driver = make_client(driver=Stubborn(interval=9999))
+    token = _enable(client)
+    assert _tool(client, token, "set_my_status")[0]
+    assert _tool(client, token, "set_my_status", presence="in_meeting")[0]
+    err, msg = _tool(client, token, "set_my_status", presence="available")
+    assert err and "Ne pas déranger" in msg
