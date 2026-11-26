@@ -865,6 +865,12 @@ class Watcher:
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
+    def thread_meeting(self, thread_id: str) -> Optional[dict]:
+        """For a meeting chat, the link to join the meeting in Teams and whether it is in
+        progress, as Teams showed it when the conversation was last read. Trame does not
+        join anything: the UI only opens this link in the user's Teams."""
+        return self.driver.meeting(thread_id)
+
     def thread_activity(self, thread_id: str) -> dict:
         """Someone typing in thread_id, and whether your last message there was seen, as
         the chat list Trame already polls shows it: nothing is opened or read in Teams."""
