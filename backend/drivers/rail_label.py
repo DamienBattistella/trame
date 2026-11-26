@@ -39,6 +39,13 @@ _UNREAD_RE = re.compile(r"\b(?:unread|non lus?)\b", re.IGNORECASE)
 _PREVIEW_RE = re.compile(r"\b(?:Last message|Dernier message)\s+(.*)$")
 _TRAILING_TIME_RE = re.compile(r"\s+(?:\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|yesterday|hier|[A-Z][a-z]{2,8})\s*$")
 _TIME_RE = re.compile(r"\s(\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterday|[Hh]ier)\s*$")
+# Teams web (« Teams intégré ») gives the visible text of the item instead: no kind
+# prefix and no "Last message" marker, only name, time, then the preview.
+#   "Romain CUREAU 25/11 je vais préparer ça"
+#   "Hexagone 10 - Developers 24/11 Chloé: merci je regarde ça"
+#   "Hugo Lannes 25/11"
+_WEB_RE = re.compile(r"^(?P<name>.+?)\s+(?P<time>\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterday|[Hh]ier)(?:\s+(?P<preview>.+))?$")
+_WEB_UNREAD_RE = re.compile(r"^(?:Non lus?|Unread)\s+(?=\S)")
 _SELF_SENDERS = {"you", "vous", "moi"}
 _SELF_RE = re.compile(r"\s*\((?:You|Vous|Moi)\)\s*$")
 
@@ -58,19 +65,36 @@ def parse(label: str) -> RailLabel:
     text = " ".join((label or "").split())
     surface = Surface.dm
     low = text.lower()
+    prefixed = False
     for prefix, kind in _PREFIXES:
         if low.startswith(prefix):
-            text, surface = text[len(prefix):], kind
+            text, surface, prefixed = text[len(prefix):], kind, True
             break
     m = _MARKER_RE.search(text)
-    name, rest = (text[: m.start()], text[m.start():]) if m else (text, "")
+    # Teams web puts "Non lu" / "Unread" in front of the name of an unread conversation.
+    lead = None if prefixed else _WEB_UNREAD_RE.match(text)
+    if lead:
+        text = text[lead.end():]
+        m = _MARKER_RE.search(text)
+    # A marker word found after the time belongs to the preview ("… 10:41 Vous : ok").
+    web = None if prefixed else _WEB_RE.match(text)
+    if web and m and m.start() < web.end("time"):
+        web = None
+    if web:
+        name, rest = web.group("name"), " " + web.group("time")
+    else:
+        name, rest = (text[: m.start()], text[m.start():]) if m else (text, "")
     is_self = bool(_SELF_RE.search(name))
     name = _SELF_RE.sub("", name).strip() or text.strip()
 
     preview_sender, preview = None, None
     p = _PREVIEW_RE.search(rest)
-    if p:
+    body = None
+    if web:
+        body = (web.group("preview") or "").strip() or None
+    elif p:
         body = _TRAILING_TIME_RE.sub("", p.group(1)).strip()
+    if body is not None:
         who, sep, said = body.partition(":")
         who = who.strip()
         if sep and who.casefold() in _SELF_SENDERS:
@@ -83,7 +107,7 @@ def parse(label: str) -> RailLabel:
     last_time = None
     if t:
         last_time = {"yesterday": "Hier", "hier": "Hier"}.get(t.group(1).lower(), t.group(1))
-    return RailLabel(name=name, surface=surface, unread=bool(_UNREAD_RE.search(rest)), is_self=is_self, last_time=last_time,
+    return RailLabel(name=name, surface=surface, unread=bool(lead or _UNREAD_RE.search(rest)), is_self=is_self, last_time=last_time,
                      preview_sender=preview_sender, preview=preview or None)
 
 
@@ -91,7 +115,7 @@ def parse(label: str) -> RailLabel:
 # quick views), in English and French.
 _STRUCTURAL = {
     "copilot", "quick views", "mentions", "drafts", "saved", "favorites", "chats", "teams and channels",
-    "vues rapides", "brouillons", "enregistrés", "enregistrements", "favoris", "conversations", "équipes et canaux",
+    "vues rapides", "brouillons", "enregistré", "enregistrés", "enregistrements", "favoris", "conversations", "équipes et canaux",
 }
 
 
