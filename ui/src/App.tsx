@@ -165,6 +165,7 @@ export default function App() {
                 <TabsTrigger value="inbox" className="rounded-full px-3 text-xs">
                   Discussions <CountBadge n={trame.state.drafts.length} />
                 </TabsTrigger>
+                <TabsTrigger value="meetings" className="rounded-full px-3 text-xs">Réunions</TabsTrigger>
                 <TabsTrigger value="logs" className="rounded-full px-3 text-xs">Journal</TabsTrigger>
                 <TabsTrigger value="settings" className="rounded-full px-3 text-xs">Réglages</TabsTrigger>
               </TabsList>

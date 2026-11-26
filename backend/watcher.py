@@ -20,6 +20,7 @@ import outbox_store as outboxstore
 import reflection
 import telemetry
 import teams_check as teamscheck
+import transcripts as transcriptsmod
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
@@ -94,6 +95,8 @@ class Watcher:
         self._history: dict[str, tuple[float, str]] = {}
         # thread id -> (read at, messages, how many were asked, start of the conversation reached)
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
+        # Organisateur des réunions dont la transcription a été relue (par meeting_id).
+        self._meeting_owners: dict[str, str] = {}
         self.archive = searchmod.MessageArchive()
         self.journal = journalmod.Journal(cfgmod.HOME / "journal.jsonl")
         self._in_flight: set[str] = set()
@@ -359,6 +362,128 @@ class Watcher:
         import random
         choices = [m for m in FALLBACK if m != previous.strip()] or list(FALLBACK)
         return {"text": random.choice(choices), "source": "fallback"}
+
+    # --- réunions : transcriptions enregistrées en .vtt (lecture seule dans Teams) ---
+    _TRANSCRIPT_REASONS = {
+        "none": (404, "Pas de transcription pour cette réunion."),
+        "denied": (403, "Accès refusé : Teams ne te montre pas cette transcription."),
+        "not_found": (404, "Réunion introuvable dans Teams."),
+        "empty": (404, "La transcription est vide."),
+        "frame": (504, "La transcription ne s'est pas affichée dans Teams."),
+        "timeout": (504, "La transcription a mis trop de temps à se charger."),
+    }
+
+    def _transcripts_ready(self) -> None:
+        if not getattr(self.driver, "supports_transcripts", False):
+            raise ActionError(501, f"Transcriptions indisponibles : {self.driver.transcripts_unsupported}.")
+
+    def meetings(self, transcript_only: bool = False) -> dict:
+        """Réunions terminées des conversations de réunion récentes, et le dossier où les
+        transcriptions sont enregistrées."""
+        self._transcripts_ready()
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                found = self.driver.list_meetings()
+            except NotSupported as e:
+                raise ActionError(501, str(e))
+            except Exception as e:
+                self.log("warn", f"Réunions non lues : {e}")
+                raise ActionError(502, f"Réunions non lues : {e}")
+        out = []
+        for m in found:
+            if transcript_only and not m.get("transcript"):
+                continue
+            day = transcriptsmod.parse_meeting_date(m.get("when") or "")
+            mid = transcriptsmod.meeting_id(m["thread_id"], m["mid"])
+            out.append({**m, "meeting_id": mid, "date": day.isoformat() if day else None,
+                        "organizer": self._meeting_owners.get(mid, "")})
+        return {"meetings": out, "directory": str(transcriptsmod.chosen_dir(cfgmod._home()))}
+
+    def save_transcript(self, thread_id: str, mid: str, directory: Optional[str] = None,
+                        save: bool = True, content: bool = False) -> dict:
+        """Relit la transcription d'une réunion dans Teams et en fait un .vtt, enregistré
+        sur le poste (save) et/ou rendu tel quel (content). Rien n'est envoyé ailleurs ni
+        fait dans la réunion."""
+        self._transcripts_ready()
+        home = cfgmod._home()
+        try:
+            folder = transcriptsmod.check_dir(directory) if directory else transcriptsmod.chosen_dir(home)
+        except transcriptsmod.TranscriptError as e:
+            raise ActionError(422, str(e))
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                with telemetry.span("teams.transcript", conversation=thread_id) as sp:
+                    res = self.driver.meeting_transcript(thread_id, str(mid)) or {}
+                    telemetry.set_attrs(sp, ok=bool(res.get("ok")), entries=len(res.get("entries") or []))
+            except NotSupported as e:
+                raise ActionError(501, str(e))
+            except Exception as e:
+                self.log("warn", f"Transcription non lue : {e}")
+                raise ActionError(502, f"Transcription non lue : {e}")
+        title = str(res.get("title") or "Réunion")
+        if not res.get("ok"):
+            status, message = self._TRANSCRIPT_REASONS.get(str(res.get("reason")), (502, "Transcription non lue."))
+            detail = f" ({res['error']})" if res.get("error") and status >= 500 else ""
+            self.log("warn", f"Transcription de « {title} » non récupérée : {message}{detail}")
+            raise ActionError(status, message + detail)
+        cues = transcriptsmod.cues_from_entries(res.get("entries") or [])
+        if not cues:
+            raise ActionError(404, self._TRANSCRIPT_REASONS["empty"][1])
+        when = str(res.get("recap_when") or res.get("when") or "")
+        day = transcriptsmod.parse_meeting_date(when)
+        organizer = transcriptsmod.owner_name(str(res.get("owner") or ""))
+        key = transcriptsmod.meeting_id(thread_id, str(mid))
+        if organizer:
+            self._meeting_owners[key] = organizer
+        vtt = transcriptsmod.build_vtt(cues, title=title, day=day, when=when, organizer=organizer)
+        transcriptsmod.parse_vtt(vtt)
+        complete = bool(res.get("complete", True)) and not res.get("gaps")
+        out = {"meeting_id": key, "title": title, "date": day.isoformat() if day else None, "organizer": organizer,
+               "cues": len(cues), "speakers": sorted({c.speaker for c in cues if c.speaker}), "complete": complete}
+        if save:
+            try:
+                path = transcriptsmod.save(folder, transcriptsmod.file_name(title, day), vtt)
+            except OSError as e:
+                raise ActionError(500, f"Fichier non enregistré dans {folder} : {e.strerror or e}")
+            if directory:
+                transcriptsmod.remember_dir(home, folder)
+            out.update(path=str(path), name=path.name, directory=str(folder))
+            self.log("info", f"Transcription de « {title} » enregistrée : {path.name} ({len(cues)} prise(s) de parole"
+                             f"{'' if complete else ', relecture incomplète'})")
+        else:
+            self.log("info", f"Transcription de « {title} » relue ({len(cues)} prise(s) de parole)")
+        if content:
+            out["vtt"] = vtt
+        return out
+
+    def probe_transcript(self, thread_id: str, mid: str) -> dict:
+        """Diagnostic : la forme de la page de transcription (balises, rôles, longueurs),
+        jamais son texte. Rien n'est enregistré."""
+        self._transcripts_ready()
+        with self._ui_lock:
+            try:
+                res = self.driver.meeting_transcript(thread_id, str(mid), probe=True) or {}
+            except Exception as e:
+                raise ActionError(502, f"Diagnostic impossible : {e}")
+        return {"probe": res.get("probe"), "reason": res.get("reason"), "error": res.get("error")}
+
+    def open_transcripts_folder(self, directory: Optional[str] = None) -> dict:
+        try:
+            folder = transcriptsmod.check_dir(directory) if directory else transcriptsmod.chosen_dir(cfgmod._home())
+            folder.mkdir(parents=True, exist_ok=True)
+        except transcriptsmod.TranscriptError as e:
+            raise ActionError(422, str(e))
+        except OSError as e:
+            raise ActionError(500, f"Dossier non créé : {e.strerror or e}")
+        if os.name == "nt":
+            os.startfile(str(folder))  # type: ignore[attr-defined]
+        return {"directory": str(folder)}
 
     def set_status_message(self, text: str) -> dict:
         """Set (empty: clear) the status message, then check Teams shows exactly it."""

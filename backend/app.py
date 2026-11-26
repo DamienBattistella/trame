@@ -217,6 +217,18 @@ class BridgeReply(BaseModel):
     error: Optional[str] = None
 
 
+class TranscriptBody(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=300)
+    mid: str = Field(min_length=1, max_length=40, pattern=r"^[0-9A-Za-z_-]+$")
+    directory: Optional[str] = Field(default=None, max_length=400)
+    # Diagnostic : la forme de la page de transcription (sans son texte), rien d'enregistré.
+    probe: bool = False
+
+
+class FolderBody(BaseModel):
+    directory: Optional[str] = Field(default=None, max_length=400)
+
+
 class DiagnosticBody(BaseModel):
     thread_id: Optional[str] = None
 
@@ -409,6 +421,23 @@ def create_app(
     @app.post("/api/me/status-message")
     def post_status_message(body: StatusMessageBody):
         return {"ok": True, **watcher.set_status_message(body.text)}
+
+    @app.get("/api/meetings")
+    def meetings():
+        """Finished meetings of the recent meeting chats (opens them in Teams intégré)."""
+        return {"ok": True, **watcher.meetings()}
+
+    @app.post("/api/meetings/transcript")
+    def meeting_transcript(body: TranscriptBody):
+        """Read one meeting's transcript in Teams and save it as a .vtt on this computer."""
+        if body.probe:
+            return {"ok": True, **watcher.probe_transcript(body.thread_id, body.mid)}
+        return {"ok": True, **watcher.save_transcript(body.thread_id, body.mid, body.directory)}
+
+    @app.post("/api/meetings/open-folder")
+    def meetings_open_folder(body: FolderBody):
+        """Open the transcripts folder in the Explorer (created when missing)."""
+        return {"ok": True, **watcher.open_transcripts_folder(body.directory)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):

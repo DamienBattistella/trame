@@ -1,5 +1,162 @@
 (() => {
-  if (window.top !== window || window.__trame) return;
+  // Transcription d'une réunion : Teams l'affiche dans une iframe SharePoint
+  // (xplatplugins.aspx, onglet « Transcript » du récapitulatif). Ce script est injecté
+  // dans toutes les frames de la fenêtre Teams intégré : dans cette iframe-là seulement,
+  // il répond à la page Teams qui l'a ouverte en relisant la transcription affichée.
+  // Lecture seule : il fait défiler la liste, ne clique sur rien.
+  if (window.top !== window) {
+    if (window.__trameFrame || !/(^|\.)sharepoint\.com$/i.test(location.hostname)) return;
+    window.__trameFrame = true;
+    const TEAMS_ORIGIN = /^https:\/\/(teams\.microsoft\.com|teams\.cloud\.microsoft|[a-z0-9-]+\.teams\.microsoft\.com)$/i;
+    // Seulement une iframe posée directement dans Teams (pas une page SharePoint ouverte ailleurs).
+    const parentIsTeams = () => {
+      const a = location.ancestorOrigins;
+      return Boolean(a && a.length === 1 && TEAMS_ORIGIN.test(a[0]));
+    };
+    const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+    const flatText = (s) => (s || "").replace(/[\u2060\u200b]/g, "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const TIME = /^\d{1,2}:\d{2}(:\d{2})?$/;
+    // Liste de Stream (Fluent UI, virtualisée) : une cellule `.ms-List-cell` par entrée,
+    // avec un en-tête (orateur `itemDisplayName`, horodatage `Header-timestamp-N`,
+    // absents d'une suite du même orateur) et le texte (`sub-entry-N`, classe
+    // `entryText`). « Transcription démarrée / arrêtée » est une entrée `eventText` :
+    // elle est marquée comme événement. Hors de cette forme, on se rabat sur le texte.
+    const CELLS = '.ms-List-cell[data-list-index], [role="listitem"]';
+    const entryOf = (cell) => {
+      const pick = (sel) => flatText(cell.querySelector(sel)?.innerText);
+      if (cell.querySelector('[class*="eventText"]') && !cell.querySelector('[class*="entryText"]')) return { event: true };
+      let speaker = pick('[class*="itemDisplayName"]');
+      let time = pick('[id^="Header-timestamp"]');
+      let text = pick('[id^="sub-entry"], [class*="entryText"]');
+      if (!speaker && !time && !text) {
+        const lines = (cell.innerText || "").split("\n").map(flatText).filter(Boolean);
+        const at = lines.findIndex((l) => TIME.test(l));
+        if (at >= 0) {
+          time = lines[at];
+          speaker = at > 0 ? lines[at - 1] : "";
+          text = lines.slice(at + 1).join(" ");
+        } else text = lines.join(" ");
+      }
+      return { speaker, time, text };
+    };
+    // Les cellules de Stream quand elles sont là, sinon les éléments de liste les plus fins.
+    const cells = () => {
+      const stream = Array.from(document.querySelectorAll(".ms-List-cell[data-list-index]"));
+      return stream.length ? stream : Array.from(document.querySelectorAll(CELLS)).filter((c) => !c.querySelector(CELLS));
+    };
+    const scroller = () => {
+      for (let el = cells()[0]; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+      }
+      return null;
+    };
+    const DENIED = /(acc[eè]s refus[eé]|access denied|n.avez pas acc[eè]s|don.t have access|pas l.autorisation d.afficher|not have permission to view)/i;
+    const NONE = /(aucune transcription|no transcript|transcription (n.est pas|indisponible)|transcript (is )?(not available|unavailable))/i;
+    const waitCells = async (end) => {
+      while (!cells().length && Date.now() < end) {
+        const txt = document.body?.innerText || "";
+        if (DENIED.test(txt)) return "denied";
+        if (NONE.test(txt)) return "none";
+        await pause(400);
+      }
+      return cells().length ? "" : "empty";
+    };
+    // Toute la liste : Stream ne dessine que les entrées visibles. On la parcourt de
+    // haut en bas en cumulant par index, puis on remet le défilement où il était.
+    const collect = async (budgetMs) => {
+      const end = Date.now() + budgetMs;
+      const missing = await waitCells(end);
+      if (missing) return { ok: false, reason: missing };
+      const box = scroller();
+      const seen = new Map();
+      const add = () =>
+        cells().forEach((c, i) => {
+          const k = c.getAttribute("data-list-index") ?? `t${i}`;
+          if (!seen.has(k)) seen.set(k, entryOf(c));
+        });
+      const gapsOf = () => {
+        const idx = Array.from(seen.keys()).map(Number).filter((n) => Number.isInteger(n));
+        return idx.length ? Math.max(...idx) + 1 - idx.length : 0;
+      };
+      // Un passage de haut en bas. Stream charge la suite par pages en approchant du
+      // bas : arrivé en bas, on attend (4 s au plus) que la liste s'allonge avant de
+      // conclure qu'elle est finie.
+      let bottom = false;
+      const sweep = async () => {
+        box.scrollTop = 0;
+        await pause(300);
+        add();
+        for (let idle = 0; idle < 8 && Date.now() < end; ) {
+          const before = `${seen.size}/${box.scrollHeight}/${box.scrollTop}`;
+          box.scrollTop += Math.max(150, box.clientHeight * 0.7);
+          await pause(250);
+          add();
+          const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+          if (before === `${seen.size}/${box.scrollHeight}/${box.scrollTop}` || atBottom) {
+            idle += 1;
+            if (atBottom) await pause(250);
+          } else idle = 0;
+          bottom = atBottom;
+        }
+      };
+      const top = box ? box.scrollTop : 0;
+      add();
+      if (box) {
+        await sweep();
+        // Un index sauté (rendu trop lent pendant le défilement) : un second passage.
+        if (gapsOf() && Date.now() < end) await sweep();
+        box.scrollTop = top;
+      } else bottom = true;
+      const sorted = Array.from(seen.entries()).sort(([a], [b]) => (Number(a) || 0) - (Number(b) || 0));
+      const gaps = gapsOf();
+      const entries = sorted.map(([, v]) => v).filter((e) => !e.event);
+      // Le OneDrive qui sert la transcription est celui de l'organisateur.
+      const owner = (location.pathname.match(/^\/personal\/([^/]+)/) || [])[1] || "";
+      return { ok: true, entries, gaps, owner, complete: bottom && gaps === 0 && Date.now() < end };
+    };
+    // Diagnostic : la forme de la page (balises, rôles, longueurs), jamais le texte.
+    const probe = () => {
+      const tag = (el) => {
+        const cls = (typeof el.className === "string" ? el.className : "").split(/\s+/).filter((c) => /[A-Za-z]{4,}/.test(c)).slice(0, 3).join(".");
+        return [el.tagName.toLowerCase(), el.id ? `#${el.id.slice(0, 40)}` : "", cls ? `.${cls}` : "",
+          el.getAttribute("role") ? `[role=${el.getAttribute("role")}]` : "",
+          el.getAttribute("data-list-index") ? `[idx=${el.getAttribute("data-list-index")}]` : ""].join("");
+      };
+      const path = [];
+      for (let el = cells()[0]; el && el !== document.body && path.length < 14; el = el.parentElement) path.push(tag(el));
+      const sample = cells().slice(0, 6).map((c) =>
+        [c, ...c.querySelectorAll("*")].slice(0, 30).map((el) => `${tag(el)} t${(el.innerText || "").length}`));
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"], [role="menuitem"]'))
+        .map((b) => flatText(b.getAttribute("aria-label") || b.innerText).slice(0, 40)).filter(Boolean).slice(0, 40);
+      return { path: location.pathname.replace(/\/personal\/[^/]+/, "/personal/…").slice(0, 80), cells: cells().length,
+        scrollable: Boolean(scroller()), cell_path: path, cell_sample: sample, buttons };
+    };
+    let busy = false;
+    window.addEventListener("message", async (e) => {
+      const d = e.data;
+      if (!d || d.trame !== "trame-transcript" || typeof d.nonce !== "string") return;
+      if (e.source !== window.parent || !TEAMS_ORIGIN.test(e.origin) || !parentIsTeams()) return;
+      // Accusé immédiat : la page Teams cesse de répéter sa demande.
+      e.source.postMessage({ trame: "trame-transcript-ack", nonce: d.nonce }, e.origin);
+      if (busy) return;
+      busy = true;
+      let result;
+      try {
+        const budget = Math.min(Number(d.budget_ms) || 60000, 150000);
+        if (d.mode === "probe") {
+          await waitCells(Date.now() + 20000);
+          result = { ok: true, probe: probe() };
+        } else result = await collect(budget);
+      } catch (err) {
+        result = { ok: false, reason: "error", error: String((err && err.message) || err) };
+      } finally {
+        busy = false;
+      }
+      e.source.postMessage({ trame: "trame-transcript-result", nonce: d.nonce, ...result }, e.origin);
+    });
+    return;
+  }
+  if (window.__trame) return;
   if (!/(^|\.)teams\.(microsoft|cloud\.microsoft)\.com$|^teams\.cloud\.microsoft$/.test(location.hostname)) return;
   const reply = (payload) => window.__TAURI_INTERNALS__.invoke("teams_bridge_reply", { payload });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1213,6 +1370,70 @@
     return { ready: true, busy: running, results, marks };
   };
 
+  // Cartes « La réunion est terminée » d'une conversation de réunion.
+  const RECAP_CARD = '[data-testid="meeting-recap-chiclet"]';
+  const TRANSCRIPT_WORD = /^(transcript|transcription|transkript|trascrizione)$/i;
+  const recapInfo = (card) => {
+    const top = card.querySelector('[data-testid="meeting-recap-chiclet-top-container"]') || card;
+    const texts = Array.from(top.querySelectorAll(".fui-Text")).map((s) => flat(s.innerText)).filter(Boolean);
+    const artifacts = Array.from(card.querySelectorAll("button")).map((b) => flat(b.innerText || b.getAttribute("aria-label")));
+    return {
+      mid: card.closest("[data-mid]")?.getAttribute("data-mid") || "",
+      title: texts[0] || "",
+      when: texts[1] || "",
+      transcript: artifacts.some((t) => TRANSCRIPT_WORD.test(t)),
+    };
+  };
+  const transcriptTab = () =>
+    Array.from(document.querySelectorAll('[role="tab"]')).find(
+      (t) => t.getAttribute("data-tid") === "Transcript" || TRANSCRIPT_WORD.test(flat(t.innerText).replace(/^(\S+)\1$/, "$1")),
+    ) || null;
+  const recapFrame = () => document.querySelector('iframe[name="RecapxPlatIframe"], [data-testid="recap xplat iframe"] iframe');
+  // Date de l'occurrence affichée en tête du récapitulatif (« mardi 24 novembre 2026 11:00 – 11:20 »).
+  const recapWhen = () =>
+    Array.from(document.querySelectorAll('button, [role="combobox"]'))
+      .map((b) => flat(b.innerText))
+      .find((t) => /\b20\d\d\b.*\d{1,2}:\d{2}/.test(t) && t.length < 80) || "";
+  // Demande à l'iframe de la transcription, répétée jusqu'à son accusé (elle peut
+  // encore charger). Seule une réponse de cette iframe, servie par SharePoint, compte.
+  const askFrame = (mode, budget) =>
+    new Promise((resolve) => {
+      const frame = recapFrame();
+      const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      let acked = false;
+      const onMsg = (e) => {
+        let host = "";
+        try {
+          host = new URL(e.origin).hostname;
+        } catch {}
+        if (!frame || e.source !== frame.contentWindow || !/(^|\.)sharepoint\.com$/i.test(host)) return;
+        const d = e.data;
+        if (!d || d.nonce !== nonce) return;
+        if (d.trame === "trame-transcript-ack") acked = true;
+        if (d.trame === "trame-transcript-result") {
+          const { trame, nonce: _n, ...rest } = d;
+          done(rest);
+        }
+      };
+      const done = (res) => {
+        window.removeEventListener("message", onMsg);
+        clearInterval(timer);
+        clearTimeout(stop);
+        resolve(res);
+      };
+      const stop = setTimeout(() => done({ ok: false, reason: acked ? "timeout" : "frame", error: acked ? "transcription trop longue à relire" : "l'iframe de la transcription ne répond pas" }), budget);
+      window.addEventListener("message", onMsg);
+      const post = () => {
+        if (acked) return;
+        try {
+          // La demande ne contient rien de privé ; la réponse, elle, n'est acceptée que de cette iframe.
+          frame?.contentWindow?.postMessage({ trame: "trame-transcript", nonce, mode, budget_ms: budget - 2000 }, "*");
+        } catch {}
+      };
+      const timer = setInterval(post, 1500);
+      post();
+    });
+
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     probe,
@@ -1857,6 +2078,31 @@
       if (empty()) return { ok: true };
       const st = composeState(box);
       return { ok: false, error: `zone de saisie toujours occupée (${[st.text && "texte", st.files.length && "pièce jointe", st.objects && "élément collé"].filter(Boolean).join(", ") || "inconnu"})` };
+    },
+    // Réunions de la conversation ouverte : une carte « récapitulatif » par occurrence
+    // terminée (titre, date, et si une transcription y figure).
+    recaps: () => ({ title: document.title, recaps: Array.from(document.querySelectorAll(RECAP_CARD)).map(recapInfo) }),
+    // Transcription d'une occurrence : « Afficher le résumé » de sa carte, onglet
+    // « Transcript », puis l'iframe SharePoint relit la liste (agent de frame plus haut).
+    // On revient ensuite sur l'onglet Conversation. Rien n'est écrit ni démarré.
+    transcript: async ({ mid, probe }) => {
+      const card = Array.from(document.querySelectorAll(RECAP_CARD)).find((c) => recapInfo(c).mid === String(mid));
+      if (!card) return { ok: false, reason: "not_found", error: "carte de la réunion absente de la conversation" };
+      const info = recapInfo(card);
+      if (!info.transcript && !probe) return { ok: false, reason: "none", ...info };
+      const view = card.querySelector('[data-testid="meeting-recap-chiclet-view-recap-button"]');
+      if (!view) return { ok: false, reason: "not_found", error: "bouton « Afficher le résumé » introuvable" };
+      view.click();
+      try {
+        if (!(await waitFor(() => transcriptTab(), 15000))) return { ok: false, reason: "none", ...info, error: "pas d'onglet Transcript dans le récapitulatif" };
+        transcriptTab().click();
+        if (!(await waitFor(() => recapFrame()?.contentWindow, 20000))) return { ok: false, reason: "frame", ...info, error: "iframe de la transcription absente" };
+        recapFrame().scrollIntoView({ block: "start" });
+        const res = await askFrame(probe ? "probe" : "collect", Math.max(5000, (deadline || Date.now() + 60000) - Date.now() - 3000));
+        return { ...info, recap_when: recapWhen(), ...res };
+      } finally {
+        document.querySelector('[role="tab"][data-tid="tab-item-com.microsoft.chattabs.chat"]')?.click();
+      }
     },
     diagnose: () => ({
       url: location.href,
