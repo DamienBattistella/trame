@@ -308,8 +308,24 @@
     return norm(parts.join(" "));
   };
   const REMOVE = /^(remove|supprimer|retirer|delete)\b/i;
+  // « Supprimer » de la barre de la zone de saisie rejette tout le brouillon (avec une
+  // confirmation) : ce n'est pas le retrait d'une pièce jointe.
+  const DISCARD = '[data-tid="newMessageCommands-discard-draft"]';
   const removeButtons = (root) =>
-    Array.from(root?.querySelectorAll("button[aria-label]") || []).filter((b) => REMOVE.test(b.getAttribute("aria-label") || ""));
+    Array.from(root?.querySelectorAll("button[aria-label]") || []).filter(
+      (b) => REMOVE.test(b.getAttribute("aria-label") || "") && !b.matches(DISCARD)
+    );
+  // Rejeter le brouillon que Teams garde pour la conversation (texte, image collée,
+  // pièce jointe) : bouton « Supprimer », puis « Supprimer » dans la confirmation.
+  const discardDraft = async () => {
+    const btn = Array.from(document.querySelectorAll(DISCARD)).find(visible);
+    if (!btn) return false;
+    btn.click();
+    const confirm = () => Array.from(document.querySelectorAll('[data-tid="messagedraft-discard-confirm"]')).find(visible);
+    if (!(await waitFor(confirm, 2000))) return false;
+    confirm().click();
+    return waitFor(() => !confirm(), 2000);
+  };
   const uploading = (root) => Boolean(root?.querySelector('[role="progressbar"]'));
   const toFiles = (files) =>
     files.map((f) => {
@@ -379,6 +395,43 @@
     return null;
   };
   const dropAttachments = (box) => removeButtons(composeRoot(box)).forEach((b) => b.click());
+  // Un fichier pris par Teams après l'abandon (téléversement lent, essai suivant) arrive
+  // dans la zone de saisie une fois le nettoyage fait : il y resterait, et partirait avec
+  // le message suivant. On surveille donc encore quelques secondes et on le retire.
+  const dropLateAttachments = async (box, ms = 6000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (removeButtons(composeRoot(box)).length) dropAttachments(box);
+      await sleep(400);
+    }
+    dropAttachments(box);
+  };
+  // Ce qui occupe la zone de saisie, sans son texte : du texte tapé, des pièces jointes
+  // (leurs noms), des éléments sans texte (image collée…).
+  const composeState = (box) => {
+    const ed = cke(box);
+    let text = "";
+    let objects = 0;
+    try {
+      for (const step of ed.model.createRangeIn(ed.model.document.getRoot())) {
+        if (typeof step.item.data === "string") text += step.item.data;
+        else if (step.type === "elementStart" && !/^(paragraph|softBreak)$/.test(step.item.name || "")) objects++;
+      }
+    } catch {
+      text = box.innerText;
+    }
+    const files = removeButtons(composeRoot(box)).map((b) => (b.getAttribute("aria-label") || "").replace(REMOVE, "").trim());
+    return { text: Boolean(flat(text)), files, objects };
+  };
+  // Refus « zone de saisie non vide » qui dit ce qui l'occupe : l'utilisateur peut la
+  // vider depuis Trame (clearcompose) en connaissance de cause.
+  const notEmpty = (box) => {
+    const st = composeState(box);
+    const what = [st.text && "du texte", st.files.length && `une pièce jointe (${st.files.join(", ")})`, !st.text && st.objects && "une image ou un élément collé"]
+      .filter(Boolean)
+      .join(" et ");
+    return { ok: false, busy: true, error: `zone de saisie non vide : ${what || "contenu non identifié"} attend dans Teams` };
+  };
   const NEW_CHAT = [
     '[data-tid="chat-list-new-chat-button"]',
     '[data-tid="new-chat-button"]',
@@ -587,7 +640,7 @@
     if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
     let box = editor();
     if (!box) return { ok: false, error: "zone de saisie introuvable" };
-    if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
+    if (box.innerText.trim()) return notEmpty(box);
     const fail = (error) => {
       clear(box);
       return { ok: false, error };
@@ -1160,16 +1213,16 @@
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
       let box = editor();
       if (!box) return { ok: false, error: "zone de saisie introuvable" };
-      if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
+      if (box.innerText.trim()) return notEmpty(box);
       const withFiles = Array.isArray(files) && files.length > 0;
       if (withFiles && !send) return { ok: false, error: "pièce jointe sans envoi refusée" };
       if (withFiles && removeButtons(composeRoot(box)).length) {
         return { ok: false, error: "une pièce jointe attend déjà dans la zone de saisie de Teams" };
       }
-      const fail = (error) => {
+      const fail = async (error) => {
         if (quote) unquote(box);
         clear(box);
-        if (withFiles) dropAttachments(box);
+        if (withFiles) await dropLateAttachments(box);
         return { ok: false, error };
       };
       if (quote) {
@@ -1319,9 +1372,39 @@
         await closeMeMenu();
       }
     },
+    // Vider la zone de saisie de la conversation ouverte, à la demande explicite de
+    // l'utilisateur : texte, pièces jointes en attente, éléments collés. Réussi seulement
+    // quand la zone est vraiment vide.
+    clearcompose: async ({ name }) => {
+      if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+      const box = editor();
+      if (!box) return { ok: false, error: "zone de saisie introuvable" };
+      const empty = () => {
+        const st = composeState(box);
+        return !st.text && !st.files.length && !st.objects && !box.innerText.trim();
+      };
+      if (empty()) return { ok: true, already: true };
+      // Le brouillon gardé par Teams (image collée…) est rejeté aussi : sinon il revient.
+      await discardDraft();
+      const end = Date.now() + 5000;
+      while (Date.now() < end && !empty()) {
+        clear(box);
+        dropAttachments(box);
+        await sleep(400);
+      }
+      if (empty()) return { ok: true };
+      const st = composeState(box);
+      return { ok: false, error: `zone de saisie toujours occupée (${[st.text && "texte", st.files.length && "pièce jointe", st.objects && "élément collé"].filter(Boolean).join(", ") || "inconnu"})` };
+    },
     diagnose: () => ({
       url: location.href,
       title: document.title,
+      compose: (() => {
+        const e = editor();
+        if (!e) return null;
+        const st = composeState(e);
+        return { text: st.text, files: st.files.length, objects: st.objects };
+      })(),
       title_conversation: titleName(),
       rail: Boolean(rail()),
       items: items().length,

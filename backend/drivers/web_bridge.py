@@ -222,6 +222,13 @@ class WebBridgeDriver(TeamsDriver):
     # people search is not offered on its own: only the name the user chose is resolved.
     can_start_chat = True
 
+    def _clear_active(self, thread_id: str) -> bool:
+        res = self._rpc("clearcompose", name=self._name(thread_id), timeout=10) or {}
+        if not res.get("ok"):
+            self.last_error = f"Teams intégré : {res.get('error') or 'zone de saisie non vidée'}"
+            return False
+        return True
+
     def mark_read(self, thread_id: str) -> bool:
         try:
             res = self._rpc("markread", name=self._name(thread_id), timeout=8) or {}
