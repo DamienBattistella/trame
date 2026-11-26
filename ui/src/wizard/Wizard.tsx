@@ -4,6 +4,7 @@ import { Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw, Timer } from
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BrainPicker, BrainId } from "@/components/BrainPicker";
+import { BrainConnect } from "@/components/BrainConnect";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
 import { SoulHelp } from "@/components/SoulHelp";
@@ -211,8 +212,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Qui rédige ?",
-      sub: "Tu pourras changer à tout moment.",
-      body: <BrainPicker value={brain} onChange={pickBrain} />,
+      sub: "Choisis, puis connecte-le. Tu pourras changer à tout moment.",
+      body: (
+        <div className="flex w-full flex-col gap-4">
+          <BrainPicker value={brain} onChange={pickBrain} />
+          <BrainConnect trame={trame} brain={brain} />
+        </div>
+      ),
     },
     {
       title: "Vérification de Teams",

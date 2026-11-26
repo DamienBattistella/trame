@@ -1,4 +1,5 @@
 from __future__ import annotations
+import shutil
 import subprocess
 from brain.base import Brain, build_prompt
 from brain.isolation import sandbox_dir
@@ -26,7 +27,7 @@ class ClaudeBrain(Brain):
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         proc = subprocess.run(
-            [self.command, *self.args],
+            [shutil.which(self.command) or self.command, *self.args],
             input=prompt,
             capture_output=True,
             cwd=sandbox_dir(),

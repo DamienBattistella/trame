@@ -22,6 +22,7 @@ from brain.claude import ClaudeBrain
 from brain.copilot import CopilotBrain
 from drivers.base import TeamsDriver
 from github.auth import GithubAuth
+from brain.auth import ClaudeAuth
 
 
 def make_driver() -> TeamsDriver:
@@ -126,9 +127,11 @@ def create_app(
     brain: Optional[Brain] = None,
     brain_factory: Callable[[dict], Brain] = make_brain,
     github_auth: Optional[GithubAuth] = None,
+    claude_auth: Optional[ClaudeAuth] = None,
 ) -> FastAPI:
     watcher = Watcher(driver or make_driver(), brain or brain_factory(cfgmod.load()), brain_factory=brain_factory)
     gh_auth = github_auth or GithubAuth()
+    cl_auth = claude_auth or ClaudeAuth()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -136,6 +139,7 @@ def create_app(
         yield
         watcher.stop()
         gh_auth.cancel()
+        cl_auth.cancel()
 
     app = FastAPI(title="Trame", lifespan=lifespan)
     app.state.watcher = watcher
@@ -240,6 +244,19 @@ def create_app(
     @app.post("/api/github/login")
     def github_login():
         return {"ok": True, **gh_auth.login()}
+
+    @app.get("/api/brain/claude/status")
+    def claude_status():
+        return {"ok": True, "claude": cl_auth.status().model_dump()}
+
+    @app.post("/api/brain/claude/login")
+    def claude_login():
+        return {"ok": True, **cl_auth.login()}
+
+    @app.post("/api/brain/claude/login/cancel")
+    def claude_login_cancel():
+        cl_auth.cancel()
+        return {"ok": True}
 
     @app.post("/api/github/login/cancel")
     def github_login_cancel():

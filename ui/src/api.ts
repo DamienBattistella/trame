@@ -5,6 +5,7 @@ import {
   DraftItem,
   GithubLogin,
   GithubStatus,
+  ClaudeStatus,
   LogItem,
   Mode,
   Settings,
@@ -117,6 +118,20 @@ function mapBrief(b: any): Brief {
     sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
+function mapClaudeStatus(c: any): ClaudeStatus {
+  return {
+    installed: Boolean(c?.installed),
+    loggedIn: Boolean(c?.logged_in),
+    account: typeof c?.account === "string" && c.account ? c.account : null,
+    plan: typeof c?.plan === "string" && c.plan ? c.plan : null,
+    loginPending: Boolean(c?.login_pending),
+    loginUrl: typeof c?.login_url === "string" && c.login_url ? c.login_url : null,
+  };
+}
+// Démo : Claude installé, pas encore connecté ; la connexion aboutit après quelques secondes.
+let demoClaude: ClaudeStatus = { installed: true, loggedIn: false, account: null, plan: null, loginPending: false, loginUrl: null };
+let demoClaudeLoginAt = 0;
+
 function mapGithubStatus(g: any): GithubStatus {
   return {
     installed: Boolean(g?.installed),
@@ -273,6 +288,7 @@ export function useTrame() {
   const [briefPrefs, setBriefPrefs] = useState<BriefPrefs>(prefsOf(localSettings));
   // Dernier état connu de la connexion GitHub (null tant qu'il n'a pas été vérifié).
   const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
 
   useEffect(() => {
     let closed = false;
@@ -491,6 +507,46 @@ export function useTrame() {
     return res.ok ? { ok: true, brief: mapBrief(res.brief) } : res;
   };
 
+  const getClaudeStatus = async (): Promise<Result<{ claude: ClaudeStatus }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(250);
+      if (demoClaude.loginPending && Date.now() - demoClaudeLoginAt > 4000) {
+        demoClaude = { ...demoClaude, loggedIn: true, loginPending: false, loginUrl: null, account: "toi@exemple.fr", plan: "Max" };
+      }
+      setClaudeStatus({ ...demoClaude });
+      return { ok: true, claude: { ...demoClaude } };
+    }
+    const res = await request<{ claude: unknown }>("GET", "/api/brain/claude/status");
+    if (!res.ok) return res;
+    const claude = mapClaudeStatus(res.claude);
+    setClaudeStatus(claude);
+    return { ok: true, claude };
+  };
+  useEffect(() => {
+    getClaudeStatus();
+  }, [connected]);
+  /** Lance `claude auth login` : le navigateur s'ouvre ; loginUrl sert de lien de secours. */
+  const claudeLogin = async (): Promise<Result<{ loginUrl: string | null }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(600);
+      demoClaude = { ...demoClaude, loginPending: true, loginUrl: "https://claude.ai/oauth/authorize" };
+      demoClaudeLoginAt = Date.now();
+      return { ok: true, loginUrl: demoClaude.loginUrl };
+    }
+    const res = await request<{ login_url: string | null }>("POST", "/api/brain/claude/login");
+    return res.ok ? { ok: true, loginUrl: res.login_url ?? null } : res;
+  };
+  const cancelClaudeLogin = async (): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      demoClaude = { ...demoClaude, loginPending: false, loginUrl: null };
+      return { ok: true };
+    }
+    return request("POST", "/api/brain/claude/login/cancel");
+  };
+
   const getGithubStatus = async (): Promise<Result<{ github: GithubStatus }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
@@ -580,6 +636,10 @@ export function useTrame() {
     generateBrief,
     githubStatus,
     getGithubStatus,
+    claudeStatus,
+    getClaudeStatus,
+    claudeLogin,
+    cancelClaudeLogin,
     githubLogin,
     cancelGithubLogin,
     saveWatchlist,

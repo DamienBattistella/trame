@@ -76,6 +76,15 @@ export interface Brief {
   sources: { messages: number; reposSearched: number };
 }
 
+export interface ClaudeStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  account: string | null;
+  plan: string | null;
+  loginPending: boolean;
+  loginUrl: string | null;
+}
+
 export interface GithubStatus {
   installed: boolean;
   loggedIn: boolean;

@@ -20,6 +20,7 @@ import type { BriefTarget } from "@/components/BriefSheet";
 const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GithubConnect } from "@/components/GithubConnect";
+import { ClaudeConnect } from "@/components/ClaudeConnect";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -648,6 +649,13 @@ function SettingsView({ trame }: { trame: Trame }) {
           onChange={(brain) => brain !== settings.brain && update("brain", { brain })}
           size="md"
         />
+        <div className="mt-3">
+          {settings.brain === "claude" ? (
+            <ClaudeConnect trame={trame} />
+          ) : (
+            <p className="ml-1 text-xs text-muted-foreground">Copilot utilise la connexion GitHub ci-dessous.</p>
+          )}
+        </div>
       </motion.div>
 
       <div>
