@@ -281,24 +281,76 @@
       cancel();
       return { ok: false, title: document.title, error: `Teams affiche « ${titleName() || document.title} »` };
     },
-    read: ({ last = 30 }) => {
-      const nodes = Array.from(
-        document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]')
-      );
+    // Teams ne dessine que les derniers messages, et retire du DOM ceux qui sortent de
+    // l'écran. Pour remonter plus loin, on fait défiler le fil vers le haut en cumulant
+    // ce qui passe, jusqu'à `last` messages ou le début de la conversation, puis on
+    // revient en bas. `top` : le début de la conversation a été atteint.
+    read: async ({ last = 30 }) => {
+      const snap = () =>
+        Array.from(document.querySelectorAll(MSGS)).map((el) => {
+          const body =
+            el.querySelector('[data-tid="chat-pane-message"]')?.innerText ||
+            el.querySelector('[id^="content-"]')?.innerText ||
+            "";
+          const time = el.querySelector("time");
+          const at = time?.innerText?.trim() || time?.getAttribute("datetime") || "";
+          const text = body.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim();
+          const id = el.querySelector('[id^="content-"]')?.id || el.getAttribute("data-mid") || el.id || "";
+          return {
+            key: id || `${time?.getAttribute("datetime") || at}|${text.slice(0, 80)}`,
+            who: el.querySelector('[data-tid="message-author-name"]')?.innerText?.trim() || "",
+            text,
+            at,
+          };
+        })
+        // Teams intercale des éléments vides (avatar seul) : sans texte ni identifiant,
+        // ils se ressembleraient tous et fausseraient la fusion.
+        .filter((m) => m.text);
+      // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
+      // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
+      let acc = snap();
+      const merge = () => {
+        const known = new Set(acc.map((m) => m.key));
+        const view = snap();
+        const cut = view.findIndex((m) => known.has(m.key));
+        const older = (cut < 0 ? view : view.slice(0, cut)).filter((m) => !known.has(m.key));
+        if (older.length) acc = [...older, ...acc];
+        return older.length > 0;
+      };
+      const box = (() => {
+        for (let el = document.querySelector(MSGS); el && el !== document.body; el = el.parentElement) {
+          if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+        }
+        return null;
+      })();
+      let top = !box && acc.length < last;
+      if (box && acc.length < last) {
+        // Teams charge la suite quand on arrive en haut : on redescend un peu avant d'y
+        // remonter, pour qu'il voie un défilement même si l'on y est déjà. Trois essais
+        // sans rien de nouveau : c'est le début de la conversation. Une limite de temps
+        // atteinte, elle, ne dit rien du début (top reste faux).
+        const end = Date.now() + 20000;
+        for (let stalls = 0; acc.length < last && Date.now() < end && !late(); ) {
+          const height = box.scrollHeight;
+          box.scrollTop = Math.min(200, height);
+          await sleep(50);
+          box.scrollTop = 0;
+          if (await waitFor(() => merge() || box.scrollHeight !== height, 1500)) stalls = 0;
+          else if (++stalls >= 3) {
+            top = true;
+            break;
+          }
+        }
+        box.scrollTop = box.scrollHeight;
+      }
+      // L'auteur n'est affiché qu'en tête d'une suite de messages : on le reporte.
       let sender = "";
       const out = [];
-      for (const el of nodes.slice(-last)) {
-        const who = el.querySelector('[data-tid="message-author-name"]')?.innerText?.trim();
-        if (who) sender = who;
-        const body =
-          el.querySelector('[data-tid="chat-pane-message"]')?.innerText ||
-          el.querySelector('[id^="content-"]')?.innerText ||
-          "";
-        const time = el.querySelector("time");
-        const text = body.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim();
-        if (text) out.push({ sender, text, at: time?.innerText?.trim() || time?.getAttribute("datetime") || "" });
+      for (const m of acc) {
+        if (m.who) sender = m.who;
+        out.push({ sender, text: m.text, at: m.at });
       }
-      return out;
+      return { messages: out.slice(-last), top };
     },
     type: async ({ name, text, send }) => {
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };

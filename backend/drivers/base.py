@@ -43,6 +43,12 @@ class TeamsDriver(ABC):
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         """Read the last N messages of a thread (sender carried forward across runs)."""
 
+    def read_history(self, thread_id: str, last_n: int) -> tuple[list[IncomingMessage], bool]:
+        """Like read_context, going back further when the driver can, plus whether the
+        start of the conversation was reached (nothing older to fetch)."""
+        msgs = self.read_context(thread_id, last_n)
+        return msgs, len(msgs) < last_n
+
     @abstractmethod
     def open_thread(self, thread_id: str) -> bool:
         """Make thread_id the active conversation. True only once it is confirmed active."""

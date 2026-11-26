@@ -19,6 +19,24 @@ import { DraftItem, MessageHit, ThreadMessage, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
+// Messages chargés à l'ouverture, puis à chaque remontée ; plafond du moteur.
+const PAGE = 30;
+const MAX = 500;
+
+/** Clés stables : charger l'historique ajoute des messages en tête sans redessiner les autres. */
+function keysOf(messages: ThreadMessage[]): string[] {
+  // Doublons numérotés depuis la fin : un ajout en tête ne décale pas leur numéro.
+  const seen = new Map<string, number>();
+  return [...messages]
+    .reverse()
+    .map((m) => {
+      const k = `${m.at}|${m.sender}|${m.text.slice(0, 40)}`;
+      const n = seen.get(k) ?? 0;
+      seen.set(k, n + 1);
+      return `${k}#${n}`;
+    })
+    .reverse();
+}
 
 function IconAction({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
@@ -65,9 +83,14 @@ export function DiscussionView({
   const [text, setText] = useState(draft?.proposal ?? "");
   const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss">("idle");
   const [fresher, setFresher] = useState<string | null>(null);
+  // Fil complet : `edge` dit pourquoi on ne remonte plus (début de la conversation, ou
+  // limite de ce que Trame peut relire d'un coup), `older` pendant qu'on remonte.
+  // `want` : combien de messages le fil affiche.
+  const [edge, setEdge] = useState<"start" | "limit" | null>(null);
+  const [older, setOlder] = useState(false);
+  const want = useRef(PAGE);
+  const loading = useRef(false);
   const base = useRef(draft?.proposal ?? "");
-  const incoming = draft ? `${draft.receivedAt}|${draft.incoming}` : "";
-  const lastIncoming = useRef(incoming);
   const controls = useAnimationControls();
   const scroller = useRef<StickToBottomContext>(null);
   const foundRef = useRef<HTMLDivElement>(null);
@@ -75,12 +98,28 @@ export function DiscussionView({
   const load = async (fresh = false) => {
     setError(null);
     if (fresh) setMessages(null);
-    const res = await trame.threadMessages(c.threadId, fresh);
+    const res = await trame.threadMessages(c.threadId, fresh, want.current);
     if (!res.ok) {
       setError(res.error);
       return;
     }
     setMessages(res.messages);
+    if (res.top) setEdge("start");
+  };
+
+  const loadOlder = async () => {
+    if (loading.current || edge || messages === null) return;
+    loading.current = true;
+    setOlder(true);
+    want.current = Math.min(MAX, want.current + PAGE);
+    const res = await trame.threadMessages(c.threadId, false, want.current);
+    loading.current = false;
+    setOlder(false);
+    if (!res.ok) return toast.error("Historique indisponible", { description: res.error });
+    // Rien de plus ancien revenu : Teams n'en charge pas davantage dans le temps imparti.
+    const gained = res.messages.length > (messages?.length ?? 0);
+    setMessages(res.messages);
+    setEdge(res.top ? "start" : !gained || want.current >= MAX ? "limit" : null);
   };
 
   useEffect(() => {
@@ -88,16 +127,30 @@ export function DiscussionView({
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
-    lastIncoming.current = incoming;
+    setEdge(null);
+    want.current = PAGE;
     load();
   }, [c.threadId]);
 
-  // Nouveau message reçu pendant que la discussion est ouverte : le fil est relu.
+  // Fil vivant : tout message reçu dans cette conversation (suivie ou non) la fait
+  // relire, sans perdre l'historique déjà remonté.
+  const lastNotice = trame.state.notices.find((n) => n.threadId === c.threadId)?.id ?? "";
+  const seenNotice = useRef(lastNotice);
   useEffect(() => {
-    if (incoming === lastIncoming.current) return;
-    lastIncoming.current = incoming;
-    if (incoming) load();
-  }, [incoming]);
+    if (lastNotice === seenNotice.current) return;
+    seenNotice.current = lastNotice;
+    if (lastNotice) load();
+  }, [lastNotice]);
+
+  // Remonter en haut du fil charge les messages plus anciens.
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || edge || messages === null) return;
+    const io = new IntersectionObserver(([e]) => e.isIntersecting && loadOlder(), { rootMargin: "120px 0px 0px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [edge, messages === null, c.threadId]);
 
   // Nouveau message pendant la lecture : la proposition est mise à jour sans écraser ton texte.
   useEffect(() => {
@@ -151,6 +204,7 @@ export function DiscussionView({
 
   const shown: ThreadMessage[] =
     messages ?? (draft ? [{ sender: draft.from, text: draft.incoming, at: draft.receivedAt, mine: false }] : []);
+  const keys = keysOf(shown);
   const foundIndex = foundAt(shown, found);
   // La recherche dans l'excerpt surligne la même plage dans le message entier.
   const foundQuery = found ? found.excerpt.slice(found.match[0], found.match[1]) : "";
@@ -234,11 +288,28 @@ export function DiscussionView({
                   <Loader2 className="size-3.5 animate-spin" /> Historique en cours de lecture…
                 </span>
               )}
+              {messages !== null && (
+                <div ref={sentinel} className="flex justify-center pb-2 text-xs text-muted-foreground">
+                  {edge === "start" ? (
+                    <span>Début de la conversation</span>
+                  ) : edge === "limit" ? (
+                    <button type="button" className="rounded-full px-3 py-1 hover:bg-muted hover:text-foreground" onClick={openInTeams}>
+                      Plus ancien : ouvrir dans Teams
+                    </button>
+                  ) : older ? (
+                    <span className="flex items-center gap-2"><Loader2 className="size-3.5 animate-spin" /> Messages plus anciens…</span>
+                  ) : (
+                    <button type="button" className="rounded-full px-3 py-1 hover:bg-muted hover:text-foreground" onClick={loadOlder}>
+                      Messages plus anciens
+                    </button>
+                  )}
+                </div>
+              )}
               {shown.map((m, i) => {
                 const showName = !m.mine && c.surface !== "dm" && shown[i - 1]?.sender !== m.sender;
                 return (
                   <motion.div
-                    key={`${i}-${m.at}-${m.text.slice(0, 12)}`}
+                    key={keys[i]}
                     ref={i === foundIndex ? foundRef : undefined}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}

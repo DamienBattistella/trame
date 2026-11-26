@@ -778,11 +778,16 @@ export function useTrame() {
   };
 
   /** Mode manuel : historique d'une conversation, réponse tapée à la main, proposition, ouverture dans Teams. */
-  const threadMessages = async (threadId: string, fresh = false): Promise<Result<{ messages: ThreadMessage[] }>> => {
+  /** `last` : combien de messages remonter ; `top` dans la réponse : le début de la conversation est atteint. */
+  const threadMessages = async (
+    threadId: string,
+    fresh = false,
+    last = 30
+  ): Promise<Result<{ messages: ThreadMessage[]; top: boolean }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
-      if (demoStarted.has(threadId)) return { ok: true, messages: [] };
+      if (demoStarted.has(threadId)) return { ok: true, messages: [], top: true };
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
       const messages: ThreadMessage[] = [
@@ -791,12 +796,14 @@ export function useTrame() {
         { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
       ];
       demoArchive.add(threadId, messages);
-      return { ok: true, messages };
+      return { ok: true, messages, top: true };
     }
-    return request<{ messages: ThreadMessage[] }>(
+    const query = new URLSearchParams({ last: String(last), ...(fresh ? { fresh: "true" } : {}) });
+    const res = await request<{ messages: ThreadMessage[]; top?: boolean }>(
       "GET",
-      `/api/threads/${encodeURIComponent(threadId)}/messages${fresh ? "?fresh=true" : ""}`
+      `/api/threads/${encodeURIComponent(threadId)}/messages?${query}`
     );
+    return res.ok ? { ...res, top: Boolean(res.top) } : res;
   };
   /** Recherche dans les messages déjà lus par le moteur (rien n'est relu dans Teams). */
   const searchMessages = async (q: string): Promise<Result<{ results: MessageHit[]; scope: SearchScope }>> => {
