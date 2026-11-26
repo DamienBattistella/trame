@@ -43,6 +43,9 @@ REACTIONS: dict[str, str] = {
 }
 Reaction = Literal["like", "heart", "laugh", "surprised"]
 
+# Ce que Teams affiche à la place d'un message supprimé.
+DELETED_TEXT = "Ce message a été supprimé."
+
 
 class IncomingMessage(BaseModel):
     thread_id: str
@@ -60,6 +63,8 @@ class IncomingMessage(BaseModel):
     images: list["ImageRef"] = Field(default_factory=list)
     # Accusé de lecture d'un de tes messages : True « Vu », False « Envoyé », None inconnu.
     seen: Optional[bool] = None
+    # Message supprimé par son auteur : Teams n'en montre plus que DELETED_TEXT.
+    deleted: bool = False
 
 
 class FileRef(BaseModel):
@@ -134,6 +139,8 @@ class Capabilities(BaseModel):
     mentions: bool = False
     # Changer son propre statut Teams (Disponible, Ne pas déranger…).
     own_status: bool = False
+    # Supprimer un de ses propres messages.
+    delete: bool = False
 
 
 class AppState(BaseModel):

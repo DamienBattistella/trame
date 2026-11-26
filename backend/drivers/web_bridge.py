@@ -8,9 +8,9 @@ from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
 from drivers import rail_label
-from drivers.base import ReactUncertain, SendUncertain, TeamsDriver
+from drivers.base import DeleteUncertain, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import REACTIONS, FileRef, ImageRef, IncomingMessage, MessageRef, Surface, WatchEntity
+from models import DELETED_TEXT, REACTIONS, FileRef, ImageRef, IncomingMessage, MessageRef, Surface, WatchEntity
 
 
 class BridgeUnavailable(RuntimeError):
@@ -47,6 +47,11 @@ def _images(raw: Any) -> list[ImageRef]:
     return out
 
 
+# Ce que Teams web affiche à la place d'un message supprimé (français, anglais), suivi
+# un moment du lien « Annuler » collé au point : « Ce message a été supprimé.Annuler ».
+_DELETED = re.compile(r"^(ce message a été supprimé|this message has been deleted)\.?\s*(annuler|undo)?$", re.I)
+
+
 def _seen(status: Any) -> Optional[bool]:
     """Read receipt of one of your messages: True « Vu », False « Envoyé », None unknown."""
     return {"seen": True, "sent": False}.get(status) if isinstance(status, str) else None
@@ -57,6 +62,7 @@ class WebBridgeDriver(TeamsDriver):
     supports_reactions = True
     supports_reply = True
     supports_mentions = True
+    supports_delete = True
     POLL_WAIT = 20.0
 
     """« Teams intégré » (expérimental) : Teams web (teams.microsoft.com) in a hidden
@@ -323,10 +329,12 @@ class WebBridgeDriver(TeamsDriver):
             files, images = _files(m.get("files")), _images(m.get("images"))
             if not (text or files or images):
                 continue
-            msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=text,
+            deleted = bool(_DELETED.match(" ".join(text.split())))
+            msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(),
+                                        text=DELETED_TEXT if deleted else text,
                                         received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
                                         reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
-                                        files=files, images=images, seen=_seen(m.get("status"))))
+                                        files=files, images=images, seen=_seen(m.get("status")), deleted=deleted))
         return msgs, top
 
     @staticmethod
@@ -354,6 +362,21 @@ class WebBridgeDriver(TeamsDriver):
             raise ReactUncertain(res.get("error") or "réaction non confirmée")
         if not (res and res.get("ok")):
             raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'réaction refusée'}")
+        return True
+
+    def _delete_in_active(self, thread_id: str, target: MessageRef) -> bool:
+        # The page finds the message (by id, author and text), checks Teams offers to edit
+        # it (own messages only), then « … » → « Supprimer » and Teams' confirmation.
+        try:
+            res = self._rpc("delete", name=self._name(thread_id), message=self._ref(target), timeout=self.GESTURE_TIMEOUT)
+        except BridgeUnavailable as e:
+            if "pas de réponse" in str(e):
+                raise DeleteUncertain(str(e)) from e
+            raise
+        if res and res.get("uncertain"):
+            raise DeleteUncertain(res.get("error") or "suppression non confirmée")
+        if not (res and res.get("ok")):
+            raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'suppression refusée'}")
         return True
 
     def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],

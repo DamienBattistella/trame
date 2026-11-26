@@ -19,6 +19,9 @@ class WindowsUIADriver(TeamsDriver):
     start_chat_unsupported = "le pilote Teams de bureau (UIA) ne sait pas démarrer une conversation"
     attach_unsupported = "le pilote Teams de bureau (UIA) ne sait pas joindre de fichier, utilise Teams intégré"
     search_messages_unsupported = "le pilote Teams de bureau (UIA) ne sait pas lancer la recherche de Teams"
+    # Le menu « … » d'un message n'est pas exposé de façon fiable par l'arbre UIA de Teams :
+    # sans pouvoir vérifier le message visé, on ne supprime rien.
+    delete_unsupported = "Le pilote Teams de bureau (UIA) ne sait pas supprimer un message, utilise Teams intégré."
 
     def __init__(self, window_title: str = "Microsoft Teams", poll: float = 1.0):
         import uiautomation as auto  # noqa: F401  (Windows-only dependency)

@@ -157,6 +157,8 @@ export interface ThreadMessage {
   replyTo?: MessageRef | null;
   /** Tes messages : true « Vu », false « Envoyé », absent ou null si Teams ne le dit pas. */
   seen?: boolean | null;
+  /** Message supprimé : Teams n'en montre plus que « Ce message a été supprimé. » */
+  deleted?: boolean;
 }
 
 /** Activité d'une conversation, lue dans la liste que Trame interroge déjà. */

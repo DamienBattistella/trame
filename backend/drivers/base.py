@@ -18,6 +18,10 @@ class ReactUncertain(RuntimeError):
     """The reaction was clicked but Teams did not show it: it may or may not be there."""
 
 
+class DeleteUncertain(RuntimeError):
+    """« Supprimer » was clicked but Teams did not show the message as deleted."""
+
+
 class NotSupported(RuntimeError):
     """The active Teams driver cannot do this gesture (reaction, reply to a message)."""
 
@@ -52,6 +56,9 @@ class TeamsDriver(ABC):
     supports_reactions: bool = False
     supports_reply: bool = False
     supports_mentions: bool = False
+    # Supprimer un de ses propres messages (jamais celui d'un autre).
+    supports_delete: bool = False
+    delete_unsupported: str = "Ce pilote Teams ne sait pas supprimer un message."
     """Abstraction over the Teams client. Implemented by MockTeamsDriver (any OS,
     for development) and WindowsUIADriver (real UIA driving, Windows only)."""
 
@@ -345,6 +352,29 @@ class TeamsDriver(ABC):
         """Put reaction on target in the active conversation (still thread_id). The
         driver finds target and checks its sender and text before clicking."""
         raise NotSupported("Ce pilote Teams ne sait pas réagir à un message.")
+
+    def delete_focused(self, thread_id: str, target: MessageRef, restore: bool = True) -> Focus:
+        """Open thread_id, then delete target, one of the user's own messages. `ok` only
+        once Teams shows it deleted. The driver finds target, checks its author and text,
+        and that Teams offers to delete it (only on one's own messages): on any doubt,
+        nothing is deleted."""
+        if not self.supports_delete:
+            raise NotSupported(self.delete_unsupported)
+        with self.focused(thread_id, restore=restore) as focus:
+            if focus.ok:
+                try:
+                    focus.ok = bool(self._delete_in_active(thread_id, target))
+                    if not focus.ok:
+                        focus.reason = "message non supprimé dans Teams"
+                except DeleteUncertain:
+                    raise
+                except Exception as e:
+                    focus.ok, focus.reason = False, str(e)
+        return focus
+
+    def _delete_in_active(self, thread_id: str, target: MessageRef) -> bool:
+        """Delete target in the active conversation (still thread_id)."""
+        raise NotSupported(self.delete_unsupported)
 
     @abstractmethod
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

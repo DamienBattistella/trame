@@ -64,7 +64,7 @@ export interface TrameState {
   logs: LogItem[];
   notices: Notice[];
   /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
-  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean };
+  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean; delete: boolean };
   /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
   myPresence: Presence | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
@@ -160,6 +160,7 @@ function mapState(s: any): TrameState {
       reply: Boolean(s.capabilities?.reply),
       mentions: Boolean(s.capabilities?.mentions),
       ownStatus: Boolean(s.capabilities?.own_status),
+      delete: Boolean(s.capabilities?.delete),
     },
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
@@ -421,7 +422,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false }, myPresence: null, outbox: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [] };
   }
   return {
     paused: false,
@@ -433,7 +434,7 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
-    capabilities: { react: true, reply: true, mentions: true, ownStatus: true },
+    capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
     outbox: [],
   };
@@ -465,6 +466,10 @@ for (const d of mockDrafts) demoArchive.add(d.threadId, [{ sender: d.from, text:
 let demoStatusMessage = "";
 /** Démo : réactions posées, par conversation et message. */
 const demoReactions = new Map<string, Reaction[]>();
+/** Mode démo : messages supprimés, par « conversation/id ». */
+const demoDeleted = new Set<string>();
+/** Ce que Teams affiche à la place d'un message supprimé. */
+export const DELETED_TEXT = "Ce message a été supprimé.";
 
 // GitHub du mode démo : non connecté au départ, connecté ~6 s après le début de la connexion.
 const DEMO_GITHUB_ACCOUNT = "Wifsimster";
@@ -979,7 +984,9 @@ export function useTrame() {
       const who = conv?.displayName ?? "Quelqu'un";
       const messages: ThreadMessage[] = [
         { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
-        { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
+        demoDeleted.has(`${threadId}/d2`)
+          ? { id: "d2", sender: "Toi", text: DELETED_TEXT, at: "09:14", mine: true, reactions: [], deleted: true }
+          : { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
         {
           id: "d4",
           sender: who,
@@ -1181,6 +1188,16 @@ export function useTrame() {
       return res;
     }
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/react`, { message: messageRef(target), reaction });
+  };
+  /** Supprime un de tes messages dans Teams. Réussie seulement si Teams le montre supprimé. */
+  const deleteInThread = async (threadId: string, target: MessageRef): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!target.id) return { ok: false, error: "Message introuvable : rien n'a été supprimé." };
+      const res = await demo(700, {});
+      if (res.ok) demoDeleted.add(`${threadId}/${target.id}`);
+      return res;
+    }
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/delete`, { message: messageRef(target) });
   };
   /** Marque la conversation comme lue dans Teams, sans l'ouvrir. */
   const markRead = async (threadId: string): Promise<Result> => {
@@ -1439,6 +1456,7 @@ export function useTrame() {
     searchMessages,
     searchTeams,
     reactInThread,
+    deleteInThread,
     sendInThread,
     attachmentLimits,
     suggestInThread,

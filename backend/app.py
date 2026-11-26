@@ -143,6 +143,10 @@ class ReactBody(BaseModel):
     reaction: Reaction = "like"
 
 
+class DeleteBody(BaseModel):
+    message: MessageRef
+
+
 class CorrectBody(BaseModel):
     text: str = ""
     # The conversation being written in, to file the action in the reflection panel.
@@ -385,6 +389,12 @@ def create_app(
     @app.post("/api/threads/{thread_id:path}/react")
     def thread_react(thread_id: str, body: ReactBody):
         watcher.react(thread_id, body.message, body.reaction)
+        return {"ok": True}
+
+    @app.post("/api/threads/{thread_id:path}/delete")
+    def thread_delete(thread_id: str, body: DeleteBody):
+        """Delete one of the user's own messages: asked from the discussion view only."""
+        watcher.delete_message(thread_id, body.message)
         return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/suggest")
