@@ -1,6 +1,7 @@
 <!-- Teams web (teams.cloud.microsoft), relevé le 26/11/2026 par record.js : structure seule,
      sans texte ni nom. Une conversation de groupe ouverte, une ligne non lue dans la liste,
-     la barre d'actions du dernier message montrée par un survol. -->
+     la barre d'actions du dernier message montrée par un survol. L'en-tête de la liste
+     (bouton « Nouveau message ») vient d'un second relevé du même jour (newchat.html). -->
 <body role="application">
   <div id="app">
     <div>
@@ -75,6 +76,11 @@
             <div data-tid="app-layout-area--mid-nav">
               <div data-tid="slot-measurer">
                 <div data-testid="simple-collab-rail">
+                  <div data-testid="simple-collab-left-rail-header">
+                    <div role="toolbar">
+                      <button data-testid="simple-collab-left-rail-header-new-message-button" type="button" aria-label="Nouveau message"></button>
+                    </div>
+                  </div>
                   <div data-tid="simple-collab-dnd-rail" data-testid="simple-collab-dnd-rail" role="tree">
                     <div>
                       <div data-testid="list-item-metaos-copilot" role="treeitem" id="menur3k"></div>
