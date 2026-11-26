@@ -48,6 +48,7 @@ class TelemetrySettings(BaseModel):
 class McpSettings(BaseModel):
     enabled: bool = False
     token: str = ""
+    allow_send: bool = False
 
 
 class TeamsWebSettings(BaseModel):
@@ -94,6 +95,7 @@ class TelemetryPatch(_Patch):
 
 class McpPatch(_Patch):
     enabled: Optional[bool] = None
+    allow_send: Optional[bool] = None
     regenerate_token: Optional[bool] = None
 
 
@@ -144,7 +146,8 @@ def from_config(cfg: dict) -> Settings:
         ),
         telemetry=_telemetry(cfg.get("telemetry", {})),
         teams_web=TeamsWebSettings(enabled=True),
-        mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or "")),
+        mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or ""),
+                        allow_send=bool(cfg.get("mcp", {}).get("allow_send", False))),
     )
 
 

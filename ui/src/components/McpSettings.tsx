@@ -1,20 +1,55 @@
 import { useState } from "react";
-import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { GroupList } from "@/components/kit";
+import { cn } from "@/lib/utils";
 import { Settings } from "@/types";
 
 const URL = "http://127.0.0.1:8731/mcp";
-const TOOLS = [
-  ["list_conversations", "discussions, statut, non-lus"],
-  ["read_conversation", "derniers messages d'une discussion"],
-  ["summarize_conversation", "résumé, points ouverts, liens GitHub"],
-  ["list_drafts", "réponses à relire"],
-  ["propose_reply", "dépose une réponse dans « À relire », sans l'envoyer"],
-] as const;
+const GROUPS: { title: string; send?: boolean; tools: [string, string][] }[] = [
+  {
+    title: "Lire",
+    tools: [
+      ["list_conversations", "discussions, statut, non-lus"],
+      ["read_conversation", "derniers messages d'une discussion (par nom ou identifiant)"],
+      ["summarize_conversation", "résumé, points ouverts, éléments GitHub"],
+      ["list_drafts", "réponses à relire"],
+      ["lookup_person", "fiche de l'entourage : rôle, équipe, ton"],
+      ["get_persona", "ton SOUL.md"],
+    ],
+  },
+  {
+    title: "Préparer, sans envoyer",
+    tools: [
+      ["suggest_reply", "réponse rédigée par le cerveau de Trame"],
+      ["propose_reply", "dépose une réponse dans « À relire »"],
+      ["edit_draft · dismiss_draft", "modifie ou écarte une réponse à relire"],
+      ["type_in_teams", "écrit la réponse dans Teams sans l'envoyer"],
+      ["follow_conversation", "suivre une discussion, mode Brouillon"],
+      ["catch_up · set_paused", "rattrapage des non-lus, pause"],
+    ],
+  },
+  {
+    title: "Diagnostiquer",
+    tools: [
+      ["get_status · get_settings", "état de Trame et de Teams, réglages (sans jeton)"],
+      ["get_logs · get_telemetry", "journal, export complet, traces OpenTelemetry"],
+      ["diagnose_teams", "structure de la page Teams, sans texte de message"],
+    ],
+  },
+  {
+    title: "Envoyer",
+    send: true,
+    tools: [
+      ["send_draft", "envoie une réponse à relire"],
+      ["send_message", "envoie un message dans une discussion"],
+    ],
+  },
+];
+
 
 function CopyField({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -49,7 +84,13 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
 }
 
 /** Réglages › MCP : Trame comme serveur MCP local pour Claude Code, Copilot ou Jarvis. */
-export function McpSettings({ value, onChange }: { value: Settings["mcp"]; onChange: (p: { enabled?: boolean; regenerateToken?: boolean }) => void }) {
+export function McpSettings({
+  value,
+  onChange,
+}: {
+  value: Settings["mcp"];
+  onChange: (p: { enabled?: boolean; regenerateToken?: boolean; allowSend?: boolean }) => void;
+}) {
   const command = `claude mcp add --transport http trame ${URL} --header "Authorization: Bearer ${value.token}"`;
   return (
     <div className="flex flex-col gap-3">
@@ -63,6 +104,17 @@ export function McpSettings({ value, onChange }: { value: Settings["mcp"]; onCha
             <CopyField label="Adresse" value={URL} />
             <CopyField label="Jeton" value={value.token} secret />
             <CopyField label="Commande Claude Code" value={command} secret />
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="flex min-w-0 flex-col">
+                <Label htmlFor="mcp-send" className="font-normal">Autoriser l'envoi par les assistants</Label>
+                <span className="text-xs text-muted-foreground">
+                  {value.allowSend
+                    ? "Les assistants peuvent envoyer en ton nom et passer une discussion en Auto."
+                    : "Désactivé : les assistants préparent, tu envoies."}
+                </span>
+              </div>
+              <Switch id="mcp-send" checked={value.allowSend} onCheckedChange={(allowSend) => onChange({ allowSend })} />
+            </div>
             <div className="flex items-center justify-between gap-3 px-4 py-2.5">
               <span className="text-xs text-muted-foreground">Un jeton régénéré coupe l'accès aux clients configurés avec l'ancien.</span>
               <Button variant="outline" size="sm" className="rounded-full" onClick={() => onChange({ regenerateToken: true })}>
@@ -72,19 +124,30 @@ export function McpSettings({ value, onChange }: { value: Settings["mcp"]; onCha
           </>
         )}
       </GroupList>
-      <GroupList>
-        {TOOLS.map(([name, desc]) => (
-          <div key={name} className="flex items-baseline gap-3 px-4 py-2.5">
-            <code className="shrink-0 font-mono text-xs">{name}</code>
-            <span className="text-xs text-muted-foreground">{desc}</span>
-          </div>
-        ))}
-        <div className="px-4 py-2.5 text-xs text-muted-foreground">
-          Accessible seulement depuis ce poste, avec le jeton. Aucun outil n'envoie de message : une réponse proposée attend
-          toujours ton clic dans « À relire ». Le texte des messages est présenté aux assistants comme une donnée, pas comme
-          une instruction.
+      {GROUPS.map((g) => (
+        <div key={g.title} className="flex flex-col gap-1.5">
+          <span className="px-1 text-xs font-medium text-muted-foreground">
+            {g.title}
+            {g.send && !value.allowSend && " · désactivé"}
+          </span>
+          <GroupList className={cn(g.send && !value.allowSend && "opacity-50")}>
+            {g.tools.map(([name, desc]) => (
+              <div key={name} className="flex items-baseline gap-3 px-4 py-2.5">
+                <code className="shrink-0 font-mono text-xs">{name}</code>
+                <span className="text-xs text-muted-foreground">{desc}</span>
+              </div>
+            ))}
+          </GroupList>
         </div>
-      </GroupList>
+      ))}
+      <p className="flex gap-2 px-1 text-xs text-muted-foreground">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        <span>
+          Accessible seulement depuis ce poste, avec le jeton. Le texte des messages est présenté aux assistants comme une
+          donnée, jamais comme une instruction. Un envoi n'est confirmé que si le message apparaît dans Teams. Trois prompts
+          sont fournis : trier mes messages, répondre à une discussion, diagnostiquer Trame.
+        </span>
+      </p>
     </div>
   );
 }

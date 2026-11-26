@@ -106,7 +106,7 @@ function mapSettings(s: any): Settings {
       endpoint: String(s?.telemetry?.endpoint ?? ""),
       includeContent: Boolean(s?.telemetry?.include_content),
     },
-    mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? "") },
+    mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? ""), allowSend: Boolean(s?.mcp?.allow_send) },
     teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
   };
 }
@@ -203,6 +203,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     const m: Record<string, unknown> = {};
     if (p.mcp.enabled !== undefined) m.enabled = p.mcp.enabled;
     if (p.mcp.regenerateToken) m.regenerate_token = true;
+    if (p.mcp.allowSend !== undefined) m.allow_send = p.mcp.allowSend;
     out.mcp = m;
   }
   if (p.teamsWeb?.enabled !== undefined) out.teams_web = { enabled: p.teamsWeb.enabled };
@@ -221,6 +222,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     mcp: {
       enabled: p.mcp?.enabled ?? s.mcp.enabled,
       token: p.mcp?.enabled && !s.mcp.token ? "demo-jeton-local" : s.mcp.token,
+      allowSend: p.mcp?.allowSend ?? s.mcp.allowSend,
     },
   };
 }
@@ -256,7 +258,7 @@ let localSettings: Settings = {
   },
   brief: { enabled: true, lastMessages: 30 },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
-  mcp: { enabled: false, token: "" },
+  mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
 };
 const localBriefs = new Map<string, Brief>();

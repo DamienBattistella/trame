@@ -420,6 +420,17 @@ class Watcher:
         if not ok:
             raise ActionError(404, f"« {name} » est introuvable dans la liste de Teams. Fais-la défiler dans Teams puis réessaie.")
 
+    def edit_draft(self, draft_id: str, text: str) -> Draft:
+        body = (text or "").strip()
+        if not body:
+            raise ActionError(422, "La réponse est vide.")
+        with self._lock:
+            d = self._draft(draft_id)
+            if draft_id in self._in_flight:
+                raise ActionError(409, "Ce brouillon est en cours d'envoi.")
+            d.proposal = body[:4000]
+        return d
+
     def dismiss_draft(self, draft_id: str) -> None:
         with self._lock:
             self.state.drafts = [x for x in self.state.drafts if x.id != draft_id]

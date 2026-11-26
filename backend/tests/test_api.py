@@ -155,7 +155,7 @@ def test_settings_get(make_client):
         },
         "brief": {"enabled": True, "last_messages": 30},
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
-        "mcp": {"enabled": False, "token": ""},
+        "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
     }
 

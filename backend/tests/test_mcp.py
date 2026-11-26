@@ -28,8 +28,10 @@ def test_handshake_and_tools(make_client):
     assert client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
                        headers={"Authorization": f"Bearer {token}"}).status_code == 202
     names = {t["name"] for t in _call(client, token, "tools/list").json()["result"]["tools"]}
-    assert names == {"list_conversations", "read_conversation", "summarize_conversation", "list_drafts", "propose_reply",
-                     "get_status", "get_logs", "get_telemetry"}
+    assert {"list_conversations", "read_conversation", "summarize_conversation", "list_drafts", "propose_reply",
+            "get_status", "get_logs", "get_telemetry", "edit_draft", "dismiss_draft", "suggest_reply",
+            "follow_conversation", "lookup_person", "get_persona", "catch_up", "set_paused"} <= names
+    assert not names & {"send_draft", "send_message"}
 
 
 def test_propose_reply_lands_in_review_and_never_sends(make_client):
@@ -41,7 +43,7 @@ def test_propose_reply_lands_in_review_and_never_sends(make_client):
     assert r["result"]["isError"] is False
     assert any(d.thread_id == target and d.proposal.startswith("Je regarde") for d in watcher.state.drafts)
     assert driver.typed == []
-    bad = _call(client, token, "tools/call", {"name": "send_message", "arguments": {}}).json()
+    bad = _call(client, token, "tools/call", {"name": "delete_everything", "arguments": {}}).json()
     assert bad["error"]["code"] == -32602
 
 
@@ -70,3 +72,56 @@ def test_status_logs_and_telemetry_tools(make_client):
     full = tool("get_logs", full=True)
     assert full["text"].startswith("# Trame : journaux")
     assert "records" in tool("get_telemetry", limit=5)
+
+
+def _tool(client, token, tool_name, **args):
+    r = _call(client, token, "tools/call", {"name": tool_name, "arguments": args}).json()["result"]
+    return r["isError"], (json.loads(r["content"][0]["text"]) if not r["isError"] else r["content"][0]["text"])
+
+
+def test_conversation_by_name_and_draft_lifecycle(make_client):
+    client, watcher, driver = make_client()
+    token = _enable(client)
+    first = watcher.state.watchlist[0]
+    err, read = _tool(client, token, "read_conversation", name=first.display_name.upper())
+    assert not err and read["thread_id"] == first.thread_id
+    err, msg = _tool(client, token, "read_conversation", name="Personne Inconnue XYZ")
+    assert err and "Aucune discussion" in msg
+    err, d = _tool(client, token, "propose_reply", name=first.display_name, text="Premier jet")
+    assert not err
+    err, edited = _tool(client, token, "edit_draft", draft_id=d["draft_id"], text="Version finale")
+    assert not err and edited["draft"]["proposal"] == "Version finale"
+    err, _ = _tool(client, token, "dismiss_draft", draft_id=d["draft_id"])
+    assert not err and all(x.id != d["draft_id"] for x in watcher.state.drafts)
+    assert driver.typed == []
+
+
+def test_sending_requires_explicit_permission(make_client):
+    client, watcher, driver = make_client()
+    token = _enable(client)
+    target = watcher.state.watchlist[0]
+    err, msg = _tool(client, token, "send_message", thread_id=target.thread_id, text="Coucou")
+    assert err and "autorisé" in msg and driver.typed == []
+    err, msg = _tool(client, token, "follow_conversation", thread_id=target.thread_id, mode="auto")
+    assert err and "Auto" in msg
+    s = client.put("/api/settings", json={"mcp": {"allow_send": True}}).json()["settings"]["mcp"]
+    assert s["allow_send"] is True
+    names = {t["name"] for t in _call(client, token, "tools/list").json()["result"]["tools"]}
+    assert {"send_draft", "send_message"} <= names
+    err, sent = _tool(client, token, "send_message", thread_id=target.thread_id, text="Coucou")
+    assert not err and sent["ok"] and driver.typed[-1][1] == "Coucou"
+
+
+def test_prompts_and_settings_hide_token(make_client):
+    client, _w, _d = make_client()
+    token = _enable(client)
+    prompts = _call(client, token, "prompts/list").json()["result"]["prompts"]
+    assert {p["name"] for p in prompts} == {"trier_mes_messages", "repondre_a", "diagnostiquer_trame"}
+    got = _call(client, token, "prompts/get", {"name": "repondre_a", "arguments": {"nom": "Romain"}}).json()["result"]
+    assert "Romain" in got["messages"][0]["content"]["text"]
+    err, settings = _tool(client, token, "get_settings")
+    assert not err and "token" not in settings["mcp"]
+    err, persona = _tool(client, token, "get_persona")
+    assert not err and "soul" in persona
+    err, who = _tool(client, token, "lookup_person", name="Quelqu'un")
+    assert not err and who["found"] is False
