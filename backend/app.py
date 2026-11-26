@@ -635,6 +635,11 @@ def create_app(
         _bridge().deliver(body.id, body.ok, body.result, body.error)
         return {"ok": True}
 
+    @app.get("/api/health")
+    def get_health():
+        """Santé de Trame : Teams, page Teams, file d'envoi, cerveau, veille, disque."""
+        return {"ok": True, **watcher.health()}
+
     @app.get("/api/teams-web/status")
     def teams_web_status():
         from drivers.web_bridge import WebBridgeDriver

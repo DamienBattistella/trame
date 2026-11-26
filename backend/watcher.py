@@ -112,6 +112,9 @@ class Watcher:
         self._outbox_wake = threading.Event()
         # Réponses envoyées seules (horodatage, conversation, nom, texte) : plafond et « aujourd'hui ».
         self._auto_sent: list[tuple[float, str, str, str]] = []
+        # Dernier échec du cerveau (heure et raison), pour la page Santé.
+        self._brain_error: Optional[str] = None
+        self._started_at = time.time()
         # Un seul passage à la fois sur la file : deux passages simultanés (boucle de fond
         # et nouvel essai demandé) enverraient le même message deux fois.
         self._outbox_flush = threading.Lock()
@@ -608,6 +611,7 @@ class Watcher:
                 reflection.step(f"Réponse reçue ({len(proposal)} caractères)")
                 reflection.result(proposal)
         except Exception as e:
+            self._brain_error = f"{datetime.now():%H:%M} · {str(e)[:160]}"
             self.log("warn", f"Rédaction impossible: {e}")
             return None
 
@@ -2293,6 +2297,22 @@ class Watcher:
             if w.thread_id not in found and w.thread_id not in legacy and (w.watch or w.thread_id in self._started):
                 out.append(w)
         return out
+
+    def health(self) -> dict:
+        """Santé de Trame : chaque point avec son état et quoi en penser (page Santé)."""
+        import health as healthmod
+        relay = getattr(self.driver, "relay_connected", None)
+        st = self.state
+        items = [
+            healthmod.teams(st.selftest_ok, relay() if callable(relay) else None, type(self.driver).__name__),
+            healthmod.page(st.teams_check),
+            healthmod.outbox(st.outbox),
+            healthmod.brain(self.brain.label or st.brain, getattr(self.brain, "model", "") or "", self._brain_error),
+            healthmod.pause(st.paused, st.screen_sharing),
+            healthmod.disk(cfgmod.HOME),
+        ]
+        return {"status": healthmod.overall(items), "items": [i.model_dump() for i in items],
+                "version": os.environ.get("TRAME_VERSION", "dev"), "uptime_s": int(time.time() - self._started_at)}
 
     def export_logs(self, tail_lines: int = 300, otel_records: int = 200) -> str:
         """Everything useful to debug, as one text: Journal, end of backend.log, last

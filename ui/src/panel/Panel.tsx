@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -37,6 +37,7 @@ import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shak
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
+import { HealthPane } from "@/components/HealthPane";
 import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
 import { loadPrefs, savePrefs, type NotifyPrefs, type NotifyScope } from "@/lib/notifyPrefs";
 import { DraftItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
@@ -264,7 +265,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "mcp" | "advanced";
+type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
@@ -369,6 +370,13 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         </GroupList>
       </div>
       ),
+    },
+    {
+      id: "health",
+      label: "Santé",
+      icon: HeartPulse,
+      desc: "L'état de Trame en un coup d'œil : Teams, page Teams, file d'envoi, cerveau, veille, espace disque.",
+      body: <HealthPane trame={trame} />,
     },
     {
       id: "brain",

@@ -158,6 +158,14 @@ export interface UndoableSend {
   expiresAtMs: number;
 }
 
+/** Santé de Trame (page Santé) : un point par sujet, du pire au meilleur dans `status`. */
+export interface HealthReport {
+  status: "ok" | "warn" | "error" | "unknown";
+  items: { key: string; label: string; status: "ok" | "warn" | "error" | "unknown"; detail: string }[];
+  version: string;
+  uptimeS: number;
+}
+
 export interface QueuedSend {
   id: string;
   threadId: string;
@@ -1290,6 +1298,27 @@ export function useTrame() {
   /** Retire une réponse partie seule (mode Auto) : Trame la supprime dans Teams. */
   const undoAuto = (id: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/undo/${encodeURIComponent(id)}`) : demo(600, {});
+  /** Santé de Trame ; en démo, un exemple plausible. */
+  const health = async (): Promise<Result<HealthReport>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return demo(300, {
+        status: "warn" as const,
+        version: "démo",
+        uptimeS: 4380,
+        items: [
+          { key: "teams", label: "Connexion à Teams", status: "ok" as const, detail: "Connecté (démo)." },
+          { key: "page", label: "Page Teams", status: "ok" as const, detail: "Repères présents (14 vérifiés, contrôle de 16:05)." },
+          { key: "outbox", label: "File d'envoi", status: "warn" as const, detail: "1 message(s) en attente d'envoi." },
+          { key: "brain", label: "Cerveau", status: "ok" as const, detail: "Claude · haiku" },
+          { key: "pause", label: "Veille", status: "ok" as const, detail: "Active." },
+          { key: "disk", label: "Espace disque", status: "ok" as const, detail: "42,0 Go libres sur 931,0 Go (C:\\)" },
+        ],
+      });
+    }
+    const res = await request<{ status: HealthReport["status"]; items: HealthReport["items"]; version: string; uptime_s: number }>("GET", "/api/health");
+    return res.ok ? { ok: true, status: res.status, items: res.items, version: res.version, uptimeS: res.uptime_s } : res;
+  };
   /** File d'envoi : retirer un message, ou le réessayer tout de suite. */
   const cancelQueued = (id: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/cancel`) : demo(200, {});
@@ -1739,6 +1768,7 @@ export function useTrame() {
     markRead,
     clearCompose,
     cancelQueued,
+    health,
     undoAuto,
     retryQueued,
     sendFollowUp,
