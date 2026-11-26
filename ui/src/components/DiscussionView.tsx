@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, ExternalLink, Loader2, PenLine, RotateCcw, Send } from "lucide-react";
+import { BookOpenText, ExternalLink, Loader2, PenLine, RotateCcw, SearchX, Send } from "lucide-react";
 import { toast } from "sonner";
-import { StickToBottom } from "use-stick-to-bottom";
+import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
@@ -10,10 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
+import { Highlight } from "@/components/MessageSearchResults";
+import { findFolded, fold } from "@/lib/textSearch";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { DraftItem, ThreadMessage, WatchEntity } from "@/types";
+import { DraftItem, MessageHit, ThreadMessage, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -33,16 +35,29 @@ function IconAction({ label, onClick, disabled, children }: { label: string; onC
   );
 }
 
+/** Position du message trouvé dans le fil affiché (le plus récent s'il revient), -1 sinon. */
+function foundAt(shown: ThreadMessage[], found: MessageHit | null): number {
+  if (!found) return -1;
+  const text = fold(found.text);
+  for (let i = shown.length - 1; i >= 0; i--) {
+    if (fold(shown[i].text) === text && (shown[i].sender === found.sender || shown[i].mine === found.mine)) return i;
+  }
+  return -1;
+}
+
 /** Une discussion : historique lu dans Teams, réponse proposée pré-remplie, envoi à la main. */
 export function DiscussionView({
   trame,
   conversation: c,
   draft,
+  found = null,
   onBrief,
 }: {
   trame: Trame;
   conversation: WatchEntity;
   draft: DraftItem | null;
+  /** Message trouvé par la recherche : la discussion s'ouvre dessus, surligné. */
+  found?: MessageHit | null;
   onBrief: (t: BriefTarget) => void;
 }) {
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
@@ -54,6 +69,8 @@ export function DiscussionView({
   const incoming = draft ? `${draft.receivedAt}|${draft.incoming}` : "";
   const lastIncoming = useRef(incoming);
   const controls = useAnimationControls();
+  const scroller = useRef<StickToBottomContext>(null);
+  const foundRef = useRef<HTMLDivElement>(null);
 
   const load = async (fresh = false) => {
     setError(null);
@@ -134,6 +151,15 @@ export function DiscussionView({
 
   const shown: ThreadMessage[] =
     messages ?? (draft ? [{ sender: draft.from, text: draft.incoming, at: draft.receivedAt, mine: false }] : []);
+  const foundIndex = foundAt(shown, found);
+  // La recherche dans l'excerpt surligne la même plage dans le message entier.
+  const foundQuery = found ? found.excerpt.slice(found.match[0], found.match[1]) : "";
+
+  useEffect(() => {
+    if (foundIndex < 0) return;
+    scroller.current?.stopScroll();
+    foundRef.current?.scrollIntoView({ block: "center" });
+  }, [found, foundIndex, messages]);
   const edited = draft && text.trim() !== draft.proposal.trim();
 
   return (
@@ -180,7 +206,7 @@ export function DiscussionView({
         </div>
       </header>
 
-      <StickToBottom className="relative min-h-0 flex-1 overflow-y-auto" resize="smooth" initial="instant">
+      <StickToBottom contextRef={scroller} className="relative min-h-0 flex-1 overflow-y-auto" resize="smooth" initial={found ? false : "instant"}>
         <StickToBottom.Content className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-5 py-5">
           {error && !draft ? (
             <div className="flex flex-col items-center gap-3 py-16 text-center">
@@ -197,6 +223,12 @@ export function DiscussionView({
             <p className="py-16 text-center text-sm text-muted-foreground">Aucun message lisible dans cette conversation.</p>
           ) : (
             <>
+              {found && messages !== null && foundIndex < 0 && (
+                <p className="flex items-center justify-center gap-2 pb-2 text-center text-xs text-muted-foreground">
+                  <SearchX className="size-3.5 shrink-0" />
+                  Le message trouvé ({found.at || "sans heure"}) est plus ancien que ceux affichés ici.
+                </p>
+              )}
               {messages === null && draft && (
                 <span className="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" /> Historique en cours de lecture…
@@ -207,14 +239,22 @@ export function DiscussionView({
                 return (
                   <motion.div
                     key={`${i}-${m.at}-${m.text.slice(0, 12)}`}
+                    ref={i === foundIndex ? foundRef : undefined}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i, 10) * 0.02 }}
                     className={cn("flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start")}
                   >
                     {showName && <span className="ml-1 text-xs text-muted-foreground">{m.sender}</span>}
-                    <div className={cn("rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap", m.mine ? "rounded-tr-md border border-primary/30 bg-primary/10 dark:bg-primary/15" : "rounded-tl-md bg-muted")}>
-                      {m.text}
+                    <div
+                      aria-current={i === foundIndex ? "true" : undefined}
+                      className={cn(
+                        "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap",
+                        m.mine ? "rounded-tr-md border border-primary/30 bg-primary/10 dark:bg-primary/15" : "rounded-tl-md bg-muted",
+                        i === foundIndex && "ring-2 ring-warning/70"
+                      )}
+                    >
+                      {i === foundIndex ? <Highlight text={m.text} range={findFolded(m.text, foundQuery)} /> : m.text}
                     </div>
                     {m.at && <span className="mx-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
                   </motion.div>

@@ -115,6 +115,27 @@ export interface ThreadMessage {
   mine: boolean;
 }
 
+/** Un message trouvé par la recherche dans l'historique déjà lu par Trame. */
+export interface MessageHit {
+  threadId: string;
+  conversation: string;
+  sender: string;
+  at: string;
+  mine: boolean;
+  text: string;
+  /** Extrait sur une ligne, `match` y situe la correspondance [début, fin). */
+  excerpt: string;
+  match: [number, number];
+}
+
+/** Jusqu'où va la recherche : messages lus par le moteur depuis son démarrage. */
+export interface SearchScope {
+  conversations: number;
+  messages: number;
+  /** Date ISO du démarrage du moteur (ou de sa réinitialisation). */
+  since: string;
+}
+
 /** Une personne de l'entourage, telle que Trame la décrit au cerveau. */
 export interface Person {
   name: string;
