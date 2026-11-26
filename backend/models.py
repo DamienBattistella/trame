@@ -66,6 +66,49 @@ class IncomingMessage(BaseModel):
     seen: Optional[bool] = None
     # Message supprimé par son auteur : Teams n'en montre plus que DELETED_TEXT.
     deleted: bool = False
+    # Liens du texte (texte affiché et adresse : « [ALL-141] Recherche identité - Jira »
+    # n'est pas l'adresse) et cartes d'aperçu (Jira, site…) résumées, jamais dans `text`.
+    links: list["LinkRef"] = Field(default_factory=list)
+    cards: list["CardRef"] = Field(default_factory=list)
+
+    def brain_text(self) -> str:
+        return brain_text(self.text, self.links, self.cards)
+
+
+class LinkRef(BaseModel):
+    """Un lien du texte d'un message : son texte tel qu'affiché et son adresse (http/https)."""
+    text: str
+    url: str
+
+
+class CardRef(BaseModel):
+    """Une carte d'aperçu sous un message, résumée : sa source (Jira, GitHub, un site), son
+    titre, son adresse (http/https, peut manquer) et quelques champs (état, assignée…)."""
+    source: str = ""
+    title: str = ""
+    url: str = ""
+    fields: list[str] = Field(default_factory=list)
+
+    def summary(self) -> str:
+        head = " : ".join(p for p in (self.source, self.title) if p)
+        tail = ", ".join(self.fields)
+        return f"[aperçu {head}{f' ({tail})' if tail else ''}{f' {self.url}' if self.url else ''}]"
+
+
+def brain_text(text: str, links: list[LinkRef], cards: list[CardRef]) -> str:
+    """Le texte d'un message pour le cerveau : chaque lien « texte (adresse) », puis une
+    ligne par carte d'aperçu, sans ses libellés ni boutons. Les adresses y restent visibles
+    pour le contexte GitHub et la vérification des faits."""
+    for link in links:
+        if link.url in text or link.text == link.url:
+            continue
+        at = text.find(link.text)
+        if at >= 0:
+            end = at + len(link.text)
+            text = f"{text[:end]} ({link.url}){text[end:]}"
+        else:
+            text = f"{text}\n{link.text} ({link.url})".strip()
+    return "\n".join([text, *(c.summary() for c in cards)]).strip()
 
 
 class FileRef(BaseModel):

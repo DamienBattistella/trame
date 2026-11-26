@@ -11,7 +11,8 @@ import presence as presencemod
 from drivers import rail_label
 from drivers.base import DeleteUncertain, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import DELETED_TEXT, REACTIONS, FileRef, ImageRef, IncomingMessage, MessageRef, Surface, WatchEntity
+from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, Surface,
+                    WatchEntity)
 
 
 class BridgeUnavailable(RuntimeError):
@@ -45,6 +46,42 @@ def _images(raw: Any) -> list[ImageRef]:
         ok = isinstance(data, str) and len(data) <= MAX_IMAGE_CHARS and IMAGE_DATA.match(data)
         size = [max(0, min(10_000, int(i.get(k) or 0))) if str(i.get(k) or 0).isdigit() else 0 for k in ("width", "height")]
         out.append(ImageRef(data=data if ok else None, width=size[0] if ok else 0, height=size[1] if ok else 0))
+    return out
+
+
+MAX_LINKS, MAX_CARDS = 20, 5
+WEB_URL = re.compile(r"^https?://[^\s/?#@]+[^\s]*$", re.IGNORECASE)
+
+
+def _one_line(value: Any, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _web_url(value: Any) -> str:
+    """An http(s) address, else "" : nothing else is ever opened from a message."""
+    url = str(value or "").strip()
+    return url if len(url) <= 2000 and WEB_URL.match(url) else ""
+
+
+def _links(raw: Any) -> list[LinkRef]:
+    out = []
+    for link in (raw if isinstance(raw, list) else [])[:MAX_LINKS]:
+        link = link if isinstance(link, dict) else {}
+        url = _web_url(link.get("url"))
+        if url:
+            out.append(LinkRef(text=_one_line(link.get("text"), 300) or url, url=url))
+    return out
+
+
+def _cards(raw: Any) -> list[CardRef]:
+    out = []
+    for card in (raw if isinstance(raw, list) else [])[:MAX_CARDS]:
+        card = card if isinstance(card, dict) else {}
+        fields = card.get("fields") if isinstance(card.get("fields"), list) else []
+        ref = CardRef(source=_one_line(card.get("source"), 60), title=_one_line(card.get("title"), 200),
+                      url=_web_url(card.get("url")), fields=[f for f in (_one_line(x, 120) for x in fields[:3]) if f])
+        if ref.title or ref.url:
+            out.append(ref)
     return out
 
 
@@ -385,14 +422,16 @@ class WebBridgeDriver(TeamsDriver):
         for m in raw:
             text = (m.get("text") or "").strip()
             files, images = _files(m.get("files")), _images(m.get("images"))
-            if not (text or files or images):
+            links, cards = _links(m.get("links")), _cards(m.get("cards"))
+            if not (text or files or images or cards):
                 continue
             deleted = bool(_DELETED.match(" ".join(text.split())))
             msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(),
                                         text=DELETED_TEXT if deleted else text,
                                         received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
                                         reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
-                                        files=files, images=images, seen=_seen(m.get("status")), deleted=deleted))
+                                        files=files, images=images, seen=_seen(m.get("status")), deleted=deleted,
+                                        links=[] if deleted else links, cards=[] if deleted else cards))
         return msgs, top
 
     @staticmethod

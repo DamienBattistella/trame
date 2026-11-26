@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
 import { openExternal } from "@/desktop";
-import { linkify, type GithubRef, type Segment } from "@/lib/linkify";
+import { linkify, linkLabel, type GithubRef, type Segment, type TextLink } from "@/lib/linkify";
 import { cn } from "@/lib/utils";
 import type { BriefGithubItem, GithubState } from "@/types";
 
@@ -63,7 +63,9 @@ function Link({ seg, github }: { seg: Extract<Segment, { type: "link" }>; github
       <span className={cn("underline decoration-link/40 underline-offset-2 group-hover/link:decoration-link", !seg.github && "truncate")}>
         {seg.label}
       </span>
-      {info && <span className="min-w-0 truncate text-muted-foreground group-hover/link:text-foreground">{info.title}</span>}
+      {info && seg.label === linkLabel(seg.url) && (
+        <span className="min-w-0 truncate text-muted-foreground group-hover/link:text-foreground">{info.title}</span>
+      )}
     </a>
   );
 }
@@ -75,8 +77,11 @@ export function MessageText({
   range = null,
   interactive = true,
   github,
+  links,
 }: {
   text: string;
+  /** Liens lus dans Teams dont le texte n'est pas l'adresse : ce texte devient cliquable. */
+  links?: TextLink[];
   /** Plage [début, fin) à surligner (recherche). */
   range?: [number, number] | null;
   /** false dans un bouton ou un aperçu : liens raccourcis et colorés, mais pas cliquables. */
@@ -96,7 +101,7 @@ export function MessageText({
   if (!text) return null;
   return (
     <span>
-      {linkify(text).map((seg, i) => {
+      {linkify(text, links).map((seg, i) => {
         if (seg.type === "link") {
           const node = interactive ? (
             <Link key={i} seg={seg} github={github} />

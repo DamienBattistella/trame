@@ -387,6 +387,7 @@ function mapHit(h: any): MessageHit {
     text: h.text,
     excerpt: h.excerpt,
     match: Array.isArray(h.match) ? [h.match[0], h.match[1]] : null,
+    links: Array.isArray(h.links) ? h.links : [],
   };
 }
 
@@ -1190,6 +1191,23 @@ export function useTrame() {
           at: "09:40",
           mine: false,
           reactions: demoReactions.get(`${threadId}/d4`) ?? [],
+        },
+        // Lien dont le texte n'est pas l'adresse, carte Jira et aperçu GitHub, comme Teams les montre.
+        {
+          id: "d5",
+          sender: who,
+          text: "Les deux fiches pour la recette :\n[HL7-12] Typage OBX-2 - Jira\n[HL7-13] Unités UCUM - Jira",
+          at: "09:52",
+          mine: false,
+          reactions: demoReactions.get(`${threadId}/d5`) ?? [],
+          links: [
+            { text: "[HL7-12] Typage OBX-2 - Jira", url: "https://example.atlassian.net/browse/HL7-12" },
+            { text: "[HL7-13] Unités UCUM - Jira", url: "https://example.atlassian.net/browse/HL7-13" },
+          ],
+          cards: [
+            { source: "Jira", title: "HL7-12: Typage OBX-2", url: "https://example.atlassian.net/browse/HL7-12", fields: ["Assigned to Lucas Bernard", "Medium", "OPEN"] },
+            { source: "GitHub", title: "Mapping HL7 des résultats de labo · Pull Request #214", url: "https://github.com/Wifsimster/passerelle/pull/214", fields: [] },
+          ],
         },
         { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }], images: [{ data: null, width: 0, height: 0 }] },
       ];

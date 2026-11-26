@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { History, Loader2, MessageSquareText, Search } from "lucide-react";
 import { Trame } from "@/api";
 import { MessageText } from "@/components/MessageText";
+import type { TextLink } from "@/lib/linkify";
 import { fold } from "@/lib/textSearch";
 import { cn } from "@/lib/utils";
 import { MessageHit, SearchScope } from "@/types";
@@ -9,8 +10,8 @@ import { MessageHit, SearchScope } from "@/types";
 const DEBOUNCE_MS = 250;
 
 /** Extrait avec la plage [début, fin) surlignée ; liens raccourcis, pas cliquables (la ligne entière l'est). */
-export function Highlight({ text, range }: { text: string; range: [number, number] | null }) {
-  return <MessageText text={text} range={range} interactive={false} />;
+export function Highlight({ text, range, links }: { text: string; range: [number, number] | null; links?: TextLink[] }) {
+  return <MessageText text={text} range={range} links={links} interactive={false} />;
 }
 
 function since(iso: string) {
@@ -56,7 +57,7 @@ function HitRow({ h, onOpen }: { h: MessageHit; onOpen: (hit: MessageHit) => voi
         </span>
         <span className="line-clamp-3 text-xs text-muted-foreground">
           <span className="font-medium text-foreground/80">{h.mine ? "Toi" : h.sender} : </span>
-          <Highlight text={h.excerpt} range={h.match} />
+          <Highlight text={h.excerpt} range={h.match} links={h.links} />
         </span>
       </button>
     </li>

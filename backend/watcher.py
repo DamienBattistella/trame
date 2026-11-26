@@ -24,8 +24,9 @@ import transcripts as transcriptsmod
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck,
-                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, UndoableSend, WatchEntity, AutoSent)
+from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
+                    FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
+                    UndoableSend, WatchEntity, AutoSent, brain_text)
 from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
@@ -1315,7 +1316,8 @@ class Watcher:
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
                 "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
-                "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted} for m in msgs]
+                "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted,
+                "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards]} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
@@ -1551,7 +1553,7 @@ class Watcher:
         reflection.step(f"Lecture du fil ({last_n} derniers messages au plus)")
         if target is not None:
             raw = [m for m in self._read_history_focused(thread_id, entity.display_name, last_n, "Proposition")[0]
-                   if m.text or m.files or m.images]
+                   if m.text or m.files or m.images or m.cards]
             reflection.check_cancelled()
             return self._suggest_for(entity, raw, target)
         msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
@@ -1993,7 +1995,9 @@ class Watcher:
         reflection.step(f"Lecture du fil ({self.FACT_CHECK_MESSAGES} derniers messages au plus)")
         msgs, _top = self.thread_history(thread_id, self.FACT_CHECK_MESSAGES)
         reflection.check_cancelled()
-        lines = [f"[{m['at']}] {m['sender']}: {m['text']}" if m.get("at") else f"{m['sender']}: {m['text']}" for m in msgs]
+        def said(m: dict) -> str:
+            return brain_text(m["text"], [LinkRef(**x) for x in m.get("links") or []], [CardRef(**x) for x in m.get("cards") or []])
+        lines = [f"[{m['at']}] {m['sender']}: {said(m)}" if m.get("at") else f"{m['sender']}: {said(m)}" for m in msgs]
         if target is not None:
             when = f" ({target.at})" if target.at else ""
             lines.append(f"(Le message à vérifier répond à {target.sender or 'ce message'}{when} : « {target.text} »)")
@@ -2040,14 +2044,16 @@ class Watcher:
         # For the brain (brief, proposal): text only. A message with only an image or a
         # file says so in words, without the image data.
         return [self._as_text(m) for m in self._read_history_focused(thread_id, name, last_n, purpose)[0]
-                if m.text or m.files or m.images]
+                if m.text or m.files or m.images or m.cards]
 
     @staticmethod
     def _as_text(m: IncomingMessage) -> IncomingMessage:
+        # Links as « text (address) » and one line per preview card: the brain sees
+        # where a link goes, never the card's labels and buttons.
         extra = [f"[fichier joint : {f.name}]" for f in m.files] + ["[image]"] * len(m.images)
-        if not extra:
+        if not extra and not m.links and not m.cards:
             return m
-        return m.model_copy(update={"text": "\n".join([m.text, *extra]).strip(), "images": []})
+        return m.model_copy(update={"text": "\n".join([m.brain_text(), *extra]).strip(), "images": []})
 
     def _read_history_focused(self, thread_id: str, name: str, last_n: int,
                               purpose: str = "Résumé") -> tuple[list[IncomingMessage], bool]:
@@ -2241,7 +2247,7 @@ class Watcher:
             return ""
         self.archive.add(thread_id, msgs)
         self._track(thread_id, msgs)
-        text ="\n".join(f"{m.sender}: {m.text}" for m in msgs)
+        text = "\n".join(f"{m.sender}: {m.brain_text()}" for m in msgs)
         if text:
             self._history[thread_id] = (time.monotonic(), text)
         return text
