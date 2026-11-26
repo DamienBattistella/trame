@@ -10,6 +10,7 @@ from typing import Iterator, Callable, Iterable, Optional, Sequence
 
 import attachments as attachmod
 import config as cfgmod
+import follow_ups as followmod
 import safety
 import people as peoplemod
 import presence as presencemod
@@ -21,7 +22,7 @@ from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck,
-                    FactCheckSources, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, WatchEntity)
+                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, WatchEntity)
 from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
@@ -108,6 +109,11 @@ class Watcher:
         # et nouvel essai demandé) enverraient le même message deux fois.
         self._outbox_flush = threading.Lock()
         self.outbox_auto = True  # renvoi en arrière-plan ; coupé par les tests
+        # Relances : tes questions restées sans réponse (suivi gardé sur disque).
+        self.follow_ups = followmod.Tracker(cfgmod.HOME / "follow_ups.json")
+        self._follow_up_failed: dict[str, float] = {}
+        self.follow_up_auto = True  # passage périodique ; coupé par les tests
+        self._sync_follow_ups()
 
     # --- lifecycle ---
     def teams_ready(self, ready: bool) -> None:
@@ -162,6 +168,7 @@ class Watcher:
         self._thread.start()
         threading.Thread(target=self._presence_loop, daemon=True).start()
         threading.Thread(target=self._outbox_loop, daemon=True).start()
+        threading.Thread(target=self._follow_up_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -299,6 +306,7 @@ class Watcher:
         # Followed or not, an open discussion view rereads the conversation on the
         # notice: its cached copy lacks this message.
         self._thread_cache.pop(msg.thread_id, None)
+        self._track(msg.thread_id, [msg])
         self._notice(msg)
         self._process(msg)
 
@@ -447,6 +455,7 @@ class Watcher:
         with self._lock:
             self._sent_recent.setdefault(thread_id, []).append((time.monotonic(), text.strip()))
             self._sent_recent[thread_id] = self._sent_recent[thread_id][-10:]
+        self._track(thread_id, [followmod.Seen(sender="moi", text=text, mine=True)])
 
     def _because(self) -> str:
         reason = getattr(self._why, "reason", None)
@@ -777,6 +786,109 @@ class Watcher:
                 self.log("warn", f"Saisie refusée : conversation de {d.from_} non confirmée")
                 raise ActionError(409, f"Rien n'a été saisi dans Teams.{self._because()}")
         self.log("info", f"Brouillon saisi dans Teams pour {d.from_} (à valider dans Teams)")
+
+    # --- relances : tes questions restées sans réponse ---
+    FOLLOW_UP_EVERY = 300.0
+    # Cerveau en échec sur une question : on n'y revient qu'après ce délai.
+    FOLLOW_UP_RETRY = 3600.0
+
+    def _follow_up_cfg(self) -> tuple[bool, int]:
+        f = self.cfg.get("follow_ups", {}) or {}
+        return bool(f.get("enabled", True)), settingsmod.follow_up_delay(f)
+
+    def _track(self, thread_id: str, msgs: Sequence) -> None:
+        """Note le dernier message vu d'une conversation pour les relances. Ne lit rien
+        dans Teams : seulement ce que Trame vient de recevoir, d'envoyer ou de relire.
+        Les canaux sont laissés de côté (une question y attend rarement une personne)."""
+        try:
+            entity = next((w for w in self.state.watchlist if w.thread_id == thread_id), None)
+            surface = entity.surface if entity else next((m.surface for m in msgs if hasattr(m, "surface")), None)
+            if surface == Surface.channel:
+                return
+            seen = [m if isinstance(m, followmod.Seen) else
+                    followmod.Seen(sender=m.sender, text=m.text, at=m.received_at, mine=self._is_mine(m.sender))
+                    for m in msgs if not getattr(m, "deleted", False)]
+            name = entity.display_name if entity else ""
+            if self.follow_ups.observe(thread_id, name, seen):
+                self._sync_follow_ups()
+        except Exception:
+            pass
+
+    def _sync_follow_ups(self) -> None:
+        items = [FollowUp(id=e.id, thread_id=e.thread_id, conversation=self._name_of(e.thread_id, e.conversation),
+                          question=e.question, asked_at=e.asked_at, proposal=e.proposal)
+                 for e in self.follow_ups.ready()]
+        with self._lock:
+            self.state.follow_ups = items
+
+    def _follow_up_loop(self) -> None:
+        while not self._stop.wait(self.FOLLOW_UP_EVERY):
+            if self.follow_up_auto:
+                self.scan_follow_ups()
+
+    def scan_follow_ups(self) -> int:
+        """Passe au cerveau les questions dont le délai est atteint : il confirme qu'elles
+        attendent une réponse et propose une relance. Ne tape et n'envoie jamais rien.
+        Renvoie le nombre de relances proposées."""
+        enabled, delay = self._follow_up_cfg()
+        if not enabled or self.state.paused:
+            return 0
+        proposed = 0
+        now = time.monotonic()
+        for entry in self.follow_ups.due(delay):
+            failed = self._follow_up_failed.get(entry.id)
+            if failed is not None and now - failed < self.FOLLOW_UP_RETRY:
+                continue
+            context = [followmod.Seen(sender=m["sender"], text=m["text"], at=m["at"], mine=self._is_mine(m["sender"]))
+                       for m in self.archive.recent(entry.thread_id, 12)]
+            name = self._name_of(entry.thread_id, entry.conversation)
+            prompt = followmod.build_prompt(self.soul, name, entry.question, entry.asked_at, context)
+            try:
+                with telemetry.span("brain.follow_up", provider=self.state.brain):
+                    waiting, text = followmod.parse_answer(self.brain.complete(prompt, timeout=90), entry.question)
+            except Exception as e:
+                self._follow_up_failed[entry.id] = now
+                self.log("warn", f"Relance pour {name} pas encore proposée : {e}")
+                continue
+            self._follow_up_failed.pop(entry.id, None)
+            if not waiting:
+                self.follow_ups.ignore(entry.id)
+                self.log("info", f"{name} : ta question n'attend pas de réponse, pas de relance")
+                continue
+            if self.follow_ups.propose(entry.id, text):
+                proposed += 1
+                self.log("draft", f"Relance à relire pour {name}")
+        # Toujours : un report échu revient aussi sans nouvel appel au cerveau.
+        self._sync_follow_ups()
+        return proposed
+
+    def _follow_up(self, item_id: str) -> followmod.Entry:
+        entry = self.follow_ups.get(item_id)
+        if entry is None or entry.status != "ready":
+            raise ActionError(404, "Cette relance n'est plus proposée.")
+        return entry
+
+    def send_follow_up(self, item_id: str, text: Optional[str] = None) -> Optional[QueuedSend]:
+        """Envoie la relance, sur ton clic seulement, par le chemin d'un envoi à la main
+        (file d'envoi comprise quand Teams n'est pas prêt)."""
+        entry = self._follow_up(item_id)
+        body = (text if text is not None else entry.proposal).strip()
+        if not body:
+            raise ActionError(422, "La relance est vide.")
+        queued = self.send_manual(entry.thread_id, body)
+        self.follow_ups.done(item_id)
+        self._sync_follow_ups()
+        return queued
+
+    def snooze_follow_up(self, item_id: str, hours: float = 24) -> None:
+        self._follow_up(item_id)
+        self.follow_ups.snooze(item_id, hours)
+        self._sync_follow_ups()
+
+    def ignore_follow_up(self, item_id: str) -> None:
+        self._follow_up(item_id)
+        self.follow_ups.ignore(item_id)
+        self._sync_follow_ups()
 
     # --- manual mode: read a conversation, reply by hand, or ask for a proposal ---
     def _is_mine(self, sender: str) -> bool:
@@ -1525,6 +1637,7 @@ class Watcher:
                     if focus.ok:
                         msgs, top = self.driver.read_history(thread_id, last_n)
                         self.archive.add(thread_id, msgs)
+                        self._track(thread_id, msgs)
                     telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs), top=top)
             except Exception as e:
                 self.log("warn", f"{purpose} impossible pour {name} : lecture de la conversation échouée ({e})")
@@ -1644,6 +1757,8 @@ class Watcher:
             self._thread_cache.clear()
             self.archive.clear()
             self._sent_recent.clear()
+            self.follow_ups.clear()
+            self.state.follow_ups = []
             self.state.drafts = []
             self.state.notices = []
             self.state.logs = []
@@ -1697,7 +1812,8 @@ class Watcher:
         except Exception:
             return ""
         self.archive.add(thread_id, msgs)
-        text = "\n".join(f"{m.sender}: {m.text}" for m in msgs)
+        self._track(thread_id, msgs)
+        text ="\n".join(f"{m.sender}: {m.text}" for m in msgs)
         if text:
             self._history[thread_id] = (time.monotonic(), text)
         return text

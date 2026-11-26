@@ -229,3 +229,31 @@ export function mockBrief(
     sources: { messages: Math.min(opts.lastMessages, seed.length), reposSearched: opts.github ? seed.repos : 0 },
   };
 }
+
+/** Démo : deux questions restées sans réponse, avec la relance proposée. */
+function daysAgo(days: number, hour: number, minute = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  d.setHours(hour, minute, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:${pad(minute)}`;
+}
+
+export const mockFollowUps = [
+  {
+    id: "fu-demo-1",
+    threadId: "19:ee55@thread.v2",
+    conversation: "Chiara Rossi",
+    question: "Tu peux me confirmer la date de recette du connecteur HPRIM ? Je dois caler la démo client.",
+    askedAt: daysAgo(2, 9, 40),
+    proposal: "Je me permets de relancer pour la date de recette HPRIM : tu as pu avoir une confirmation ? C'est pour caler la démo client.",
+  },
+  {
+    id: "fu-demo-2",
+    threadId: "19:ff66@thread.v2",
+    conversation: "Projet FHIR Passerelle",
+    question: "Qui reprend le mapping des ressources Encounter pendant mes congés ?",
+    askedAt: daysAgo(1, 16, 5),
+    proposal: "Petite relance sur le mapping Encounter : quelqu'un peut le reprendre pendant mes congés ?",
+  },
+];

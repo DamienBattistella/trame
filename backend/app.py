@@ -126,6 +126,14 @@ class TextBody(BaseModel):
     mentions: list[str] = Field(default_factory=list, max_length=10)
 
 
+class FollowUpSendBody(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=8000)
+
+
+class SnoozeBody(BaseModel):
+    hours: float = Field(default=24, gt=0, le=24 * 14)
+
+
 class SendBody(TextBody):
     """A send clicked in the conversation view: text, plus files the user chose there."""
     attachments: list[attachmod.AttachmentIn] = Field(default_factory=list, max_length=attachmod.MAX_FILES)
@@ -327,6 +335,22 @@ def create_app(
     @app.post("/api/drafts/{draft_id}/dismiss")
     def dismiss_draft(draft_id: str):
         watcher.dismiss_draft(draft_id)
+        return {"ok": True}
+
+    @app.post("/api/follow-ups/{item_id}/send")
+    def follow_up_send(item_id: str, body: Optional[FollowUpSendBody] = None):
+        """Relance envoyée sur ton clic, par le chemin d'un envoi à la main."""
+        queued = watcher.send_follow_up(item_id, body.text if body else None)
+        return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
+
+    @app.post("/api/follow-ups/{item_id}/snooze")
+    def follow_up_snooze(item_id: str, body: Optional[SnoozeBody] = None):
+        watcher.snooze_follow_up(item_id, body.hours if body else 24)
+        return {"ok": True}
+
+    @app.post("/api/follow-ups/{item_id}/ignore")
+    def follow_up_ignore(item_id: str):
+        watcher.ignore_follow_up(item_id)
         return {"ok": True}
 
     @app.post("/api/catchup")

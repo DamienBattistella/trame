@@ -124,6 +124,12 @@ class MessageArchive:
             self._seq = 0
             self.since = datetime.now()
 
+    def recent(self, thread_id: str, n: int = 12) -> list[dict]:
+        """Les n derniers messages lus d'une conversation, dans l'ordre où Trame les a vus."""
+        with self._lock:
+            items = sorted(self._threads.get(thread_id, {}).values(), key=lambda m: m["seq"])
+        return [{"sender": m["sender"], "text": m["text"], "at": m["at"]} for m in items[-n:]]
+
     def thread_of(self, text: str) -> Optional[str]:
         """The one conversation where this exact message was read, None if none or several."""
         folded = fold(text)
