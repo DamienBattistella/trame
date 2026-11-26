@@ -3,7 +3,7 @@ import shutil
 import subprocess
 
 from winproc import _creationflags
-from brain.base import Brain, build_prompt
+from brain.base import Brain, build_prompt, clean_reply
 from brain.isolation import sandbox_dir
 
 # Teams messages are untrusted input: the model only writes text. No tools, no MCP
@@ -34,7 +34,7 @@ class ClaudeBrain(Brain):
         self.timeout = timeout or self.TIMEOUTS.get(effort, 60.0)
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
-        return self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context))
+        return clean_reply(self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context)))
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         proc = subprocess.run(

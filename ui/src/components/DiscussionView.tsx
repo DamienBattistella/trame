@@ -51,6 +51,8 @@ export function DiscussionView({
   const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss">("idle");
   const [fresher, setFresher] = useState<string | null>(null);
   const base = useRef(draft?.proposal ?? "");
+  const incoming = draft ? `${draft.receivedAt}|${draft.incoming}` : "";
+  const lastIncoming = useRef(incoming);
   const controls = useAnimationControls();
 
   const load = async (fresh = false) => {
@@ -69,8 +71,16 @@ export function DiscussionView({
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
+    lastIncoming.current = incoming;
     load();
   }, [c.threadId]);
+
+  // Nouveau message reçu pendant que la discussion est ouverte : le fil est relu.
+  useEffect(() => {
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
+    if (incoming) load();
+  }, [incoming]);
 
   // Nouveau message pendant la lecture : la proposition est mise à jour sans écraser ton texte.
   useEffect(() => {
