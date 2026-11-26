@@ -50,10 +50,13 @@ class GraphClient:
         return url
 
     def request(self, method: str, path: str, params: Optional[dict] = None, body: Any = None,
-                accept: str = "application/json") -> Any:
+                accept: str = "application/json", raw: Optional[bytes] = None,
+                content_type: str = "application/octet-stream") -> Any:
         headers = {"Authorization": f"Bearer {self._token()}", "Accept": accept}
         data = None
-        if body is not None:
+        if raw is not None:
+            data, headers["Content-Type"] = raw, content_type
+        elif body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         status, _headers, raw = self._transport(method, self._url(path, params), headers, data)

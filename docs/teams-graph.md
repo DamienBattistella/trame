@@ -58,19 +58,18 @@ partage d'écran restent sur la page.
 
 ## Avancement
 
-Quand Graph est connecté, **21 actions sur 24** passent par lui :
+Quand Graph est connecté, **22 actions sur 24** passent par lui :
 
 - **Lecture** : conversations, fils et historique, fichiers et images reçus, nouveaux messages,
   rattrapage des non-lus, présence des autres, mon statut, recherche de personnes et de messages.
 - **Écriture** : marquer comme lu, réactions, suppression de mes messages, statut et message de
-  statut, envoi, mentions, réponse citée, nouvelle conversation.
+  statut, envoi, mentions, réponse citée, fichiers (déposés sur OneDrive, partagés en lecture avec
+  les membres de la conversation sans courriel d'invitation), nouvelle conversation.
 - **Réunions** : liste, transcriptions .vtt, lien « Rejoindre ».
 
-Restent sur la page :
-
-- **l'envoi de fichiers** : prévu, il faut partager le fichier OneDrive avec les membres de la
-  conversation ;
-- **l'indicateur de frappe** et **la détection du partage d'écran** : pas d'équivalent dans Graph.
+Restent sur la page : **l'indicateur de frappe** et **la détection du partage d'écran**, qui n'ont
+pas d'équivalent dans Graph, et la saisie sans envoi (Graph envoie, il n'écrit pas dans la zone de
+saisie de Teams).
 
 La voie réellement suivie s'affiche action par action dans Réglages › Général › Microsoft Graph
 et dans `diagnose_teams`.
