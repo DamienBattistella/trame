@@ -12,6 +12,7 @@ import { useTrame } from "@/api";
 import { TeamsWebRelay } from "@/components/TeamsWebRelay";
 import { WhatsNew } from "@/components/Changelog";
 import { UpdateLed } from "@/components/UpdateLed";
+import { OwnStatus } from "@/components/OwnStatus";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
@@ -161,6 +162,7 @@ export default function App() {
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
             <UpdateLed />
             <ConnectionBadge connected={trame.connected} demo={trame.demoMode} />
+            {configured && !engineDown && trame.state.capabilities.ownStatus && <OwnStatus trame={trame} />}
 
             {configured && (
               <div

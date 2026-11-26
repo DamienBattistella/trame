@@ -70,7 +70,8 @@ class Watcher:
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
             capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
                                       reply=bool(getattr(driver, "supports_reply", False)),
-                                      mentions=bool(getattr(driver, "supports_mentions", False))),
+                                      mentions=bool(getattr(driver, "supports_mentions", False)),
+                                      own_status=bool(getattr(driver, "can_set_status", False))),
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -167,6 +168,82 @@ class Watcher:
                 value = seen.get(w.thread_id) if w.surface == Surface.dm and not w.is_self else None
                 if w.presence != value:
                     w.presence = value
+        self.apply_own_status()
+
+    def apply_own_status(self) -> None:
+        """The user's own status, read on Teams' profile button (no menu opened)."""
+        if not self.state.capabilities.own_status:
+            return
+        try:
+            mine = self.driver.my_status().get("presence")
+        except Exception:
+            mine = None
+        with self._lock:
+            self.state.my_presence = mine
+
+    # --- the user's own status, changed from Trame ---
+    def my_status(self) -> dict:
+        """Status and status message as Teams shows them. Reading the message opens
+        Teams' profile menu in Trame's hidden Teams window, then closes it."""
+        self._require_own_status()
+        with self._ui_lock:
+            try:
+                got = self.driver.my_status(with_message=True)
+            except Exception as e:
+                raise ActionError(502, f"Statut Teams illisible : {e}")
+        with self._lock:
+            self.state.my_presence = got.get("presence")
+        return {"presence": got.get("presence"), "message": got.get("message") or ""}
+
+    def set_my_status(self, choice: str) -> dict:
+        """Pick a status in Teams' menu, then check Teams shows it: never a false
+        success. « reset » lets Teams decide again; whatever it then shows is reported."""
+        self._require_own_status()
+        if choice not in presencemod.CHOICES:
+            raise ActionError(422, f"Statut inconnu : {choice}.")
+        wanted = presencemod.LABELS.get(choice, "Réinitialiser")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                shown = self.driver.set_my_status(choice)
+            except Exception as e:
+                self.log("warn", f"Statut « {wanted} » non appliqué : {e}")
+                raise ActionError(502, f"Statut non changé : {e}")
+        with self._lock:
+            self.state.my_presence = shown
+        if choice != "reset" and shown != choice:
+            seen = presencemod.LABELS.get(shown or "", "aucun statut lisible")
+            self.log("warn", f"Statut « {wanted} » demandé, Teams affiche « {seen} »")
+            raise ActionError(409, f"Teams affiche « {seen} » au lieu de « {wanted} ». Vérifie dans Teams.")
+        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}")
+        return {"presence": shown}
+
+    def set_status_message(self, text: str) -> dict:
+        """Set (empty: clear) the status message, then check Teams shows exactly it."""
+        self._require_own_status()
+        want = " ".join((text or "").split())
+        if len(want) > presencemod.MESSAGE_MAX:
+            raise ActionError(422, f"Message de statut trop long ({len(want)} caractères, {presencemod.MESSAGE_MAX} au plus).")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                shown = self.driver.set_status_message(want)
+            except Exception as e:
+                self.log("warn", f"Message de statut non appliqué : {e}")
+                raise ActionError(502, f"Message de statut non changé : {e}")
+        if shown != want:
+            self.log("warn", "Message de statut : Teams n'affiche pas le texte demandé")
+            raise ActionError(409, "Teams n'affiche pas le message demandé. Vérifie dans Teams.")
+        self.log("info", "Message de statut effacé" if not want else "Message de statut mis à jour")
+        return {"message": shown}
+
+    def _require_own_status(self) -> None:
+        if not self.state.capabilities.own_status:
+            raise ActionError(501, f"Statut Teams indisponible : {self.driver.status_unsupported}.")
 
     # --- core reaction ---
     MAX_NOTICES = 20

@@ -28,6 +28,8 @@ import {
   WatchEntity,
   AttachmentLimits,
   PendingFile,
+  Presence,
+  StatusChoice,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -53,7 +55,9 @@ export interface TrameState {
   logs: LogItem[];
   notices: Notice[];
   /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
-  capabilities: { react: boolean; reply: boolean; mentions: boolean };
+  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean };
+  /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
+  myPresence: Presence | null;
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -112,7 +116,13 @@ function mapState(s: any): TrameState {
       at: n.at,
       surface: n.surface as Surface,
     })),
-    capabilities: { react: Boolean(s.capabilities?.react), reply: Boolean(s.capabilities?.reply), mentions: Boolean(s.capabilities?.mentions) },
+    capabilities: {
+      react: Boolean(s.capabilities?.react),
+      reply: Boolean(s.capabilities?.reply),
+      mentions: Boolean(s.capabilities?.mentions),
+      ownStatus: Boolean(s.capabilities?.own_status),
+    },
+    myPresence: s.my_presence ?? null,
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -367,7 +377,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false } };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false }, myPresence: null };
   }
   return {
     paused: false,
@@ -379,7 +389,8 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
-    capabilities: { react: true, reply: true, mentions: true },
+    capabilities: { react: true, reply: true, mentions: true, ownStatus: true },
+    myPresence: "available",
   };
 }
 
@@ -405,6 +416,8 @@ const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
 const demoArchive = new DemoArchive();
 for (const d of mockDrafts) demoArchive.add(d.threadId, [{ sender: d.from, text: d.incoming, at: d.receivedAt, mine: false }]);
+/** Démo : message de statut. */
+let demoStatusMessage = "";
 /** Démo : réactions posées, par conversation et message. */
 const demoReactions = new Map<string, Reaction[]>();
 
@@ -600,6 +613,33 @@ export function useTrame() {
     const res = await request("POST", "/api/pause", { paused: p });
     if (!res.ok) setState((s) => ({ ...s, paused: !p }));
     return res;
+  };
+
+  /** Son statut Teams et son message de statut (le moteur ouvre puis referme le menu du profil). */
+  const getMyStatus = async (): Promise<Result<{ presence: Presence | null; message: string }>> => {
+    if (!connectedRef.current) return demo(300, { presence: stateRef.current.myPresence, message: demoStatusMessage });
+    return request<{ presence: Presence | null; message: string }>("GET", "/api/me/status");
+  };
+  /** Change son statut dans Teams ; réussi seulement si Teams affiche ensuite ce statut. */
+  const setMyStatus = async (choice: StatusChoice): Promise<Result<{ presence: Presence | null }>> => {
+    if (!connectedRef.current) {
+      const presence: Presence = choice === "reset" ? "available" : choice;
+      const res = await demo(500, { presence });
+      if (res.ok) setState((s) => ({ ...s, myPresence: presence }));
+      return res;
+    }
+    const res = await request<{ presence: Presence | null }>("POST", "/api/me/status", { presence: choice });
+    if (res.ok) setState((s) => ({ ...s, myPresence: res.presence ?? null }));
+    return res;
+  };
+  /** Message de statut (vide : l'efface), vérifié dans Teams. */
+  const setStatusMessage = async (text: string): Promise<Result<{ message: string }>> => {
+    if (!connectedRef.current) {
+      const res = await demo(500, { message: text.replace(/\s+/g, " ").trim() });
+      if (res.ok) demoStatusMessage = res.message;
+      return res;
+    }
+    return request<{ message: string }>("POST", "/api/me/status-message", { text });
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
@@ -1193,6 +1233,9 @@ export function useTrame() {
     everConnected,
     demoMode,
     setPaused,
+    getMyStatus,
+    setMyStatus,
+    setStatusMessage,
     sendDraft,
     composeDraft,
     removeDraft,

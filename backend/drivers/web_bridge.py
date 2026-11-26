@@ -252,6 +252,33 @@ class WebBridgeDriver(TeamsDriver):
         self._kinds[thread_id] = Surface.dm
         return WatchEntity(thread_id=thread_id, display_name=shown, surface=Surface.dm)
 
+    # Teams web: the profile button (avatar, top right) says the status; its menu
+    # « Modifier l'état » lists the choices, and holds the status message.
+    can_set_status = True
+
+    def my_status(self, with_message: bool = False) -> dict:
+        res = self._rpc("mystatus", message=with_message, timeout=10 if with_message else 4) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'statut illisible'}")
+        out: dict = {"presence": presencemod.own_from_labels(res.get("labels"))}
+        if with_message:
+            out["message"] = " ".join(str(res.get("message") or "").split())
+        return out
+
+    def set_my_status(self, choice: str) -> Optional[str]:
+        if choice not in presencemod.CHOICES:
+            raise ValueError(f"statut inconnu : {choice}")
+        res = self._rpc("setstatus", choice=choice, timeout=15) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'changement de statut refusé'}")
+        return presencemod.own_from_labels(res.get("labels"))
+
+    def set_status_message(self, text: str) -> str:
+        res = self._rpc("setnote", text=" ".join((text or "").split()), timeout=15) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'message de statut refusé'}")
+        return " ".join(str(res.get("message") or "").split())
+
     # Teams web: its search field, the Messages tab, then back to the chat list.
     can_search_messages = True
 
