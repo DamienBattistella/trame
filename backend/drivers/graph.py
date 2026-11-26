@@ -8,10 +8,11 @@ Everything not overridden here is the page driver's, untouched (writes stay on t
 in this first step)."""
 from __future__ import annotations
 import time
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
-from drivers.base import TeamsDriver
-from models import IncomingMessage, Surface, WatchEntity
+from drivers.base import DeleteUncertain, Focus, ReactUncertain, TeamsDriver, same_message
+from models import REACTIONS, IncomingMessage, MessageRef, Surface, WatchEntity
 from msgraph import convert
 from msgraph.auth import NotSignedIn
 from msgraph.client import GraphClient, GraphError
@@ -21,7 +22,37 @@ LIST_TOP = 50
 MAX_READ = 100
 PRESENCE_BATCH = 650  # getPresencesByUserId limit
 
-_OWN = {"_inner", "_client", "_routes", "_me", "_chats", "_names", "_members", "_presence"}
+_OWN = {"_inner", "_client", "_routes", "_me", "_chats", "_names", "_members", "_presence", "_tenant"}
+
+# Trame's status choices -> Graph preferred presence (availability, activity).
+PREFERRED = {
+    "available": ("Available", "Available"), "busy": ("Busy", "Busy"), "dnd": ("DoNotDisturb", "DoNotDisturb"),
+    "brb": ("BeRightBack", "BeRightBack"), "away": ("Away", "Away"), "offline": ("Offline", "OffWork"),
+}
+DURATIONS = {"30m": timedelta(minutes=30), "1h": timedelta(hours=1), "2h": timedelta(hours=2)}
+STATUS_POLLS, STATUS_POLL_WAIT = 4, 0.5
+
+
+class WriteUncertain(RuntimeError):
+    """Graph gave no clear answer to a write: it may have been applied. Never replayed on the page."""
+
+
+def _iso_duration(delta: timedelta) -> str:
+    minutes = max(5, int(delta.total_seconds() // 60))
+    return f"PT{minutes // 60}H{minutes % 60}M" if minutes >= 60 else f"PT{minutes}M"
+
+
+def _expiry(duration: Optional[str], until: Optional[datetime], now: datetime) -> Optional[timedelta]:
+    if until is not None:
+        return until - now
+    if duration in DURATIONS:
+        return DURATIONS[duration]
+    if duration == "today":
+        return now.replace(hour=23, minute=59, second=0, microsecond=0) - now
+    if duration == "week":
+        end = now + timedelta(days=6 - now.weekday())
+        return end.replace(hour=23, minute=59, second=0, microsecond=0) - now
+    return None
 
 
 class GraphDriver:
@@ -34,6 +65,7 @@ class GraphDriver:
         object.__setattr__(self, "_names", {})  # display name (casefold) -> chat id
         object.__setattr__(self, "_members", {})  # 1:1 chat id -> other user's id
         object.__setattr__(self, "_presence", {})  # chat id -> (monotonic, presence) read by Graph
+        object.__setattr__(self, "_tenant", "")
 
     # --- the page driver for everything else ---
     @property
@@ -69,6 +101,55 @@ class GraphDriver:
             return page()
         self._note(action, "graph")
         return out
+
+    def _write(self, action: str, graph: Callable[[GraphClient], Any], page: Callable[[], Any],
+               uncertain: type = None) -> Any:
+        """Like _via, for writes. The page only takes over after a clean refusal (4xx,
+        not signed in, message not found or not the one picked). A timeout, a 429 or a
+        5xx may hide a write that went through: reported uncertain, never redone."""
+        client = self._client()
+        if client is None:
+            self._note(action, "page", "Graph non connecté")
+            return page()
+        uncertain = uncertain or WriteUncertain
+        try:
+            out = graph(client)
+        except GraphError as e:
+            if e.status >= 500 or e.status == 429:
+                self._note(action, "graph", str(e)[:200])
+                raise uncertain(str(e))
+            self._note(action, "page", str(e)[:200])
+            return page()
+        except (ReactUncertain, DeleteUncertain, WriteUncertain) as e:  # Graph wrote, without proof
+            self._note(action, "graph", str(e)[:200])
+            raise
+        except (NotSignedIn, LookupError) as e:
+            self._note(action, "page", str(e)[:200])
+            return page()
+        except OSError as e:
+            self._note(action, "graph", str(e)[:200])
+            raise uncertain(f"Microsoft Graph sans réponse : {e}")
+        self._note(action, "graph")
+        return out
+
+    def _tenant_id(self, client: GraphClient) -> str:
+        if not self._tenant:
+            org = ((client.get("/organization", {"$select": "id"}) or {}).get("value") or [{}])[0]
+            self._tenant = str(org.get("id") or "")
+            if not self._tenant:
+                raise LookupError("tenant Graph illisible")
+        return self._tenant
+
+    def _message(self, client: GraphClient, chat: str, target: MessageRef) -> dict:
+        """The message the user picked, checked by author and text (same rule as the page)."""
+        if not target.id:
+            raise LookupError("message sans identifiant")
+        raw = client.get(f"/chats/{chat}/messages/{target.id}") or {}
+        sender = ((raw.get("from") or {}).get("user") or {}).get("displayName") or ""
+        text, _ = convert.body_text(raw.get("body"))
+        if not same_message(target, sender, text):
+            raise LookupError("message différent de celui choisi")
+        return raw
 
     def _me_id(self, client: GraphClient) -> str:
         at, me = self._me
@@ -176,6 +257,90 @@ class GraphDriver:
     def my_status(self, with_message: bool = False) -> dict:
         return self._via("my_status", lambda c: self._my_status(c, with_message),
                          lambda: self._inner.my_status(with_message))
+
+    # --- writes, step 2: read marks, reactions, deletion, status (docs/teams-graph.md) ---
+    def _mark_read(self, client: GraphClient, thread_id: str) -> bool:
+        chat = self._chat_id(client, thread_id)
+        client.post(f"/chats/{chat}/markChatReadForUser",
+                    {"user": {"id": self._me_id(client), "tenantId": self._tenant_id(client)}})
+        return True
+
+    def mark_read(self, thread_id: str) -> bool:
+        return self._write("mark_read", lambda c: self._mark_read(c, thread_id),
+                           lambda: self._inner.mark_read(thread_id))
+
+    def _react(self, client: GraphClient, thread_id: str, target: MessageRef, reaction: str) -> Focus:
+        chat = self._chat_id(client, thread_id)
+        emoji, me = REACTIONS[reaction], self._me_id(client)
+
+        def mine(message: dict) -> bool:
+            return any(r.get("reactionType") in (reaction, emoji)
+                       and ((r.get("user") or {}).get("user") or {}).get("id") == me
+                       for r in message.get("reactions") or [])
+
+        if not mine(self._message(client, chat, target)):  # already there: left alone, as on the page
+            client.post(f"/chats/{chat}/messages/{target.id}/setReaction", {"reactionType": emoji})
+            if not mine(client.get(f"/chats/{chat}/messages/{target.id}") or {}):
+                raise ReactUncertain("Graph n'affiche pas la réaction après l'envoi")
+        return Focus(ok=True)
+
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
+        return self._write("react", lambda c: self._react(c, thread_id, target, reaction),
+                           lambda: self._inner.react_focused(thread_id, target, reaction, restore=restore),
+                           ReactUncertain)
+
+    def _delete(self, client: GraphClient, thread_id: str, target: MessageRef) -> Focus:
+        chat = self._chat_id(client, thread_id)
+        raw, me = self._message(client, chat, target), self._me_id(client)
+        if ((raw.get("from") or {}).get("user") or {}).get("id") != me:
+            raise LookupError("ce message n'est pas le tien : rien n'est supprimé")
+        if not raw.get("deletedDateTime"):
+            client.post(f"/users/{me}/chats/{chat}/messages/{target.id}/softDelete")
+            if not (client.get(f"/chats/{chat}/messages/{target.id}") or {}).get("deletedDateTime"):
+                raise DeleteUncertain("Graph n'affiche pas le message supprimé")
+        return Focus(ok=True)
+
+    def delete_focused(self, thread_id: str, target: MessageRef, restore: bool = True) -> Focus:
+        return self._write("delete", lambda c: self._delete(c, thread_id, target),
+                           lambda: self._inner.delete_focused(thread_id, target, restore=restore),
+                           DeleteUncertain)
+
+    def _set_status(self, client: GraphClient, choice: str, duration: Optional[str],
+                    until: Optional[datetime]) -> Optional[str]:
+        if choice == "reset":
+            client.post("/me/presence/clearUserPreferredPresence")
+        else:
+            availability, activity = PREFERRED[choice]
+            body = {"availability": availability, "activity": activity}
+            expiry = _expiry(duration, until, datetime.now())
+            if expiry is not None:
+                body["expirationDuration"] = _iso_duration(expiry)
+            client.post("/me/presence/setUserPreferredPresence", body)
+        shown = None
+        for i in range(STATUS_POLLS):  # Teams takes a moment to show the new status
+            shown = convert.presence(client.get("/me/presence"))
+            if choice == "reset" or shown == choice:
+                break
+            if i + 1 < STATUS_POLLS:
+                time.sleep(STATUS_POLL_WAIT)
+        return shown
+
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
+        def page() -> Optional[str]:
+            if until is not None:
+                return self._inner.set_my_status(choice, until=until)
+            return self._inner.set_my_status(choice, duration) if duration else self._inner.set_my_status(choice)
+        return self._write("set_status", lambda c: self._set_status(c, choice, duration, until), page)
+
+    def _set_note(self, client: GraphClient, text: str) -> str:
+        client.post("/me/presence/setStatusMessage",
+                    {"statusMessage": {"message": {"content": text, "contentType": "text"}}})
+        return self._my_status(client, True).get("message", "")
+
+    def set_status_message(self, text: str) -> str:
+        return self._write("set_note", lambda c: self._set_note(c, text),
+                           lambda: self._inner.set_status_message(text))
 
     # --- people and message search ---
     def _people(self, client: GraphClient, query: str, limit: int) -> list[str]:
