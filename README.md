@@ -85,7 +85,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 ## Sécurité
 
 - **Jamais dans la mauvaise conversation.** Avant de taper quoi que ce soit, Trame ouvre la conversation visée et vérifie qu'elle est bien active ; s'il a le moindre doute, il refuse et garde le brouillon.
-- **Pause automatique pendant un partage d'écran**, pour qu'aucune réponse ne s'affiche devant toute une réunion.
+- **Pause automatique pendant un partage d'écran**, pour qu'aucune réponse ne s'affiche devant toute une réunion. Avec Teams intégré, Trame le sait par ton statut : quand Teams affiche « En présentation », rien n'est tapé (les messages attendent dans la file d'envoi) et les notifications cachent le texte des messages ; tout reprend à la fin de la présentation.
 - **Jamais deux fois, jamais pour lui-même.** Un brouillon ne peut partir qu'une fois, même en double-cliquant ; Trame ne répond ni à tes propres messages ni à ses propres réponses. Avant de taper, il vérifie que Teams est au premier plan et que la zone de saisie est vide, pour ne rien mélanger à un texte en cours.
 - **Pause et partage d'écran revérifiés au dernier moment**, juste avant la saisie : une pause ou un partage commencés pendant la rédaction annulent l'envoi automatique.
 - **Moteur local fermé au web.** Le moteur n'écoute que sur ta machine et ne répond qu'à l'interface de Trame : une page web ouverte dans ton navigateur ne peut ni lire tes messages ni déclencher un envoi. Quand tu quittes Trame, le moteur s'arrête avec lui.
