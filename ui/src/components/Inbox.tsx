@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, Reorder } from "motion/react";
-import { ArrowDown, ArrowUp, BellRing, ChevronRight, History, Inbox as InboxIcon, Loader2, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
+import { ArrowDown, ArrowUp, BellRing, ChevronRight, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,10 +45,7 @@ const byRecent = (a: WatchEntity, b: WatchEntity) =>
 /** Discussions : barre latérale regroupée par statut, discussion choisie à droite. */
 export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarget) => void }) {
   const { watchlist, drafts, followUps, favorites } = trame.state;
-  // Pendant un glisser-déposer : l'ordre en cours, enregistré au lâcher.
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
-  const favOrder = dragOrder ?? favorites;
-  const favIndex = useMemo(() => new Map(favOrder.map((t, i) => [t, i])), [favOrder]);
+  const favIndex = useMemo(() => new Map(favorites.map((t, i) => [t, i])), [favorites]);
   const isFavorite = (threadId: string) => favIndex.has(threadId);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -274,14 +272,106 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     buttons[to].scrollIntoView({ block: "nearest" });
   };
 
+  // ── Glisser-déposer entre sections ─────────────────────────────────────
+  /**
+   * Range une conversation dans Favoris (à une place donnée), Suivies ou Autres, avec les
+   * mêmes actions que l'étoile et l'interrupteur « Suivie ». Un toast propose d'annuler.
+   */
+  const moveTo = async (c: WatchEntity, target: DropTarget, index?: number) => {
+    const id = c.threadId;
+    const prevFavs = [...favorites];
+    const wasFav = prevFavs.includes(id);
+    const prevWatch = c.watch;
+    const fail = (r: { ok: boolean; error?: string }) => {
+      if (!r.ok) toast.error("Déplacement impossible", { description: r.error });
+      return !r.ok;
+    };
+    if (target === "favorites") {
+      const order = prevFavs.filter((t) => t !== id);
+      const at = index === undefined ? order.length : Math.max(0, Math.min(index, order.length));
+      order.splice(at, 0, id);
+      if (wasFav) {
+        if (order.join("\n") !== prevFavs.join("\n") && fail(await trame.reorderFavorites(order))) return;
+        return;
+      }
+      if (fail(await trame.toggleFavorite(id))) return;
+      if (at < order.length - 1 && fail(await trame.reorderFavorites(order))) return;
+      setCollapsed((st) => ({ ...st, favorites: false }));
+    } else {
+      const watch = target === "followed";
+      if (!wasFav && prevWatch === watch) {
+        toast.info(watch ? `${c.displayName} est déjà suivie` : `${c.displayName} n'est déjà plus suivie`);
+        return;
+      }
+      if (wasFav && fail(await trame.toggleFavorite(id))) return;
+      if (prevWatch !== watch && fail(await trame.setWatchMany([id], watch))) return;
+      setCollapsed((st) => ({ ...st, [target]: false }));
+    }
+    // Annuler défait exactement ce qui vient d'être fait, avec les mêmes actions.
+    const undo = async () => {
+      if (target === "favorites") return void (await trame.toggleFavorite(id));
+      if (wasFav) {
+        await trame.toggleFavorite(id);
+        await trame.reorderFavorites(prevFavs);
+      }
+      if (prevWatch !== (target === "followed")) await trame.setWatchMany([id], prevWatch);
+    };
+    const stays = draftOf.has(id) ? "À relire" : followUpOf.has(id) ? "À relancer" : c.unread ? "Non lus" : null;
+    const text =
+      target === "favorites" ? `${c.displayName} ajoutée aux favoris` : target === "followed" ? `${c.displayName} suivie` : `${c.displayName} n'est plus suivie`;
+    toast.success(text, {
+      description: target !== "favorites" && stays ? `Elle reste dans « ${stays} » tant que c'est le cas.` : undefined,
+      action: { label: "Annuler", onClick: () => void undo() },
+    });
+  };
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const [dragging, setDragging] = useState<WatchEntity | null>(null);
+  const [overGroup, setOverGroup] = useState<GroupId | null>(null);
+  // Place d'insertion dans Favoris (avant le favori d'indice n), pendant le survol.
+  const [insertAt, setInsertAt] = useState<number | null>(null);
   // Le clic qui termine un glisser-déposer n'ouvre pas la conversation.
   const dragged = useRef(false);
-  const commitDrag = () => {
-    const next = dragOrder;
-    setDragOrder(null);
+
+  const onDragStart = (e: DragStartEvent) => {
+    dragged.current = true;
+    setDragging(items.find((c) => c.threadId === e.active.id) ?? null);
+  };
+  const onDragMove = (e: DragMoveEvent) => {
+    const over = e.over;
+    const group = (over?.data.current?.group as GroupId | undefined) ?? null;
+    setOverGroup(group);
+    if (group !== "favorites" || !over) return setInsertAt(null);
+    const favId = over.data.current?.favId as string | undefined;
+    if (!favId) return setInsertAt(grouped.favorites.length);
+    const start = e.activatorEvent as PointerEvent;
+    const y = start.clientY + e.delta.y;
+    const i = grouped.favorites.findIndex((c) => c.threadId === favId);
+    const rect = document.querySelector(`[data-drop="fav:${CSS.escape(favId)}"]`)?.getBoundingClientRect();
+    if (!rect) return setInsertAt(null);
+    setInsertAt(y < rect.top + rect.height / 2 ? i : i + 1);
+  };
+  const endDrag = () => {
+    setDragging(null);
+    setOverGroup(null);
+    setInsertAt(null);
     requestAnimationFrame(() => (dragged.current = false));
-    if (next && next.join("\n") !== favorites.join("\n"))
-      trame.reorderFavorites(next).then((r) => !r.ok && toast.error("Déplacement impossible", { description: r.error }));
+  };
+  const onDragEnd = (e: DragEndEvent) => {
+    const c = dragging;
+    const group = overGroup;
+    const at = insertAt;
+    endDrag();
+    if (!c || !group || !e.over || !isDropTarget(group)) return;
+    if (group === "favorites") {
+      // L'indice compte la conversation déplacée elle-même : on la retire avant d'insérer.
+      const from = favorites.indexOf(c.threadId);
+      const index = at === null ? undefined : from >= 0 && from < at ? at - 1 : at;
+      if (from >= 0 && index === from) return;
+      return void moveTo(c, "favorites", index);
+    }
+    if (group === groupOf(c)) return;
+    void moveTo(c, group);
   };
 
   /** Une ligne de la liste : la conversation, son étoile au survol et son menu contextuel. */
@@ -291,7 +381,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="group/row relative">
+          <DraggableRow id={c.threadId} name={c.displayName} group={groupOf(c)} favId={fav && !query ? c.threadId : undefined}>
             <SidebarItem
               c={c}
               draft={draftOf.get(c.threadId) ?? null}
@@ -300,7 +390,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
               onClick={() => !dragged.current && select(c.threadId)}
             />
             <FavoriteStar favorite={fav} name={c.displayName} onToggle={() => toggleFavorite(c)} />
-          </div>
+          </DraggableRow>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-64">
           <ContextMenuItem onSelect={() => toggleFavorite(c)}>
@@ -322,6 +412,26 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                 <ContextMenuShortcut>Ctrl+Maj+↓</ContextMenuShortcut>
               </ContextMenuItem>
             </>
+          )}
+          {/* L'équivalent clavier du glisser-déposer : ranger la conversation ailleurs. */}
+          <ContextMenuSeparator />
+          {!fav && (
+            <ContextMenuItem onSelect={() => void moveTo(c, "favorites")}>
+              <Star />
+              Déplacer vers Favoris
+            </ContextMenuItem>
+          )}
+          {(fav || !c.watch) && (
+            <ContextMenuItem onSelect={() => void moveTo(c, "followed")}>
+              <MessagesSquare />
+              Déplacer vers Suivies
+            </ContextMenuItem>
+          )}
+          {(fav || c.watch) && (
+            <ContextMenuItem onSelect={() => void moveTo(c, "others")}>
+              <EyeOff />
+              Déplacer vers Autres (ne plus suivre)
+            </ContextMenuItem>
           )}
         </ContextMenuContent>
       </ContextMenu>
@@ -402,13 +512,25 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
           />
         </div>
         <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
-          <nav aria-label="Discussions" onKeyDown={onListKey} className="flex flex-col gap-3 px-2 pb-3">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={innermost}
+            onDragStart={onDragStart}
+            onDragMove={onDragMove}
+            onDragEnd={onDragEnd}
+            onDragCancel={endDrag}
+            accessibility={{ announcements, screenReaderInstructions: { draggable: "" } }}
+          >
+          <nav aria-label="Discussions" onKeyDown={onListKey} className="flex flex-col px-2 pb-3">
             {GROUPS.map((g) => {
               const list = groups[g.id];
-              if (list.length === 0) return null;
+              // Pendant un glisser, Favoris, Suivies et Autres s'affichent même vides : on peut y déposer.
+              const empty = list.length === 0;
+              if (empty && !(dragging && isDropTarget(g.id) && !query)) return null;
               const closed = collapsed[g.id] && !query;
+              const state = !dragging ? "idle" : overGroup !== g.id ? (isDropTarget(g.id) ? "target" : "idle") : isDropTarget(g.id) ? "over" : "refused";
               return (
-                <section key={g.id}>
+                <DropSection key={g.id} group={g.id} state={state} label={g.label}>
                   <button
                     type="button"
                     aria-expanded={!closed}
@@ -427,26 +549,15 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                         exit={{ height: 0, opacity: 0 }}
                         className="overflow-hidden"
                       >
-                        {g.id === "favorites" && !query ? (
-                          // Glisser-déposer pour choisir l'ordre ; au clavier : Ctrl+Maj+↑/↓ ou le menu contextuel.
-                          <Reorder.Group axis="y" values={favOrder} onReorder={setDragOrder} className="flex flex-col" aria-label="Favoris, dans l'ordre choisi">
-                            {list.map((c) => (
-                              <Reorder.Item
-                                key={c.threadId}
-                                value={c.threadId}
-                                onDragStart={() => (dragged.current = true)}
-                                onDragEnd={commitDrag}
-                                className="relative"
-                              >
-                                {row(c)}
-                              </Reorder.Item>
-                            ))}
-                          </Reorder.Group>
+                        {empty ? (
+                          <p className="mx-2 mb-1 rounded-xl border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">Déposer ici</p>
                         ) : (
-                          <ul className="flex flex-col">
-                            {list.map((c) => (
+                          <ul className="flex flex-col" aria-label={g.id === "favorites" ? "Favoris, dans l'ordre choisi" : undefined}>
+                            {list.map((c, i) => (
                               <li key={c.threadId} className="relative [content-visibility:auto] [contain-intrinsic-size:auto_56px]">
+                                {g.id === "favorites" && insertAt === i && <InsertLine edge="top" />}
                                 {row(c)}
+                                {g.id === "favorites" && insertAt === list.length && i === list.length - 1 && <InsertLine edge="bottom" />}
                               </li>
                             ))}
                           </ul>
@@ -454,7 +565,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </section>
+                </DropSection>
               );
             })}
             {all.length === 0 && (
@@ -462,6 +573,10 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             )}
             <MessageSearchResults trame={trame} query={query} onOpen={(h) => h.threadId && select(h.threadId, h)} />
           </nav>
+          <DragOverlay dropAnimation={null}>
+            {dragging && <DragPreview c={dragging} group={overGroup} />}
+          </DragOverlay>
+          </DndContext>
         </ScrollArea>
       </aside>
 
@@ -672,3 +787,130 @@ function FavoriteStar({ favorite, name, onToggle }: { favorite: boolean; name: s
   );
 }
 
+
+// ── Glisser-déposer ─────────────────────────────────────────────────────────
+
+type DropTarget = "favorites" | "followed" | "others";
+/** Seules ces sections reçoivent une conversation : les autres suivent un état calculé par Trame. */
+const isDropTarget = (g: GroupId | null): g is DropTarget => g === "favorites" || g === "followed" || g === "others";
+const REFUSED: Partial<Record<GroupId, string>> = {
+  review: "« À relire » suit les réponses que Trame prépare",
+  followUp: "« À relancer » suit les questions restées sans réponse",
+  unread: "« Non lus » suit les messages que tu n'as pas lus",
+};
+
+/**
+ * Cible sous le pointeur, lue dans la page telle qu'elle est : les sections vides qui paraissent
+ * au début du glisser (et s'animent) décalent les autres, et les mesures de dnd-kit prises au
+ * départ ne le voient pas. Le favori survolé l'emporte sur sa section (ligne d'insertion).
+ */
+const innermost: CollisionDetection = ({ pointerCoordinates, droppableContainers }) => {
+  if (!pointerCoordinates) return [];
+  const live = new Set(droppableContainers.filter((d) => !d.disabled).map((d) => String(d.id)));
+  const hits = document
+    .elementsFromPoint(pointerCoordinates.x, pointerCoordinates.y)
+    .map((el) => (el as HTMLElement).dataset?.drop)
+    .filter((id): id is string => !!id && live.has(id));
+  return [...new Set(hits)]
+    .sort((a, b) => Number(b.startsWith("fav:")) - Number(a.startsWith("fav:")))
+    .map((id) => ({ id }));
+};
+
+const nameOf = (data: unknown) => (data as { name?: string } | undefined)?.name ?? "la conversation";
+const announcements = {
+  onDragStart: ({ active }: { active: { data: { current?: unknown } } }) => `${nameOf(active.data.current)} saisie.`,
+  onDragOver: ({ over }: { over: { data: { current?: unknown } } | null }) => {
+    const g = (over?.data.current as { group?: GroupId } | undefined)?.group;
+    if (!g) return undefined;
+    const label = GROUPS.find((x) => x.id === g)?.label;
+    return isDropTarget(g) ? `Au-dessus de ${label}.` : `${label} : dépôt impossible.`;
+  },
+  onDragEnd: () => undefined,
+  onDragCancel: () => "Déplacement annulé.",
+};
+
+/** Ligne déplaçable à la souris (au-delà de 6 px, pour qu'un clic reste un clic) ; au clavier, le menu contextuel. */
+function DraggableRow({
+  id,
+  name,
+  group,
+  favId,
+  children,
+  ref,
+  onPointerDown,
+  ...rest
+}: { id: string; name: string; group: GroupId; favId?: string; children: React.ReactNode } & React.ComponentProps<"div">) {
+  const drag = useDraggable({ id, data: { group, name } });
+  // Un favori est aussi une cible : il place la ligne d'insertion avant ou après lui.
+  const drop = useDroppable({ id: `fav:${id}`, data: { group: "favorites", favId }, disabled: !favId });
+  return (
+    <div
+      {...rest}
+      data-drop={favId ? `fav:${id}` : undefined}
+      ref={(node) => {
+        drag.setNodeRef(node);
+        drop.setNodeRef(node);
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      }}
+      // Le menu contextuel (appui long au toucher) et le glisser écoutent tous deux le pointeur.
+      onPointerDown={(e) => {
+        onPointerDown?.(e);
+        drag.listeners?.onPointerDown?.(e);
+      }}
+      className={cn("group/row relative touch-none", drag.isDragging && "opacity-40", rest.className)}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Section de la liste : cible de dépôt (Favoris, Suivies, Autres) ou refus visible (états calculés). */
+function DropSection({ group, state, label, children }: { group: GroupId; state: "idle" | "target" | "over" | "refused"; label: string; children: React.ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: `group:${group}`, data: { group } });
+  return (
+    <section
+      ref={setNodeRef}
+      data-drop={`group:${group}`}
+      aria-label={label}
+      className={cn(
+        // Sections jointives (marge intérieure, pas d'espace entre elles) : aucun trou où le dépôt se perdrait.
+        "relative -mx-1 rounded-2xl px-1 py-1.5 transition-colors duration-150",
+        state === "target" && "bg-accent/30",
+        state === "over" && "bg-primary/10 ring-1 ring-primary/40",
+        state === "refused" && "bg-muted/60 opacity-60"
+      )}
+    >
+      {children}
+    </section>
+  );
+}
+
+function InsertLine({ edge }: { edge: "top" | "bottom" }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute right-2 left-2 z-10 h-0.5 rounded-full bg-primary",
+        // Dans la ligne : content-visibility rogne tout ce qui dépasse.
+        edge === "top" ? "top-0" : "bottom-0"
+      )}
+    />
+  );
+}
+
+/** Aperçu sous le pointeur : la conversation, et ce que le dépôt va faire (ou pourquoi il est refusé). */
+function DragPreview({ c, group }: { c: WatchEntity; group: GroupId | null }) {
+  const hint =
+    group === "favorites" ? "Favoris" : group === "followed" ? "Suivre" : group === "others" ? "Ne plus suivre" : group ? REFUSED[group] : null;
+  const refused = group !== null && !isDropTarget(group);
+  return (
+    <div className="flex w-72 cursor-grabbing items-center gap-3 rounded-xl border bg-popover px-2 py-2 shadow-lg">
+      <InitialsAvatar name={c.displayName} className="size-8" />
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-sm font-medium">{c.displayName}</span>
+        {hint && <span className={cn("text-xs", refused ? "line-clamp-2 text-muted-foreground" : "truncate text-link")}>{refused ? `Pas ici : ${hint}` : hint}</span>}
+      </span>
+    </div>
+  );
+}
