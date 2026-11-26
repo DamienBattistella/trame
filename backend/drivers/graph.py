@@ -7,15 +7,18 @@ the wrapped page driver does it as before. `routes()` tells which path served ea
 Everything not overridden here is the page driver's, untouched (writes stay on the page
 in this first step)."""
 from __future__ import annotations
+import base64
+import hashlib
 import html
 import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Sequence
 
 from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver, same_message
-from models import REACTIONS, IncomingMessage, MessageRef, Surface, WatchEntity
+import transcripts as transcriptsmod
+from models import REACTIONS, ImageRef, IncomingMessage, MessageRef, Surface, WatchEntity
 from msgraph import convert
 from msgraph.auth import NotSignedIn
 from msgraph.client import GraphClient, GraphError
@@ -25,7 +28,11 @@ LIST_TOP = 50
 MAX_READ = 100
 PRESENCE_BATCH = 650  # getPresencesByUserId limit
 
-_OWN = {"_inner", "_client", "_routes", "_me", "_chats", "_names", "_members", "_presence", "_tenant"}
+_OWN = {"_inner", "_client", "_routes", "_me", "_chats", "_names", "_members", "_presence", "_tenant",
+        "_meetings", "_last"}
+MAX_IMAGES, MAX_IMAGE_BYTES = 8, 1_100_000  # same limits as the page (data URL under 1.5 MB)
+WATCH_SECONDS = 10.0  # Graph is asked less often than the page is read
+MAX_MEETING_CHATS = 12
 
 # Trame's status choices -> Graph preferred presence (availability, activity).
 PREFERRED = {
@@ -69,6 +76,8 @@ class GraphDriver:
         object.__setattr__(self, "_members", {})  # 1:1 chat id -> other user's id
         object.__setattr__(self, "_presence", {})  # chat id -> (monotonic, presence) read by Graph
         object.__setattr__(self, "_tenant", "")
+        object.__setattr__(self, "_meetings", {})  # short mid -> (online meeting id, transcript id, title, when)
+        object.__setattr__(self, "_last", {})  # chat id -> (last message id, created, from me)
 
     # --- the page driver for everything else ---
     @property
@@ -183,6 +192,10 @@ class GraphDriver:
             entity = convert.conversation(chat, me, len(out))
             if entity is None:
                 continue
+            preview = chat.get("lastMessagePreview") or {}
+            if preview.get("id"):
+                author = ((preview.get("from") or {}).get("user") or {}).get("id")
+                self._last[entity.thread_id] = (str(preview["id"]), str(preview.get("createdDateTime") or ""), author == me)
             self._chats[entity.thread_id] = entity.surface
             self._names[entity.display_name.casefold()] = entity.thread_id
             # Writes stay on the page, which opens a conversation by its name: teach it.
@@ -237,8 +250,58 @@ class GraphDriver:
         surface = self._chats.get(chat, Surface.dm)
         want = max(1, min(last_n, MAX_READ))
         raw = list(client.pages(f"/chats/{chat}/messages", {"$top": str(min(want, 50))}, limit=want))
-        msgs = [m for m in (convert.message(thread_id, r, surface, me) for r in reversed(raw)) if m]
+        msgs = []
+        budget = [MAX_IMAGES]
+        for r in reversed(raw):
+            m = convert.message(thread_id, r, surface, me)
+            if m is None and convert.hosted_images(r.get("body")) and not r.get("deletedDateTime"):
+                m = convert.message(thread_id, {**r, "body": {"contentType": "text", "content": ""},
+                                                "attachments": []}, surface, me) or IncomingMessage(
+                    thread_id=thread_id, sender=(((r.get("from") or {}).get("user") or {}).get("displayName") or ""),
+                    text="", received_at=convert.when(r.get("createdDateTime")), surface=surface, id=r.get("id"))
+            if m is None:
+                continue
+            if not m.deleted:
+                m.images = self._images(client, r.get("body"), budget)
+            msgs.append(m)
+        self._meeting_link(client, chat, thread_id)
         return msgs, len(raw) < want
+
+    def _meeting_link(self, client: GraphClient, chat: str, thread_id: str) -> None:
+        """« Rejoindre » for a meeting chat: the join link Graph gives, unless the page
+        already showed it (the page also knows whether the meeting is in progress)."""
+        if "meeting_" not in chat or self._inner.meeting(thread_id) is not None:
+            return
+        try:
+            info = (client.get(f"/chats/{chat}", {"$select": "onlineMeetingInfo"}) or {}).get("onlineMeetingInfo") or {}
+        except (GraphError, OSError):
+            return
+        if info.get("joinWebUrl"):
+            self._inner._note_meeting(thread_id, {"url": info["joinWebUrl"], "live": False})
+
+    @staticmethod
+    def _images(client: GraphClient, body: Optional[dict], budget: list) -> list[ImageRef]:
+        """Images pasted in the message, as data URLs (PNG or JPEG only, size-capped)."""
+        out = []
+        for url in convert.hosted_images(body):
+            if budget[0] <= 0:
+                break
+            try:
+                data = client.request("GET", url, accept="image/*")
+            except (GraphError, OSError, ValueError):
+                out.append(ImageRef())
+                continue
+            kind = "png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "jpeg" if data[:3] == b"\xff\xd8\xff" else None
+            if not kind or len(data) > MAX_IMAGE_BYTES:
+                out.append(ImageRef())
+                continue
+            width = height = 0
+            if kind == "png" and len(data) >= 24:
+                width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            budget[0] -= 1
+            out.append(ImageRef(data=f"data:image/{kind};base64,{base64.b64encode(data).decode()}",
+                                width=min(width, 10_000), height=min(height, 10_000)))
+        return out
 
     def read_history(self, thread_id: str, last_n: int) -> "tuple[list[IncomingMessage], bool]":
         return self._via("read", lambda c: self._read(c, thread_id, last_n),
@@ -449,6 +512,133 @@ class GraphDriver:
     def start_chat(self, name: str) -> Optional[WatchEntity]:
         name = " ".join((name or "").split())
         return self._write("start_chat", lambda c: self._start(c, name), lambda: self._inner.start_chat(name))
+
+    # --- new messages: watch and catch-up ---
+    def _unread(self, client: GraphClient, thread_ids: Optional[set]) -> list[IncomingMessage]:
+        out = []
+        for conv in self._list(client):
+            if thread_ids is not None and conv.thread_id not in thread_ids:
+                continue
+            if conv.unread:  # unread never counts my own last message (convert.conversation)
+                out.extend(self._read(client, conv.thread_id, 1)[0][-1:])
+        return out
+
+    def list_unread(self, thread_ids=None) -> list[IncomingMessage]:
+        wanted = set(thread_ids) if thread_ids is not None else None
+        return self._via("unread", lambda c: self._unread(c, wanted), lambda: self._inner.list_unread(thread_ids))
+
+    @staticmethod
+    def _after(mid: str, than: str) -> bool:
+        """Teams message ids are creation times in ms: newer means larger."""
+        return mid.isdigit() and (not than.isdigit() or int(mid) > int(than))
+
+    def _watch_tick(self, client: GraphClient, seen: dict, started: str,
+                    on_message: Callable[[IncomingMessage], None]) -> None:
+        """New messages of others since the last tick, read in full (text, links, files,
+        mentions). The first tick only takes note of where each chat stands."""
+        primed = bool(seen)
+        me = self._me_id(client)
+        self._list(client)
+        for chat, (mid, created, mine) in list(self._last.items()):
+            old = seen.get(chat)
+            seen[chat] = (mid, created, mine)
+            if not primed or (old and old[0] == mid):
+                continue
+            surface = self._chats.get(chat, Surface.dm)
+            raw = (client.get(f"/chats/{chat}/messages", {"$top": "10"}) or {}).get("value") or []
+            for r in reversed(raw):
+                rid, author = str(r.get("id") or ""), ((r.get("from") or {}).get("user") or {}).get("id")
+                newer = self._after(rid, old[0]) if old else str(r.get("createdDateTime") or "") > started
+                if not newer or author == me or r.get("deletedDateTime"):
+                    continue
+                m = convert.message(chat, r, surface, me)
+                if m is not None:
+                    on_message(m)
+
+    def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:
+        """New messages through Graph (polled), the page when Graph is not there. Without
+        a page tick (mock driver), the page driver keeps its own loop."""
+        page_tick = getattr(self._inner, "watch_tick", None)
+        if not callable(page_tick):
+            return self._inner.watch(on_message, should_stop)
+        seen: dict = {}
+        started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        while not should_stop():
+            client = self._client()
+            wait = getattr(self._inner, "POLL_SECONDS", 5.0)
+            try:
+                if client is None:
+                    self._note("watch", "page", "Graph non connecté")
+                    seen.clear()
+                    page_tick(on_message)
+                else:
+                    try:
+                        self._watch_tick(client, seen, started, on_message)
+                        self._note("watch", "graph")
+                        wait = max(wait, WATCH_SECONDS)
+                    except (GraphError, NotSignedIn, OSError, LookupError) as e:
+                        self._note("watch", "page", str(e)[:200])
+                        seen.clear()
+                        page_tick(on_message)
+            except Exception:
+                pass
+            time.sleep(wait)
+
+    # --- meetings and transcripts ---
+    def _meeting_list(self, client: GraphClient, limit: Optional[int]) -> list[dict]:
+        chats = (client.get("/me/chats", {"$filter": "chatType eq 'meeting'", "$select": "id,topic,onlineMeetingInfo",
+                                          "$top": "50"}) or {}).get("value") or []
+        out = []
+        for chat in chats[: limit or MAX_MEETING_CHATS]:
+            url = str((chat.get("onlineMeetingInfo") or {}).get("joinWebUrl") or "")
+            if not url:
+                continue
+            quoted = url.replace("'", "''")
+            meetings = (client.get("/me/onlineMeetings", {"$filter": f"JoinWebUrl eq '{quoted}'"}) or {}).get("value") or []
+            if not meetings:
+                continue
+            meeting = meetings[0]
+            title = " ".join(str(chat.get("topic") or meeting.get("subject") or "Réunion").split())
+            for tr in (client.get(f"/me/onlineMeetings/{meeting['id']}/transcripts") or {}).get("value") or []:
+                when = convert.meeting_when(tr.get("createdDateTime"), tr.get("endDateTime"))
+                short = "g" + hashlib.sha1(f"{meeting['id']}|{tr['id']}".encode()).hexdigest()[:20]
+                self._meetings[short] = (meeting["id"], tr["id"], title, when)
+                out.append({"thread_id": chat["id"], "chat": title, "mid": short, "title": title, "when": when,
+                            "transcript": True})
+        out.sort(key=lambda m: transcriptsmod.parse_meeting_date(m["when"]) or datetime.min.date(), reverse=True)
+        return out
+
+    def list_meetings(self, limit: Optional[int] = None) -> list[dict]:
+        return self._via("meetings", lambda c: self._meeting_list(c, limit), lambda: self._inner.list_meetings(limit))
+
+    def _transcript(self, client: GraphClient, thread_id: str, mid: str) -> dict:
+        if mid not in self._meetings:
+            self._meeting_list(client, None)
+        meeting, transcript, title, when = self._meetings[mid]
+        raw = client.request("GET", f"/me/onlineMeetings/{meeting}/transcripts/{transcript}/content",
+                             {"$format": "text/vtt"}, accept="text/vtt")
+        cues = transcriptsmod.parse_vtt(raw.decode("utf-8", errors="replace"))
+        entries = [{"speaker": c.speaker, "time": transcriptsmod.format_timestamp(c.start).split(".")[0],
+                    "text": c.text.replace("</v>", "").strip()} for c in cues]
+        if not entries:
+            return {"ok": False, "reason": "empty", "title": title, "when": when}
+        return {"ok": True, "entries": entries, "title": title, "when": when, "complete": True}
+
+    def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
+        if not mid.startswith("g") or len(mid) != 21:
+            return self._inner.meeting_transcript(thread_id, mid, probe)
+        client = self._client()
+        if client is None:
+            self._note("transcript", "page", "Graph non connecté")
+            return {"ok": False, "reason": "denied", "error": "Microsoft Graph n'est plus connecté : actualise la liste."}
+        try:
+            out = self._transcript(client, thread_id, mid)
+        except (GraphError, NotSignedIn, OSError, KeyError, transcriptsmod.TranscriptError) as e:
+            self._note("transcript", "graph", str(e)[:200])
+            reason = "denied" if isinstance(e, GraphError) and e.forbidden else "not_found" if isinstance(e, KeyError) else "error"
+            return {"ok": False, "reason": reason, "error": str(e)[:200]}
+        self._note("transcript", "graph")
+        return out
 
     # --- people and message search ---
     def _people(self, client: GraphClient, query: str, limit: int) -> list[str]:

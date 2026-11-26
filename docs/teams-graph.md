@@ -56,6 +56,25 @@ ni appeler les routes internes de Teams. Seul Graph, avec la connexion propre à
 Avec Graph, 22 actions sur 24 passent par l'API ; seules l'indicateur de frappe et la détection du
 partage d'écran restent sur la page.
 
+## Avancement
+
+Quand Graph est connecté, **21 actions sur 24** passent par lui :
+
+- **Lecture** : conversations, fils et historique, fichiers et images reçus, nouveaux messages,
+  rattrapage des non-lus, présence des autres, mon statut, recherche de personnes et de messages.
+- **Écriture** : marquer comme lu, réactions, suppression de mes messages, statut et message de
+  statut, envoi, mentions, réponse citée, nouvelle conversation.
+- **Réunions** : liste, transcriptions .vtt, lien « Rejoindre ».
+
+Restent sur la page :
+
+- **l'envoi de fichiers** : prévu, il faut partager le fichier OneDrive avec les membres de la
+  conversation ;
+- **l'indicateur de frappe** et **la détection du partage d'écran** : pas d'équivalent dans Graph.
+
+La voie réellement suivie s'affiche action par action dans Réglages › Général › Microsoft Graph
+et dans `diagnose_teams`.
+
 ## Ordre de mise en œuvre
 
 1. **Connexion et lectures** : conversations, messages, pièces jointes, présence, recherche.

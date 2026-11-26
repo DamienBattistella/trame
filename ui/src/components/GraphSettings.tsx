@@ -21,6 +21,10 @@ const ACTIONS: Record<string, string> = {
   set_note: "Message de statut",
   send: "Envoi de messages",
   start_chat: "Nouvelle conversation",
+  watch: "Nouveaux messages",
+  unread: "Rattrapage des non-lus",
+  meetings: "Réunions",
+  transcript: "Transcriptions",
 };
 
 /** Réglages › Général › Microsoft Graph : la voie supportée, une fois Trame enregistré par la DSI. */
