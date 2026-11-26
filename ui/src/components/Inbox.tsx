@@ -14,6 +14,7 @@ import { MessageSearchResults } from "@/components/MessageSearchResults";
 import { ReflectionPanel } from "@/components/ReflectionPanel";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { useMedia } from "@/lib/useMedia";
 import { Trame } from "@/api";
 import { MessageText } from "@/components/MessageText";
 import { QuickSwitcher } from "@/components/QuickSwitcher";
@@ -61,7 +62,8 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   // Panneau ancré à droite : le résumé, ou la réflexion du modèle pendant une action.
   const [dock, setDock] = useState<"brief" | "reflection" | null>(null);
   const [starting, setStarting] = useState(false);
-  const wide = useWide();
+  // Fenêtre assez large pour le panneau de résumé à côté de la discussion.
+  const wide = useMedia("(min-width: 1024px)");
 
   // The engine lists the newest draft first: keep that one per conversation.
   const draftOf = useMemo(() => {
@@ -349,7 +351,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
           goTo(threadId, "composer");
         }}
       />
-      <aside ref={sidebar} className="flex w-72 shrink-0 flex-col border-r">
+      <aside ref={sidebar} className="flex w-72 shrink-0 flex-col border-r 3xl:w-80">
         <div className="flex items-center gap-1.5 p-3">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -617,14 +619,3 @@ function FavoriteStar({ favorite, name, onToggle }: { favorite: boolean; name: s
   );
 }
 
-/** Fenêtre assez large pour le panneau de résumé à côté de la discussion. */
-function useWide(query = "(min-width: 1024px)") {
-  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const on = () => setWide(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, [query]);
-  return wide;
-}

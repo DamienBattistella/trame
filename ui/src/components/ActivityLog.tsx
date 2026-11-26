@@ -174,7 +174,7 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
       </div>
 
       <GroupList>
-        <ScrollArea className="h-[52vh]">
+        <ScrollArea className="h-[max(16rem,calc(100dvh-18rem))]">
           {!loading && shown.length === 0 &&
             (filtered ? (
               <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">

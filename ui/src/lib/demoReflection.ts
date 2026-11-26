@@ -4,6 +4,7 @@ const TITLES: Record<ReflectionAction, string> = {
   correct: "Corriger",
   check: "Vérifier",
   suggest: "Proposer une réponse",
+  report: "Compte-rendu de réunion",
 };
 
 export interface DemoPlan {
@@ -16,6 +17,10 @@ export interface DemoPlan {
   thinking: string;
   after: string;
   result: string;
+  /** Skill dont le texte est donné au modèle (démo du chargement à la demande). */
+  skill?: string;
+  /** Skill choisi par l'utilisateur, chargé d'office (compte-rendu). */
+  loaded?: string;
 }
 
 let seq = 0;
@@ -51,9 +56,10 @@ export async function playDemoReflection(
     result: "",
     durationMs: null,
     reasoning: false,
+    skills: [],
     rev: 0,
   };
-  const push = () => publish({ ...run, steps: run.steps.map((s) => ({ ...s })), rev: ++run.rev });
+  const push = () => publish({ ...run, steps: run.steps.map((s) => ({ ...s })), skills: [...(run.skills ?? [])], rev: ++run.rev });
   const cancelled = () => {
     if (!stopped(run.id)) return false;
     run.status = "cancelled";
@@ -63,10 +69,13 @@ export async function playDemoReflection(
     return true;
   };
   push();
-  for (const text of [...plan.before, "Appel envoyé au cerveau de démonstration"]) {
+  const steps = [...plan.before, ...(plan.loaded ? [`Skill chargé : ${plan.loaded}`] : []), "Appel envoyé au cerveau de démonstration"];
+  if (plan.skill) steps.push("Skills proposés au modèle", `Skill chargé : ${plan.skill}`);
+  for (const text of steps) {
     await wait(260);
     if (cancelled()) return "cancelled";
     run.steps.push({ atMs: at(), kind: "step", text });
+    if (text.startsWith("Skill chargé : ")) run.skills = [text.slice("Skill chargé : ".length)];
     push();
   }
   const words = plan.thinking.split(" ");

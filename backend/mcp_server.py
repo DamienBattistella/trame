@@ -53,6 +53,12 @@ TOOLS: list[dict] = [
            "query": {"type": "string", "description": "Texte cherché, sans tenir compte des accents ni de la casse."},
            "since": {"type": "string", "description": "Date et heure ISO : seulement les événements depuis."},
            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}}),
+    _tool("list_skills", "Skills d'agent",
+          "Skills chargés par Trame (nom, description, source, actif ou non, scripts présents mais jamais exécutés) "
+          "et dossiers ignorés avec leur raison. Lecture seule : le texte des skills n'est pas renvoyé."),
+    _tool("get_meeting_report", "Dernier compte-rendu de réunion",
+          "Le dernier compte-rendu de réunion produit dans Trame (Markdown), avec la réunion, le skill utilisé et "
+          "le fichier .md s'il a été enregistré. Lecture seule."),
     _tool("get_telemetry", "Télémétrie OpenTelemetry",
           "Derniers spans et logs OpenTelemetry (trame.message, brain.draft, teams.read, teams.type…) du fichier local otel.jsonl.",
           {"limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
@@ -276,6 +282,17 @@ def make_router(watcher: Watcher) -> APIRouter:
         out.get("mcp", {}).pop("token", None)
         return out
 
+    def tool_skills(_args: dict) -> Any:
+        summary = watcher.skills_summary()
+        return {"skills": [{k: v for k, v in sk.items() if k != "path"} for sk in summary["skills"]],
+                "ignored": summary["ignored"], "sources": summary["sources"]}
+
+    def tool_meeting_report(_args: dict) -> Any:
+        latest = watcher.reports.latest_done()
+        if latest is None:
+            return {"report": None, "message": "Aucun compte-rendu produit depuis le démarrage de Trame."}
+        return {k: latest[k] for k in ("title", "skill", "status", "report", "savedPath", "vttPath", "startedAt")}
+
     # --- lecture ---
     def tool_list_conversations(args: dict) -> Any:
         status = args.get("status", "all")
@@ -410,7 +427,7 @@ def make_router(watcher: Watcher) -> APIRouter:
 
     handlers: dict[str, Callable[[dict], Any]] = {
         "get_status": tool_status, "get_logs": tool_logs, "get_telemetry": tool_telemetry,
-        "diagnose_teams": tool_diagnose, "get_settings": tool_settings,
+        "diagnose_teams": tool_diagnose, "get_settings": tool_settings, "list_skills": tool_skills, "get_meeting_report": tool_meeting_report,
         "list_conversations": tool_list_conversations, "read_conversation": tool_read,
         "summarize_conversation": tool_summary, "list_drafts": tool_drafts, "lookup_person": tool_person,
         "get_persona": tool_persona, "get_my_status": tool_my_status, "set_my_status": tool_set_my_status,

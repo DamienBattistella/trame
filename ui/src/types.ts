@@ -366,7 +366,7 @@ export interface ReflectionStep {
   text: string;
 }
 
-export type ReflectionAction = "correct" | "check" | "suggest";
+export type ReflectionAction = "correct" | "check" | "suggest" | "report";
 
 /** Ce que fait le modèle pendant une action de la zone de réponse. Reste local : jamais envoyé dans Teams. */
 export interface ReflectionRun {
@@ -384,7 +384,35 @@ export interface ReflectionRun {
   durationMs: number | null;
   /** Le cerveau a transmis le texte de sa réflexion (sinon : étapes de Trame seulement). */
   reasoning: boolean;
+  /** Skills dont le texte a été donné au modèle pendant l'action. */
+  skills?: string[];
   rev: number;
+}
+
+/** Un skill d'agent (dossier avec SKILL.md) que Trame peut proposer au cerveau. */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  /** « Trame », le dossier partagé (~/.agents/skills…) ou « git <url> ». */
+  source: string;
+  path: string;
+  version: string;
+  size: number;
+  enabled: boolean;
+  /** Le skill contient des scripts : Trame ne les exécute jamais. */
+  hasScripts: boolean;
+  scripts: string[];
+  references: string[];
+}
+
+export interface SkillsSummary {
+  ownDir: string;
+  dirs: string[];
+  repos: { url: string; branch: string }[];
+  sources: { label: string; path: string; exists: boolean; defaultOn: boolean }[];
+  skills: SkillInfo[];
+  ignored: { folder: string; source: string; reason: string }[];
+  limits: { skillKb: number; fileKb: number; maxActive: number };
 }
 
 /** Une réunion Teams terminée (carte « récapitulatif » d'une conversation de réunion). */
@@ -419,4 +447,45 @@ export interface SavedTranscript {
   /** Faux si la liste n'a pas pu être relue jusqu'au bout. */
   complete: boolean;
   organizer: string;
+}
+
+/** Un tour de l'échange d'un compte-rendu : le cerveau (avec le prompt exact envoyé) ou l'utilisateur. */
+export interface ReportTurn {
+  role: "assistant" | "user";
+  text: string;
+  at: string;
+  /** Question posée à l'utilisateur (le compte-rendu attend sa réponse). */
+  question: string;
+  options: string[];
+  /** Compte-rendu (Markdown) rendu à ce tour. */
+  report: string;
+  /** Le prompt envoyé au cerveau pour ce tour, mot pour mot. */
+  prompt: string;
+  /** Action du panneau Réflexion de ce tour. */
+  runId: string;
+}
+
+/** Un compte-rendu de réunion : un skill appliqué à une transcription .vtt, en plusieurs tours. */
+export interface ReportSession {
+  id: string;
+  title: string;
+  meetingId: string;
+  skill: string;
+  skillSource: string;
+  vttPath: string;
+  vttChars: number;
+  cues: number;
+  provider: string;
+  model: string;
+  status: "running" | "waiting" | "done" | "error" | "cancelled";
+  turns: ReportTurn[];
+  report: string;
+  error: string;
+  savedPath: string;
+  runId: string;
+  /** Le prompt en cours d'envoi (pendant que le cerveau travaille). */
+  pendingPrompt: string;
+  startedAt: string;
+  rev: number;
+  references: string[];
 }

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -27,6 +27,7 @@ import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
 import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
+import { SkillsSettings } from "@/components/SkillsSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
 import { GraphSettings } from "@/components/GraphSettings";
 import { TeamsCheckBanner } from "@/components/TeamsCheck";
@@ -98,7 +99,7 @@ export function Panel({
     <div
       className={cn(
         "mx-auto flex h-full flex-col overflow-hidden",
-        tab === "inbox" ? "w-full" : cn("px-6 pt-5", tab === "settings" ? "max-w-5xl" : "max-w-3xl")
+        tab === "inbox" ? "w-full" : "w-full max-w-[100rem] px-4 pt-5 sm:px-6 xl:px-8"
       )}
     >
       <AnimatePresence initial={false}>
@@ -177,7 +178,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
             else toast.success(`${res.count} conversation${res.count > 1 ? "s" : ""} dans Teams`);
           })
         }
-        className="h-[52vh]"
+        className="h-[max(16rem,calc(100dvh-15rem))]"
         renderRow={(c) => (
           <div className="group flex min-h-14 items-center gap-3 px-4 py-2">
             <button
@@ -266,7 +267,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "mcp" | "advanced";
+type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "skills" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
@@ -351,7 +352,8 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
   const depths = Array.from(new Set([...BRIEF_DEPTHS, brief.lastMessages])).sort((a, b) => a - b);
   const delays = Array.from(new Set([...FOLLOW_UP_DELAYS, followUps.delayHours])).sort((a, b) => a - b);
 
-  const panes: { id: SettingsPane; label: string; icon: React.ElementType; desc: string; state?: SaveState; body: React.ReactNode }[] = [
+  // wide : un volet fait d'une liste prend toute la largeur ; les autres, des réglages à lire, gardent une colonne de lecture.
+  const panes: { id: SettingsPane; label: string; icon: React.ElementType; desc: string; state?: SaveState; wide?: boolean; body: React.ReactNode }[] = [
     {
       id: "general",
       label: "Général",
@@ -375,6 +377,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
     },
     {
       id: "health",
+      wide: true,
       label: "Santé",
       icon: HeartPulse,
       desc: "L'état de Trame en un coup d'œil : Teams, page Teams, file d'envoi, cerveau, veille, espace disque.",
@@ -407,6 +410,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
     },
     {
       id: "conversations",
+      wide: true,
       label: "Conversations",
       icon: MessagesSquare,
       desc: "Quelles conversations Trame suit, et qui envoie : toi ou Trame.",
@@ -414,6 +418,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
     },
     {
       id: "people",
+      wide: true,
       label: "Entourage",
       icon: Users,
       desc: "Qui est qui au travail, pour adapter chaque réponse.",
@@ -635,6 +640,13 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       ),
     },
     {
+      id: "skills",
+      label: "Skills",
+      icon: Puzzle,
+      desc: "Des guides de méthode (SKILL.md) que le cerveau peut suivre quand il rédige.",
+      body: <SkillsSettings trame={trame} />,
+    },
+    {
       id: "mcp",
       label: "MCP",
       icon: Plug,
@@ -711,7 +723,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             exit={{ opacity: 0, x: -8 }}
             transition={{ duration: 0.15 }}
             aria-labelledby={`pane-${current.id}`}
-            className="flex max-w-2xl flex-col gap-4 pr-3 pb-6"
+            className={cn("flex flex-col gap-4 pr-3 pb-6", !current.wide && "max-w-3xl")}
           >
             <header className="flex flex-col gap-1">
               <div className="flex items-center gap-2">

@@ -52,6 +52,13 @@
     "enabled": true,
     "last_messages": 30
   },
+  "skills": {
+    "dirs": [
+      "~/.agents/skills"
+    ],
+    "repos": [],
+    "state": {}
+  },
   "follow_ups": {
     "enabled": true,
     "delay_hours": 24

@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 import re
 from contextlib import asynccontextmanager
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -143,6 +143,32 @@ class TextBody(BaseModel):
     mentions: list[str] = Field(default_factory=list, max_length=10)
 
 
+class SkillToggleBody(BaseModel):
+    enabled: bool
+
+
+class SkillDirsBody(BaseModel):
+    dirs: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SkillRepoBody(BaseModel):
+    url: str = Field(max_length=300)
+    branch: str = Field(default="", max_length=100)
+
+
+class ReportStartBody(BaseModel):
+    thread_id: str = Field(default="", max_length=300)
+    mid: str = Field(default="", max_length=100)
+    title: str = Field(default="", max_length=300)
+    date: Optional[str] = Field(default=None, max_length=10)
+    skill: str = Field(default="meeting-report", max_length=64)
+    path: Optional[str] = Field(default=None, max_length=500)
+
+
+class ReportAnswerBody(BaseModel):
+    text: str = Field(max_length=4000)
+
+
 class FollowUpSendBody(BaseModel):
     text: Optional[str] = Field(default=None, max_length=8000)
 
@@ -154,6 +180,8 @@ class SnoozeBody(BaseModel):
 class SendBody(TextBody):
     """A send clicked in the conversation view: text, plus files the user chose there."""
     attachments: list[attachmod.AttachmentIn] = Field(default_factory=list, max_length=attachmod.MAX_FILES)
+    # Envoyer même si le même contenu, resté « non confirmé », semble déjà dans le fil.
+    force: bool = False
 
 
 def _files(body: Optional[SendBody]) -> list[attachmod.Attachment]:
@@ -268,8 +296,8 @@ class SoulBody(BaseModel):
     content: str
 
 
-def _error(status: int, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"ok": False, "error": message})
+def _error(status: int, message: str, code: Optional[str] = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"ok": False, "error": message, **({"code": code} if code else {})})
 
 
 def create_app(
@@ -308,7 +336,7 @@ def create_app(
 
     @app.exception_handler(ActionError)
     async def _action_error(_req: Request, exc: ActionError):
-        return _error(exc.status, exc.message)
+        return _error(exc.status, exc.message, exc.code)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_req: Request, exc: RequestValidationError):
@@ -371,7 +399,7 @@ def create_app(
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[SendBody] = None):
         queued = watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
-                                    body.mentions if body else None, _files(body))
+                                    body.mentions if body else None, _files(body), force=bool(body and body.force))
         # Teams pas prêt : le message attend dans la file d'envoi et partira seul.
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
@@ -490,7 +518,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):
-        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body))
+        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body), force=body.force)
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
     @app.get("/api/attachments")
@@ -527,6 +555,61 @@ def create_app(
     def correct_text(body: CorrectBody):
         text = watcher.correct_text(body.text, body.thread_id)
         return {"ok": True, "text": text, "changed": text != body.text.strip()}
+
+    @app.get("/api/skills")
+    def get_skills():
+        return {"ok": True, **watcher.skills_summary()}
+
+    @app.post("/api/skills/reload")
+    def reload_skills():
+        return {"ok": True, **watcher.reload_skills()}
+
+    @app.put("/api/skills/dirs")
+    def put_skill_dirs(body: SkillDirsBody):
+        return {"ok": True, **watcher.set_skill_dirs(body.dirs)}
+
+    @app.post("/api/skills/repos")
+    def sync_skill_repo(body: SkillRepoBody):
+        return {"ok": True, **watcher.sync_skill_repo(body.url, body.branch)}
+
+    @app.post("/api/skills/repos/remove")
+    def remove_skill_repo(body: SkillRepoBody):
+        return {"ok": True, **watcher.remove_skill_repo(body.url, body.branch)}
+
+    @app.post("/api/skills/{name}")
+    def toggle_skill(name: str, body: SkillToggleBody):
+        return {"ok": True, **watcher.set_skill_enabled(name, body.enabled)}
+
+    @app.post("/api/reports")
+    def start_report(body: ReportStartBody):
+        """Meeting report: a skill applied to the meeting's .vtt (fetched first if needed)."""
+        return {"ok": True, "report": watcher.start_meeting_report(body.thread_id, body.mid, body.title, body.date,
+                                                                   body.skill, body.path)}
+
+    @app.get("/api/reports")
+    def list_reports():
+        return {"ok": True, "reports": watcher.reports.list()}
+
+    @app.get("/api/reports/{report_id}")
+    def get_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.snapshot, report_id)}
+
+    @app.post("/api/reports/{report_id}/answer")
+    def answer_report(report_id: str, body: ReportAnswerBody):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.answer, report_id, body.text)}
+
+    @app.post("/api/reports/{report_id}/cancel")
+    def cancel_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.cancel, report_id)}
+
+    @app.post("/api/reports/{report_id}/save")
+    def save_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.save, report_id)}
+
+    @app.post("/api/reports/{report_id}/open-folder")
+    def open_report_folder(report_id: str):
+        report = watcher.report_call(watcher.reports.snapshot, report_id)
+        return {"ok": True, **watcher.open_transcripts_folder(str(Path(report["vttPath"]).parent))}
 
     @app.get("/api/reflections")
     def get_reflections():

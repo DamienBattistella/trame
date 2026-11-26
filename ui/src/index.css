@@ -78,6 +78,11 @@
   --sidebar-ring: oklch(0.62 0.19 258);
 }
 
+/* Largeurs : étroit < 1280 px (xl), moyen 1280–1600, large ≥ 1600 px (3xl). Voir DESIGN.md. */
+@theme {
+  --breakpoint-3xl: 100rem;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

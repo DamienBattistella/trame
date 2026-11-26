@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Ban, Brain, Loader2, Lock, X } from "lucide-react";
+import { Ban, Brain, Loader2, Lock, Puzzle, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -133,6 +133,15 @@ function RunDetail({ run, trame }: { run: ReflectionRun; trame: Trame }) {
         )}
       </div>
 
+      {!!run.skills?.length && (
+        <div data-testid="reflection-skills" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <Puzzle className="size-3.5" /> Skill{run.skills.length > 1 ? "s" : ""} chargé{run.skills.length > 1 ? "s" : ""} :
+          {run.skills.map((s) => (
+            <span key={s} className="rounded-full bg-secondary px-2 py-0.5 font-mono text-foreground">{s}</span>
+          ))}
+        </div>
+      )}
+
       <ol className="flex flex-col gap-2.5" aria-label="Étapes">
         <AnimatePresence initial={false}>
           {run.steps.map((s, i) => (
@@ -164,7 +173,7 @@ function RunDetail({ run, trame }: { run: ReflectionRun; trame: Trame }) {
   );
 }
 
-function StepLine({ step, live }: { step: ReflectionStep; live: boolean }) {
+export function StepLine({ step, live }: { step: ReflectionStep; live: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   // La réflexion défile avec le texte qui arrive.
   useEffect(() => {

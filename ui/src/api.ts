@@ -39,6 +39,8 @@ import {
   ReflectionRun,
   Meeting,
   SavedTranscript,
+  SkillsSummary,
+  ReportSession,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -49,6 +51,8 @@ import { DEFAULT_LIMITS } from "@/lib/attachments";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
 import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
+import { demoSkills } from "@/lib/demoSkills";
+import { demoPrompt, demoSession, demoTurn } from "@/lib/demoReport";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
@@ -195,7 +199,8 @@ function mapQueued(q: any): QueuedSend {
   };
 }
 
-export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
+/** `code` : « maybe_sent », le même contenu, resté « non confirmé », semble déjà dans le fil. */
+export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number; code?: string };
 
 export interface WatchlistEntry {
   threadId: string;
@@ -696,13 +701,16 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
     }
     if (!res.ok || data?.ok === false) {
       const error = typeof data?.error === "string" && data.error ? data.error : `Le moteur Trame a répondu ${res.status}.`;
-      return { ok: false, error, status: res.status };
+      return { ok: false, error, status: res.status, ...(typeof data?.code === "string" ? { code: data.code } : {}) };
     }
     return { ...(data ?? {}), ok: true } as Result<T>;
   } catch {
     return { ok: false, error: "Le moteur Trame est injoignable." };
   }
 }
+
+// Mode démo : skills fictifs, activation gardée le temps de la page.
+const demoSkillState: SkillsSummary = demoSkills();
 
 // Mode démo : réunions fictives, rien n'est lu ni écrit.
 const DEMO_TRANSCRIPTS_DIR = String.raw`C:\Users\vous\Documents\Trame\Transcriptions`;
@@ -979,13 +987,14 @@ export function useTrame() {
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
   /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
    *  `files` : fichiers choisis par l'utilisateur, envoyés avec le message. */
-  const sendDraft = async (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+  const sendDraft = async (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = [], force = false): Promise<Result<{ queued: QueuedSend | null }>> => {
     if (!connectedRef.current) return demo(files.length ? 1500 : 700, { queued: null });
     const res = await request<{ queued?: any }>("POST", `/api/drafts/${encodeURIComponent(id)}/send`, {
       text,
       reply_to: replyTo ? messageRef(replyTo) : null,
       mentions,
       attachments: wireFiles(files),
+      ...(force ? { force: true } : {}),
     });
     return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
@@ -1075,6 +1084,33 @@ export function useTrame() {
     }
     return { ok: true, count: res.count };
   };
+
+  /** Skills d'agent : liste, sources, activation. En démo, des skills fictifs. */
+  const skillsCall = async (method: string, path: string, body?: unknown, change?: (s: SkillsSummary) => void): Promise<Result<{ summary: SkillsSummary }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      change?.(demoSkillState);
+      await wait(150);
+      return { ok: true, summary: { ...demoSkillState, skills: demoSkillState.skills.map((x) => ({ ...x })) } };
+    }
+    const res = await request<SkillsSummary>(method, path, body);
+    if (!res.ok) return res;
+    const { ok: _ok, ...summary } = res;
+    return { ok: true, summary: summary as SkillsSummary };
+  };
+  const getSkills = () => skillsCall("GET", "/api/skills");
+  const reloadSkills = () => skillsCall("POST", "/api/skills/reload");
+  const setSkillEnabled = (name: string, enabled: boolean) =>
+    skillsCall("POST", `/api/skills/${encodeURIComponent(name)}`, { enabled }, (s) => {
+      const sk = s.skills.find((x) => x.name === name);
+      if (sk) sk.enabled = enabled;
+    });
+  const setSkillDirs = (dirs: string[]) => skillsCall("PUT", "/api/skills/dirs", { dirs }, (s) => (s.dirs = dirs));
+  const syncSkillRepo = async (url: string, branch: string): Promise<Result<{ summary: SkillsSummary }>> => {
+    if (!connectedRef.current && demoRef.current) return { ok: false, error: "Démo : aucun dépôt n'est récupéré." };
+    return skillsCall("POST", "/api/skills/repos", { url, branch });
+  };
+  const removeSkillRepo = (url: string, branch: string) => skillsCall("POST", "/api/skills/repos/remove", { url, branch });
 
   /** Entourage (ENTOURAGE.json exporté d'Orbite) : qui est qui, pour adapter les réponses. */
   const getPeople = async (): Promise<Result<{ people: PeopleSummary }>> => {
@@ -1370,6 +1406,105 @@ export function useTrame() {
     if (!connectedRef.current) return demo(200, { path });
     return request("POST", "/api/meetings/file", { path, reveal });
   };
+  /** Compte-rendu de réunion : un skill appliqué au .vtt (récupéré d'abord s'il manque), en plusieurs tours. */
+  const demoReports = useRef(new Map<string, ReportSession>());
+  const demoReportTurn = async (s: ReportSession) => {
+    const prompt = demoPrompt(s);
+    s.pendingPrompt = prompt;
+    const first = !s.turns.some((t) => t.role === "assistant");
+    let runId = "";
+    const outcome = await playDemoReflection(
+      {
+        action: "report",
+        threadId: null,
+        conversation: s.title,
+        before: first
+          ? [`Transcription : ${s.vttPath.split("\\").pop()}, ${s.cues} prise(s) de parole, ${s.vttChars} caractères (texte complet envoyé)`]
+          : ["Réponse de l'utilisateur transmise, l'échange continue"],
+        loaded: first ? s.skill : undefined,
+        thinking: first
+          ? "Je lis la transcription : deux participants, les tests OBX sont verts, la PR #214 sera fusionnée et la démo interop reste jeudi à 10 h. Le skill demande un compte-rendu structuré, puis de proposer des issues : je pose la question au lieu de les créer, Trame ne crée rien lui-même."
+          : "L'utilisateur a répondu. Je reprends le compte-rendu et j'ajoute seulement ce qu'il a demandé, sous forme de texte à copier.",
+        after: "Réponse reçue",
+        result: "",
+      },
+      (run) => {
+        runId = run.id;
+        s.runId = run.id;
+        upsertReflection(run);
+      },
+      (id) => demoStopped.current.has(id)
+    );
+    if (outcome === "cancelled" || s.status === "cancelled") {
+      s.pendingPrompt = "";
+      s.status = "cancelled";
+      s.rev++;
+      return;
+    }
+    s.pendingPrompt = "";
+    const turn = demoTurn(s, prompt, runId);
+    s.turns = [...s.turns, turn];
+    if (turn.report) s.report = turn.report;
+    s.status = turn.question ? "waiting" : "done";
+    s.rev++;
+  };
+  const reportCall = async (method: string, path: string, body?: unknown): Promise<Result<{ report: ReportSession }>> =>
+    request<{ report: ReportSession }>(method, path, body);
+  const startReport = async (m: Meeting, path?: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const s = demoSession(m, DEMO_TRANSCRIPTS_DIR);
+      demoReports.current.set(s.id, s);
+      void demoReportTurn(s);
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", "/api/reports", { thread_id: m.threadId, mid: m.mid, title: m.title, date: m.date, path: path || null });
+  };
+  const getReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      return s ? { ok: true, report: { ...s, turns: [...s.turns] } } : { ok: false, error: OFFLINE };
+    }
+    return reportCall("GET", `/api/reports/${encodeURIComponent(id)}`);
+  };
+  const answerReport = async (id: string, text: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      s.turns = [...s.turns, { role: "user", text, at: new Date().toTimeString().slice(0, 8), question: "", options: [], report: "", prompt: "", runId: "" }];
+      s.status = "running";
+      s.rev++;
+      void demoReportTurn(s);
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/answer`, { text });
+  };
+  const cancelReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      if (s.runId) demoStopped.current.add(s.runId);
+      s.status = "cancelled";
+      s.rev++;
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/cancel`);
+  };
+  const saveReport = async (id: string): Promise<Result<{ report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      const s = demoReports.current.get(id);
+      if (!s) return { ok: false, error: OFFLINE };
+      await wait(300);
+      s.savedPath = s.vttPath.replace(/\.vtt$/, ".md");
+      s.rev++;
+      return { ok: true, report: { ...s } };
+    }
+    return reportCall("POST", `/api/reports/${encodeURIComponent(id)}/save`);
+  };
+  const openReportFolder = async (id: string): Promise<Result<{ directory: string }>> => {
+    if (!connectedRef.current) return demo(300, { directory: DEMO_TRANSCRIPTS_DIR });
+    return request("POST", `/api/reports/${encodeURIComponent(id)}/open-folder`);
+  };
   /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
   const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
     if (!connectedRef.current) {
@@ -1383,13 +1518,15 @@ export function useTrame() {
   };
   /** Envoi à la main, avec les fichiers choisis par l'utilisateur (jamais en mode Auto). */
   /** `queued` : Teams n'était pas prêt, le message attend dans la file d'envoi et partira seul. */
-  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+  /** `force` : renvoyer quand même ce qui semble déjà parti (réponse « maybe_sent »). */
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = [], force = false): Promise<Result<{ queued: QueuedSend | null }>> => {
     if (!connectedRef.current) return demo(files.length ? 1500 : 800, { queued: null });
     const res = await request<{ queued?: any }>("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, {
       text,
       reply_to: replyTo ? messageRef(replyTo) : null,
       mentions,
       attachments: wireFiles(files),
+      ...(force ? { force: true } : {}),
     });
     return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
@@ -1506,6 +1643,7 @@ export function useTrame() {
             : `${who} demande une relecture de la PR #214 avant ce soir. Le fil montre que c'est attendu aujourd'hui : je m'engage sur un créneau précis plutôt qu'un « je regarde ». Ton direct, tutoiement, une phrase.`,
           after: `Réponse reçue et nettoyée (${text.length} caractères)`,
           result: text,
+          skill: !target && demoSkillState.skills.some((x) => x.name === "relecture-pr" && x.enabled) ? "relecture-pr" : undefined,
         },
         { text }
       );
@@ -1552,6 +1690,7 @@ export function useTrame() {
           thinking: "Je relis l'orthographe, les accords et la typographie française : espaces insécables, apostrophes, guillemets. Je garde le ton, les mentions, les liens et les emoji tels quels, je ne réécris aucune phrase.",
           after: changed ? "Réponse reçue et validée : liens, mentions et code intacts" : "Réponse reçue : rien à corriger",
           result: fixed,
+          skill: demoSkillState.skills.some((x) => x.name === "typographie-francaise" && x.enabled) ? "typographie-francaise" : undefined,
         },
         { text: fixed, changed }
       );
@@ -1866,6 +2005,18 @@ export function useTrame() {
     catchUp,
     getSettings,
     updateSettings,
+    getSkills,
+    reloadSkills,
+    startReport,
+    getReport,
+    answerReport,
+    cancelReport,
+    saveReport,
+    openReportFolder,
+    setSkillEnabled,
+    setSkillDirs,
+    syncSkillRepo,
+    removeSkillRepo,
     briefPrefs,
     conversationSort,
     setConversationSort,

@@ -74,6 +74,9 @@ def fresh_home(monkeypatch):
     assert home != REPO and cfgmod.HOME == home
     cfg = json.loads((REPO / "config.json").read_text(encoding="utf-8"))
     cfg["reply"]["auto_send_countdown_seconds"] = 0
+    # Never the skills installed on the machine running the tests.
+    cfg["skills"] = {"dirs": [], "repos": [], "state": {}}
+    shutil.rmtree(home / "skills", ignore_errors=True)
     (home / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
     shutil.copyfile(REPO / "SOUL.md", home / "SOUL.md")
     (home / "ENTOURAGE.json").unlink(missing_ok=True)

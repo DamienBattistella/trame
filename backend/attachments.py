@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Iterable, Optional
@@ -111,3 +113,40 @@ def parse(items: Iterable[AttachmentIn]) -> list[Attachment]:
 
 def describe(files: list[Attachment]) -> str:
     return ", ".join(f"{f.name} ({human_size(f.size)})" for f in files)
+
+
+# --- Un envoi déjà dans le fil ? (anti-doublon après un « Envoi non confirmé ») ---
+# Même règle que le pont Teams (teams-bridge.js, messageFiles) : nom comparé sans accents ni
+# casse, au renommage près d'un doublon par Teams / OneDrive (« nom 1.png », « nom (1).png »).
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif")
+
+
+def _fold(s: str) -> str:
+    s = unicodedata.normalize("NFD", s or "")
+    return " ".join("".join(c for c in s if not unicodedata.combining(c)).lower().split())
+
+
+def same_file(wanted: str, label: str) -> bool:
+    n = _fold(wanted)
+    dot = n.rfind(".")
+    stem, ext = (n[:dot], n[dot:]) if dot > 0 else (n, "")
+    pattern = rf"(^|[\s,:;«\"'(]){re.escape(stem)}(?: \d{{1,3}}| ?\(\d{{1,3}}\))?{re.escape(ext)}(?=$|[\s,:;»\"')])"
+    return re.search(pattern, _fold(label)) is not None
+
+
+def shows(message: dict, text: str, names: Iterable[str]) -> bool:
+    """Ce message du fil (tel que la lecture le donne) montre-t-il ce texte et ces fichiers ?
+    Une image affichée sans son nom vaut pour une image voulue."""
+    if text and _fold(text)[:40] not in _fold(message.get("text") or ""):
+        return False
+    shown = [f.get("name", "") for f in message.get("files") or []]
+    images = len(message.get("images") or [])
+    for name in names:
+        hit = next((i for i, label in enumerate(shown) if same_file(name, label)), None)
+        if hit is not None:
+            shown.pop(hit)
+        elif images and name.lower().endswith(IMAGE_EXTENSIONS):
+            images -= 1
+        else:
+            return False
+    return True
