@@ -217,6 +217,9 @@ class AppState(BaseModel):
     teams_check: Optional[TeamsCheck] = None
     # Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule).
     follow_ups: list["FollowUp"] = Field(default_factory=list)
+    # Conversations épinglées en haut de la liste, dans l'ordre choisi (identifiants).
+    # Indépendant de « Suivie » : une conversation non suivie peut être en favori.
+    favorites: list[str] = Field(default_factory=list)
 
 
 class UndoableSend(BaseModel):

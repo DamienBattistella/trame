@@ -39,7 +39,7 @@ import {
   Meeting,
   SavedTranscript,
 } from "@/types";
-import { mockBrief, mockConversations, mockDrafts, mockFollowUps, mockLogs } from "@/mockData";
+import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { loadPrefs, toasts } from "@/lib/notifyPrefs";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
@@ -84,6 +84,8 @@ export interface TrameState {
   teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
   followUps: FollowUpItem[];
+  /** Conversations épinglées en haut de la liste, dans l'ordre choisi. Indépendant de « Suivie ». */
+  favorites: string[];
 }
 
 /** Un repère de la page Teams dont dépend Trame, introuvable. how « page » : absent au
@@ -271,6 +273,7 @@ function mapState(s: any): TrameState {
     })),
     teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
+    favorites: Array.isArray(s.favorites) ? s.favorites.map(String) : [],
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -562,7 +565,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [] };
   }
   return {
     paused: false,
@@ -582,6 +585,7 @@ function mockState(): TrameState {
     autoToday: [],
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
+    favorites: [...mockFavorites],
   };
 }
 
@@ -1778,6 +1782,28 @@ export function useTrame() {
     );
   };
 
+  /** Favoris : optimiste, remis comme avant si le moteur refuse. */
+  const applyFavorites = async (next: string[], send: () => Promise<Result>): Promise<Result> => {
+    if (!connectedRef.current && !demoRef.current) return { ok: false, error: OFFLINE };
+    const prev = stateRef.current.favorites;
+    setState((s) => ({ ...s, favorites: next }));
+    if (!connectedRef.current) return { ok: true };
+    const res = await send();
+    if (!res.ok) setState((s) => ({ ...s, favorites: prev }));
+    return res;
+  };
+  /** Ajoute (en dernier) ou retire une conversation des favoris. */
+  const toggleFavorite = (threadId: string) => {
+    const cur = stateRef.current.favorites;
+    const favorite = !cur.includes(threadId);
+    return applyFavorites(favorite ? [...cur, threadId] : cur.filter((t) => t !== threadId), () =>
+      request("POST", `/api/favorite/${encodeURIComponent(threadId)}`, { favorite })
+    );
+  };
+  /** Nouvel ordre des favoris (glisser-déposer, Ctrl+Maj+↑/↓). */
+  const reorderFavorites = (order: string[]) =>
+    applyFavorites(order, () => request("PUT", "/api/favorites", { order }));
+
   return {
     state,
     connected,
@@ -1860,6 +1886,8 @@ export function useTrame() {
     toggleWatch,
     setWatchMany,
     setMode,
+    toggleFavorite,
+    reorderFavorites,
   };
 }
 

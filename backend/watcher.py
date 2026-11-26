@@ -52,6 +52,11 @@ def _today() -> str:
     return f"{_DAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]} {d.year}"
 
 
+def _unique(ids: Iterable[str]) -> list[str]:
+    """Sans doublon, dans l'ordre de première apparition."""
+    return list(dict.fromkeys(ids))
+
+
 class ActionError(Exception):
     """An API-triggered action failed; carries the HTTP status and a French message."""
 
@@ -82,6 +87,7 @@ class Watcher:
             onboarded=bool(self.cfg.get("onboarded", False)),
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
+            favorites=_unique(str(t) for t in self.cfg.get("favorites", []) if t),
             capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
                                       reply=bool(getattr(driver, "supports_reply", False)),
                                       mentions=bool(getattr(driver, "supports_mentions", False)),
@@ -1853,6 +1859,41 @@ class Watcher:
             self._entity(thread_id).watch = watch
         self._persist_watchlist()
 
+    # --- favoris : épinglés en haut de la liste, dans l'ordre choisi ---
+    def set_favorite(self, thread_id: str, favorite: bool) -> list[str]:
+        """Ajoute (en dernier) ou retire un favori. Rien à voir avec « Suivie » ni le mode."""
+        with self._lock:
+            if favorite:
+                self._entity(thread_id)
+                if thread_id not in self.state.favorites:
+                    self.state.favorites = [*self.state.favorites, thread_id]
+            else:
+                self.state.favorites = [t for t in self.state.favorites if t != thread_id]
+            favorites = list(self.state.favorites)
+        self._persist_favorites()
+        return favorites
+
+    def reorder_favorites(self, order: list[str]) -> list[str]:
+        """Nouvel ordre des favoris. Seuls les favoris existants comptent ; ceux que l'ordre
+        oublie gardent leur place relative, à la suite."""
+        with self._lock:
+            current = self.state.favorites
+            wanted = [t for t in _unique(order) if t in current]
+            self.state.favorites = wanted + [t for t in current if t not in wanted]
+            favorites = list(self.state.favorites)
+        self._persist_favorites()
+        return favorites
+
+    def _persist_favorites(self) -> None:
+        with self._lock:
+            cfg = dict(self.cfg)
+            cfg["favorites"] = list(self.state.favorites)
+            self.cfg = cfg
+            try:
+                cfgmod.save(cfg)
+            except Exception as e:
+                self.log("warn", f"Sauvegarde des favoris impossible: {e}")
+
     def set_mode(self, thread_id: str, mode: str) -> None:
         with self._lock:
             self._entity(thread_id).mode = mode  # type: ignore[assignment]
@@ -2245,6 +2286,7 @@ class Watcher:
             except Exception:
                 discovered = []
             self.state.watchlist = [w.model_copy(update={"watch": False, "mode": "draft"}) for w in discovered]
+            self.state.favorites = []
         self.log("info", "Trame réinitialisé : configuration à refaire")
 
     def set_soul(self, content: str) -> None:
@@ -2340,7 +2382,8 @@ class Watcher:
         for w in self.state.watchlist:
             if w.thread_id in moved:
                 continue
-            if w.thread_id not in found and w.thread_id not in legacy and (w.watch or w.thread_id in self._started):
+            if w.thread_id not in found and w.thread_id not in legacy and (
+                    w.watch or w.thread_id in self._started or w.thread_id in self.state.favorites):
                 out.append(w)
         return out
 

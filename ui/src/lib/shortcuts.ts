@@ -16,6 +16,10 @@ export function overlayOpen(): boolean {
 export const isSwitcherKey = (e: KeyboardEvent) =>
   (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "k" || e.key === "K");
 
+/** Alt+F : épingler (ou retirer) la conversation dans les favoris. */
+export const isFavoriteKey = (e: KeyboardEvent) =>
+  e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "f" || e.key === "F" || e.code === "KeyF");
+
 /** Ctrl+/ (pavé numérique ou Maj+: en AZERTY), ou ? hors d'un champ : l'aide des raccourcis. */
 export const isHelpKey = (e: KeyboardEvent) =>
   ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "/" || e.code === "Slash" || e.code === "NumpadDivide")) ||
@@ -44,6 +48,13 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { keys: [["Alt", "Maj", "↓"], ["Alt", "Maj", "↑"]], label: "Conversation suivante / précédente dans la liste" },
       { keys: [["↓"], ["↑"]], label: "Parcourir la liste (une fois dedans)" },
       { keys: [["Échap"]], label: "Revenir de la discussion à la liste" },
+    ],
+  },
+  {
+    title: "Favoris",
+    items: [
+      { keys: [["Alt", "F"]], label: "Épingler ou retirer la conversation des favoris" },
+      { keys: [["Ctrl", "Maj", "↑"], ["Ctrl", "Maj", "↓"]], label: "Monter / descendre le favori (dans la liste)" },
     ],
   },
   {

@@ -63,7 +63,8 @@ TOOLS: list[dict] = [
     _tool("get_settings", "Réglages", "Réglages de Trame (cerveau, sécurité, résumé, GitHub, télémétrie). Sans le jeton MCP."),
     # --- lecture ---
     _tool("list_conversations", "Discussions",
-          "Discussions Teams connues de Trame : nom, type, suivie, mode, non-lu, dernière activité, réponse à relire. " + UNTRUSTED,
+          "Discussions Teams connues de Trame : nom, type, suivie, favorite, mode, non-lu, dernière activité, réponse à relire. "
+          "Les favorites (épinglées par l'utilisateur) viennent en premier, dans son ordre. " + UNTRUSTED,
           {"status": {"type": "string", "enum": ["all", "review", "unread", "followed"], "default": "all"},
            "query": {"type": "string", "description": "Filtre sur le nom"},
            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200}}),
@@ -280,15 +281,17 @@ def make_router(watcher: Watcher) -> APIRouter:
         status = args.get("status", "all")
         q = str(args.get("query") or "").casefold()
         drafts = {d.thread_id for d in watcher.state.drafts}
+        favorites = {t: i for i, t in enumerate(watcher.state.favorites)}
         out = []
-        for w in watcher.state.watchlist:
+        listed = sorted(watcher.state.watchlist, key=lambda w: favorites.get(w.thread_id, len(favorites)))
+        for w in listed:
             review = w.thread_id in drafts
             if status == "review" and not review or status == "unread" and not w.unread or status == "followed" and not w.watch:
                 continue
             if q and q not in w.display_name.casefold():
                 continue
             out.append({"thread_id": w.thread_id, "name": w.display_name, "type": w.surface.value, "followed": w.watch,
-                        "mode": w.mode, "unread": w.unread, "last_activity": w.last_activity, "reply_to_review": review})
+                        "favorite": w.thread_id in favorites, "mode": w.mode, "unread": w.unread, "last_activity": w.last_activity, "reply_to_review": review})
         return out[: int(args.get("limit", 200))]
 
     def tool_read(args: dict) -> Any:

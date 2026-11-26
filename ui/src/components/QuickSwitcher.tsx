@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, Star } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
@@ -16,13 +16,16 @@ export function QuickSwitcher({
   onOpenChange,
   items,
   status,
+  favorite,
   onPick,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Dans l'ordre de la liste : à relire, non lues, suivies, autres. */
+  /** Dans l'ordre de la liste : favoris, à relire, non lues, suivies, autres. */
   items: WatchEntity[];
   status: (c: WatchEntity) => "review" | "unread" | null;
+  /** Les favoris passent en premier, même parmi les résultats d'une recherche. */
+  favorite: (c: WatchEntity) => boolean;
   onPick: (threadId: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -47,8 +50,9 @@ export function QuickSwitcher({
       if (n.startsWith(q) || n.includes(` ${q}`)) starts.push(c);
       else if (n.includes(q)) inside.push(c);
     }
-    return [...starts, ...inside].slice(0, MAX);
-  }, [items, query]);
+    const found = [...starts, ...inside];
+    return [...found.filter(favorite), ...found.filter((c) => !favorite(c))].slice(0, MAX);
+  }, [items, query, favorite]);
 
   useEffect(() => {
     list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
@@ -120,6 +124,7 @@ className="top-[20%] flex max-h-[min(30rem,calc(100dvh-8rem))] translate-y-0 fle
               >
                 <InitialsAvatar name={c.displayName} presence={c.presence} className="size-7" />
                 <span className={cn("min-w-0 flex-1 truncate", s && "font-semibold")}>{c.displayName}</span>
+                {favorite(c) && <Star className="size-3.5 shrink-0 fill-warning text-warning" aria-label="Favori" />}
                 {s === "review" ? (
                   <span className="text-xs text-warning">À relire</span>
                 ) : s === "unread" ? (
