@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, Check, ExternalLink, ListChecks, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
+import { BookOpenText, Check, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,8 @@ import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
+import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
+import { acceptOf, addFiles, humanSize, limitsText } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -201,6 +202,12 @@ export function DiscussionView({
   const controls = useAnimationControls();
   const scroller = useRef<StickToBottomContext>(null);
   const foundRef = useRef<HTMLDivElement>(null);
+  // Pièces jointes : seulement des fichiers que l'utilisateur choisit ici (bouton ou
+  // glisser-déposer), envoyés par son clic sur Envoyer. Le mode Auto n'en joint jamais.
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [limits, setLimits] = useState<AttachmentLimits | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
 
   const load = async (fresh = false) => {
     setError(null);
@@ -238,7 +245,16 @@ export function DiscussionView({
   };
 
   useEffect(() => {
+    let live = true;
+    trame.attachmentLimits().then((r) => live && setLimits(r.ok ? r.limits : null));
+    return () => {
+      live = false;
+    };
+  }, [trame.connected]);
+
+  useEffect(() => {
     setMessages(null);
+    setFiles([]);
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
@@ -344,20 +360,39 @@ export function DiscussionView({
     return true;
   };
 
+  const canAttach = Boolean(limits?.canAttach);
+  const attachHint = !limits
+    ? "Pièces jointes indisponibles : moteur injoignable"
+    : !limits.canAttach
+      ? `Pièces jointes indisponibles : ${limits.unsupported ?? "pilote Teams sans pièces jointes"}`
+      : `Joindre un fichier · ${limitsText(limits)}`;
+
+  const pick = async (picked: File[]) => {
+    if (!limits?.canAttach || !picked.length || busy === "send") return;
+    const res = await addFiles(files, picked, limits);
+    setFiles(res.files);
+    if (res.refused.length) toast.error("Fichier refusé", { description: `${res.refused.join(" ; ")}. Accepté : ${limitsText(limits)}.` });
+  };
+
   const send = async () => {
     const body = text.trim();
-    if (!body || busy !== "idle" || review) return;
+    if ((!body && !files.length) || busy !== "idle" || review) return;
     setBusy("send");
     const target = replyTo;
     const mentions = caps.mentions ? mentionsUsed(body, chosen) : [];
     const res = draft
-      ? await trame.sendDraft(draft.id, body, target, mentions)
-      : await trame.sendInThread(c.threadId, body, target, mentions);
+      ? await trame.sendDraft(draft.id, body, target, mentions, files)
+      : await trame.sendInThread(c.threadId, body, target, mentions, files);
     setBusy("idle");
-    if (!res.ok) return fail(`Envoi impossible à ${c.displayName}`, `${res.error} Ton message est conservé.`);
+    if (!res.ok) {
+      const kept = files.length ? "Ton message et tes fichiers sont conservés." : "Ton message est conservé.";
+      return fail(`Envoi impossible à ${c.displayName}`, `${res.error} ${kept}`);
+    }
     if (draft) trame.removeDraft(draft.id);
-    setMessages((m) => [...(m ?? []), { sender: "Toi", text: body, at: "à l'instant", mine: true, replyTo: target }]);
+    const shownText = [body, ...files.map((f) => `Pièce jointe : ${f.name}`)].filter(Boolean).join("\n");
+    setMessages((m) => [...(m ?? []), { sender: "Toi", text: shownText, at: "à l'instant", mine: true, replyTo: target }]);
     setText("");
+    setFiles([]);
     setReplyTo(null);
     setChosen([]);
     setCheck(null);
@@ -623,7 +658,26 @@ export function DiscussionView({
         </StickToBottom.Content>
       </StickToBottom>
 
-      <motion.div animate={controls} className="border-t px-5 py-3">
+      <motion.div
+        animate={controls}
+        className={cn("border-t px-5 py-3 transition-colors", dragging && "bg-primary/5")}
+        onDragOver={(e) => {
+          if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = canAttach ? "copy" : "none";
+          if (canAttach) setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+          e.preventDefault();
+          setDragging(false);
+          if (!canAttach) return void toast.error("Pièce jointe impossible", { description: attachHint });
+          void pick(Array.from(e.dataTransfer.files));
+        }}
+      >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           {draft && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -783,11 +837,50 @@ export function DiscussionView({
               rows={2}
               className={cn(
                 "field-sizing-content max-h-48 min-h-16 resize-none rounded-xl",
-                draft && "border-primary/30 bg-primary/5 dark:bg-primary/10"
+                draft && "border-primary/30 bg-primary/5 dark:bg-primary/10",
+                dragging && "border-dashed border-primary"
               )}
             />
           </div>
+          {dragging && <p className="text-center text-xs text-primary">Dépose ici pour joindre · {limits && limitsText(limits)}</p>}
+          {files.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <ul aria-label="Pièces jointes" className="flex flex-wrap gap-2">
+                {files.map((f) => (
+                  <li key={f.id} className="flex max-w-64 items-center gap-1.5 rounded-full border bg-muted/50 py-1 pr-1 pl-2.5 text-xs">
+                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate" title={f.name}>{f.name}</span>
+                    <span className="shrink-0 text-muted-foreground tabular-nums">{humanSize(f.size)}</span>
+                    <button
+                      type="button"
+                      aria-label={`Retirer ${f.name}`}
+                      disabled={busy === "send"}
+                      className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      onClick={() => setFiles((x) => x.filter((y) => y.id !== f.id))}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {limits && <span className="text-xs text-muted-foreground">{limitsText(limits)}</span>}
+            </div>
+          )}
           <div className="flex items-center gap-2">
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              accept={limits ? acceptOf(limits) : undefined}
+              onChange={(e) => {
+                void pick(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+            <IconAction label={attachHint} disabled={!canAttach || busy === "send"} onClick={() => picker.current?.click()}>
+              <Paperclip className="size-4" />
+            </IconAction>
             <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
               <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd> pour envoyer
             </span>
@@ -827,7 +920,7 @@ export function DiscussionView({
                 {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
                 {replyTo ? "Proposer une réponse" : draft ? "Autre proposition" : "Proposer"}
               </Button>
-              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim() || !!review} onClick={send}>
+              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || (!text.trim() && !files.length) || !!review} onClick={send}>
                 {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Envoyer
               </Button>

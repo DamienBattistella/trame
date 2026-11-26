@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import attachments as attachmod
 import config as cfgmod
 import journal as journalmod
 import soul_template as soultpl
@@ -119,6 +120,18 @@ class TextBody(BaseModel):
     reply_to: Optional[MessageRef] = None
     # Noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
     mentions: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SendBody(TextBody):
+    """A send clicked in the conversation view: text, plus files the user chose there."""
+    attachments: list[attachmod.AttachmentIn] = Field(default_factory=list, max_length=attachmod.MAX_FILES)
+
+
+def _files(body: Optional[SendBody]) -> list[attachmod.Attachment]:
+    try:
+        return attachmod.parse(body.attachments if body else [])
+    except attachmod.AttachmentError as e:
+        raise ActionError(422, f"Rien n'a été envoyé : {e}") from None
 
 
 class ReactBody(BaseModel):
@@ -280,9 +293,9 @@ def create_app(
         return {"ok": True, "conversation": json.loads(entity.model_dump_json())}
 
     @app.post("/api/drafts/{draft_id}/send")
-    def send_draft(draft_id: str, body: Optional[TextBody] = None):
+    def send_draft(draft_id: str, body: Optional[SendBody] = None):
         watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
-                           body.mentions if body else None)
+                           body.mentions if body else None, _files(body))
         return {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/compose")
@@ -327,9 +340,14 @@ def create_app(
         return {"ok": True, **watcher.search_teams(body.q, body.limit)}
 
     @app.post("/api/threads/{thread_id:path}/send")
-    def thread_send(thread_id: str, body: TextBody):
-        watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions)
+    def thread_send(thread_id: str, body: SendBody):
+        watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body))
         return {"ok": True}
+
+    @app.get("/api/attachments")
+    def attachments_info():
+        """Whether this Teams driver can attach files, and the limits the UI shows."""
+        return {"ok": True, **watcher.attachments_info()}
 
     @app.post("/api/threads/{thread_id:path}/react")
     def thread_react(thread_id: str, body: ReactBody):
