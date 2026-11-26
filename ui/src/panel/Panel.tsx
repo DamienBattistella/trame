@@ -550,6 +550,60 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             words={safety.neverAutoSendIfMessageContains}
             onChange={(words) => update("safety", { safety: { ...safety, neverAutoSendIfMessageContains: words } })}
           />
+          {/* Garde-fous : au-delà, la réponse reste en brouillon et le Journal dit pourquoi. */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="flex min-w-0 flex-col">
+              <span className="text-sm">Réponses auto par heure, par conversation</span>
+              <span className="text-xs text-muted-foreground">Au-delà, la réponse attend en brouillon.</span>
+            </span>
+            <Segment
+              value={String(safety.autoMaxPerHour)}
+              options={[
+                { value: "3", label: "3" },
+                { value: "5", label: "5" },
+                { value: "10", label: "10" },
+                { value: "0", label: "Sans limite" },
+              ]}
+              onChange={(v) => update("safety", { safety: { ...safety, autoMaxPerHour: Number(v) } })}
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <label className="flex items-center gap-2 text-sm">
+              <Switch
+                aria-label="Heures de silence du mode Auto"
+                checked={safety.autoQuietHours}
+                onCheckedChange={(v) => update("safety", { safety: { ...safety, autoQuietHours: v } })}
+              />
+              Pas d'envoi auto
+            </label>
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              de
+              <input
+                type="time"
+                aria-label="Début des heures de silence"
+                value={safety.autoQuietFrom}
+                disabled={!safety.autoQuietHours}
+                onChange={(e) => e.target.value && update("safety", { safety: { ...safety, autoQuietFrom: e.target.value } })}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              />
+              à
+              <input
+                type="time"
+                aria-label="Fin des heures de silence"
+                value={safety.autoQuietTo}
+                disabled={!safety.autoQuietHours}
+                onChange={(e) => e.target.value && update("safety", { safety: { ...safety, autoQuietTo: e.target.value } })}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              />
+            </span>
+          </div>
+          <ToggleRow
+            label="Envois auto le week-end"
+            hint="Désactivé : le samedi et le dimanche, les réponses attendent en brouillon."
+            checked={safety.autoWeekends}
+            onChange={(v) => update("safety", { safety: { ...safety, autoWeekends: v } })}
+          />
+          <AutoToday trame={trame} />
         </GroupList>
       </motion.div>
       ),
@@ -888,6 +942,36 @@ function ToggleRow({
         {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
       </div>
       <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+/** Ce que le mode Auto a envoyé seul aujourd'hui : de quoi relire d'un coup d'œil. */
+function AutoToday({ trame }: { trame: Trame }) {
+  const list = trame.state.autoToday;
+  return (
+    <div className="flex flex-col gap-1.5 px-4 py-3">
+      <span className="text-sm">
+        {list.length ? (
+          <>
+            Aujourd'hui, Trame a envoyé seul{" "}
+            <span className="font-medium">{`${list.length} réponse${list.length > 1 ? "s" : ""}`}</span>
+          </>
+        ) : (
+          "Aujourd'hui, Trame n'a rien envoyé seul"
+        )}
+      </span>
+      {list.length > 0 && (
+        <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto text-xs text-muted-foreground">
+          {[...list].reverse().map((a, i) => (
+            <li key={`${a.at}-${i}`} className="flex gap-2">
+              <span className="shrink-0 tabular-nums">{a.at}</span>
+              <span className="shrink-0 font-medium text-foreground">{a.conversation}</span>
+              <span className="truncate">{a.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

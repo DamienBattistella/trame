@@ -45,6 +45,13 @@ class SafetySettings(BaseModel):
     never_auto_send_if_message_contains: list[str]
     # 🤖 at the end of every message sent without a click (Auto mode).
     mark_auto_replies: bool = True
+    # Auto mode guards: at most N automatic replies per hour and conversation (0: no
+    # cap), no automatic reply during quiet hours (may cross midnight) nor on weekends.
+    auto_max_per_hour: int = Field(default=5, ge=0, le=60)
+    auto_quiet_hours: bool = False
+    auto_quiet_from: str = Field(default="19:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    auto_quiet_to: str = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    auto_weekends: bool = True
 
     @field_validator("never_auto_send_if_message_contains")
     @classmethod
@@ -141,6 +148,11 @@ class SafetyPatch(_Patch):
     countdown_seconds: Optional[int] = Field(default=None, ge=0, le=60)
     never_auto_send_if_message_contains: Optional[list[str]] = None
     mark_auto_replies: Optional[bool] = None
+    auto_max_per_hour: Optional[int] = Field(default=None, ge=0, le=60)
+    auto_quiet_hours: Optional[bool] = None
+    auto_quiet_from: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    auto_quiet_to: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    auto_weekends: Optional[bool] = None
 
 
 class BriefPatch(_Patch):
@@ -194,6 +206,10 @@ def _int(value, default: int, lo: int, hi: int) -> int:
         return default
 
 
+def _hhmm(value, default: str) -> str:
+    return value if isinstance(value, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value) else default
+
+
 def _models(brain: dict) -> ModelSettings:
     claude, copilot = brain.get("claude", {}) or {}, brain.get("copilot", {}) or {}
     levels = ("low", "medium", "high", "xhigh", "max")
@@ -226,6 +242,11 @@ def from_config(cfg: dict) -> Settings:
                 t for t in safety.get("never_auto_send_if_message_contains", []) if isinstance(t, str)
             ],
             mark_auto_replies=bool(safety.get("mark_auto_replies", True)),
+            auto_max_per_hour=_int(safety.get("auto_max_per_hour", 5), 5, 0, 60),
+            auto_quiet_hours=bool(safety.get("auto_quiet_hours", False)),
+            auto_quiet_from=_hhmm(safety.get("auto_quiet_from"), "19:00"),
+            auto_quiet_to=_hhmm(safety.get("auto_quiet_to"), "08:00"),
+            auto_weekends=bool(safety.get("auto_weekends", True)),
         ),
         brief=BriefSettings(
             enabled=bool(brief.get("enabled", True)),
@@ -287,6 +308,8 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["auto_pause_on_screen_share"] = merged.safety.auto_pause_on_screen_share
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
     safety["mark_auto_replies"] = merged.safety.mark_auto_replies
+    for key in ("auto_max_per_hour", "auto_quiet_hours", "auto_quiet_from", "auto_quiet_to", "auto_weekends"):
+        safety[key] = getattr(merged.safety, key)
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     out["follow_ups"] = merged.follow_ups.model_dump()
     out["telemetry"] = merged.telemetry.model_dump()
