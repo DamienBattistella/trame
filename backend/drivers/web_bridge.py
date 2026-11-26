@@ -66,6 +66,8 @@ class WebBridgeDriver(TeamsDriver):
     the user's own Teams window is never touched."""
 
     RPC_TIMEOUT = 12.0
+    # Réagir ou citer un ancien message : la page remonte le fil jusqu'à lui (15 s au plus).
+    GESTURE_TIMEOUT = 30.0
     POLL_SECONDS = 5.0
 
     def __init__(self) -> None:
@@ -307,7 +309,8 @@ class WebBridgeDriver(TeamsDriver):
 
     def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
         try:
-            res = self._rpc("react", name=self._name(thread_id), message=self._ref(target), reaction=reaction, timeout=12)
+            res = self._rpc("react", name=self._name(thread_id), message=self._ref(target), reaction=reaction,
+                            timeout=self.GESTURE_TIMEOUT)
         except BridgeUnavailable as e:
             # No answer: the click may have happened. Say so rather than « rien n'a été fait ».
             if "pas de réponse" in str(e):
@@ -344,7 +347,7 @@ class WebBridgeDriver(TeamsDriver):
         if files:
             args["files"] = files
         # Each mention waits for Teams' suggestions: a few more seconds per person.
-        timeout = self.ATTACH_TIMEOUT if files else (18 if quote else 15) + 6 * len(mentions or [])
+        timeout = self.ATTACH_TIMEOUT if files else (self.GESTURE_TIMEOUT + 6 if quote else 15) + 6 * len(mentions or [])
         try:
             res = self._rpc("type", timeout=timeout, **args)
         except BridgeUnavailable as e:
