@@ -163,6 +163,12 @@ export interface ThreadMessage {
   deleted?: boolean;
 }
 
+/** Réunion d'une conversation de réunion : son lien (ouvert dans Teams) et si elle est en cours. */
+export interface MeetingLink {
+  url: string;
+  live: boolean;
+}
+
 /** Activité d'une conversation, lue dans la liste que Trame interroge déjà. */
 export interface ThreadActivity {
   /** Quelqu'un est en train d'écrire. */

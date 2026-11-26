@@ -46,6 +46,8 @@ function extraConversations(): WatchEntity[] {
     "Release train Q1", "Guilde Front-end", "Équipe Sécurité", "Onboarding nouveaux", "Projet HL7 Labo",
     "Revue de code hebdo", "Daily Interop", "Projet Imagerie", "Équipe Data", "Pilotage DSI",
   ];
+  // Conversations de réunion : Teams les range avec les groupes.
+  const meetings = ["Point interop hebdo", "Comité produit mensuel"];
   const channels = [
     "#général", "#annonces", "#deploiements", "#ci-alertes", "#support-clients", "#veille-techno",
     "#architecture", "#qualite", "#rh-infos", "#random", "#incidents-p1", "#hl7-fhir",
@@ -61,6 +63,7 @@ function extraConversations(): WatchEntity[] {
   return [
     ...people.map((n, i) => mk(n, "dm", i)),
     ...groups.map((n, i) => mk(n, "group", i)),
+    ...meetings.map((n, i) => ({ ...mk(n, "group", i), threadId: `19:meeting_x${i}@thread.v2` })),
     ...channels.map((n, i) => mk(n, "channel", i)),
   ];
 }
