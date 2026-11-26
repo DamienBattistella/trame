@@ -604,11 +604,25 @@
     const found = await lookup(target);
     if (!found) return "message cité introuvable ou différent de celui choisi";
     const isReply = (l) => /^(reply|repondre|quote|citer)\b/.test(norm(l));
-    const btn = await barAction(found.el, "message-actions-quoted-reply", isReply);
+    let btn = await barAction(found.el, "message-actions-quoted-reply", isReply);
+    if (!btn) {
+      // Sur tes propres messages, Teams met « Modifier » dans la barre et range « Répondre
+      // avec une citation » dans « Autres options » de cette même barre. Ce menu contient
+      // aussi « Supprimer » : on n'y prend que l'entrée de citation, par son data-tid.
+      const more = await barAction(found.el, "message-actions-more", () => false);
+      if (more) {
+        more.click();
+        const item = () =>
+          Array.from(document.querySelectorAll('[data-tid="message-actions-quoted-reply"]')).find(visible) || null;
+        if (await waitFor(() => Boolean(item()), 1500)) btn = item();
+        if (!btn) document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      }
+    }
     if (!btn) return "action « Répondre » introuvable sur ce message";
-    press(btn);
+    btn.click();
+    const shown = await waitFor(() => quoted(box, target.text), 2500);
     unhover();
-    if (!(await waitFor(() => quoted(box, target.text), 2500))) return "citation du message non visible dans la zone de saisie";
+    if (!shown) return "citation du message non visible dans la zone de saisie";
     return null;
   };
 
