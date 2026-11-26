@@ -35,6 +35,9 @@ class GithubStatus(BaseModel):
     scopes: list[str] = Field(default_factory=list)
     sso_blocked: list[str] = Field(default_factory=list)
     login_pending: bool = False
+    # Outcome of the last sign-in once gh has exited: "ok", "failed" (with login_error) or None.
+    login_result: Optional[str] = None
+    login_error: Optional[str] = None
 
 
 def parse_scopes(raw: str) -> list[str]:
@@ -137,6 +140,8 @@ class GithubAuth:
         self._url = DEFAULT_VERIFICATION_URL
         self._output: list[str] = []
         self._code_found = threading.Event()
+        self._last_result: Optional[str] = None
+        self._last_error: Optional[str] = None
 
     def _gh(self) -> Optional[str]:
         return self.which("gh")
@@ -148,11 +153,13 @@ class GithubAuth:
         gh = self._gh()
         with self._lock:
             pending = self._pending()
+            result, error = self._last_result, self._last_error
         if not gh:
             return GithubStatus(installed=False, sso_blocked=ghctx.sso_blocked(), login_pending=pending)
         logged_in, account, scopes = self._auth_status(gh)
         return GithubStatus(installed=True, logged_in=logged_in, account=account, scopes=scopes,
-                            sso_blocked=ghctx.sso_blocked(), login_pending=pending)
+                            sso_blocked=ghctx.sso_blocked(), login_pending=pending,
+                            login_result=None if pending else result, login_error=None if pending else error)
 
     def _auth_status(self, gh: str) -> tuple[bool, Optional[str], list[str]]:
         try:
@@ -174,6 +181,7 @@ class GithubAuth:
             if logged_in:
                 raise ActionError(409, f"Déjà connecté à GitHub en tant que {account}.")
             self._code, self._url, self._output = None, DEFAULT_VERIFICATION_URL, []
+            self._last_result, self._last_error = None, None
             self._code_found = threading.Event()
             try:
                 proc = self.spawn([gh, *LOGIN_CMD])
@@ -221,6 +229,15 @@ class GithubAuth:
         except Exception:
             pass
         finally:
+            try:
+                code = proc.wait(timeout=30)
+            except Exception:
+                code = None
+            with self._lock:
+                if self._proc is proc and code is not None:
+                    self._last_result = "ok" if code == 0 else "failed"
+                    last = next((x.strip() for x in reversed(self._output) if x.strip()), "")
+                    self._last_error = None if code == 0 else (last[:200] or f"gh a quitté avec le code {code}.")
             found.set()
 
     def cancel(self) -> None:

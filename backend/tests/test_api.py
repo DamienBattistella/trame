@@ -339,3 +339,12 @@ def test_websocket_sends_only_on_change(make_client, monkeypatch):
         watcher.set_paused(True)
         second = ws.receive_text()
     assert '"paused":false' in first and '"paused":true' in second
+
+
+def test_soul_preview_uses_given_persona_without_saving(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    before = (fresh_home / "SOUL.md").read_text(encoding="utf-8")
+    r = client.post("/api/soul/preview", json={"content": "# Moi\nTon direct."})
+    assert r.status_code == 200 and r.json()["reply"] == "Réponse de test" and "PR #214" in r.json()["incoming"]
+    assert (fresh_home / "SOUL.md").read_text(encoding="utf-8") == before
+    assert client.post("/api/soul/preview", json={"content": ""}).status_code == 422

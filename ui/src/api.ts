@@ -152,6 +152,8 @@ function mapGithubStatus(g: any): GithubStatus {
     scopes: Array.isArray(g?.scopes) ? g.scopes : [],
     ssoBlocked: Array.isArray(g?.sso_blocked) ? g.sso_blocked : [],
     loginPending: Boolean(g?.login_pending),
+    loginResult: g?.login_result === "ok" || g?.login_result === "failed" ? g.login_result : null,
+    loginError: typeof g?.login_error === "string" && g.login_error ? g.login_error : null,
   };
 }
 function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
@@ -515,6 +517,20 @@ export function useTrame() {
     return request("DELETE", "/api/people");
   };
 
+  /** Réponse type rédigée avec ce persona (rien n'est enregistré). */
+  const previewSoul = async (content: string): Promise<Result<{ incoming: string; reply: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(1800);
+      return {
+        ok: true,
+        incoming: "Salut, tu peux jeter un œil à la PR #214 avant demain ? Je bloque sur le mapping OBX.",
+        reply: "Oui, je regarde ce soir. Pour OBX, vérifie d'abord le type en OBX-2 : c'est souvent là que ça coince.",
+      };
+    }
+    return request<{ incoming: string; reply: string }>("POST", "/api/soul/preview", { content });
+  };
+
   const uploadSoul = async (filename: string, content: string): Promise<Result> => {
     if (!/\.(md|txt)$/i.test(filename)) return { ok: false, error: "Seuls les fichiers .md ou .txt sont acceptés." };
     if (new Blob([content]).size > SOUL_MAX_BYTES) return { ok: false, error: "Le fichier dépasse 64 Ko." };
@@ -692,6 +708,7 @@ export function useTrame() {
     cancelGithubLogin,
     saveWatchlist,
     uploadSoul,
+    previewSoul,
     getPeople,
     uploadPeople,
     removePeople,

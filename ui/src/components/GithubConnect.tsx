@@ -20,7 +20,7 @@ type PendingLogin = GithubLogin & { startedAt: number };
 // Survit au démontage (changement d'étape du wizard, d'onglet du panneau) le temps de la session.
 let pendingLogin: PendingLogin | null = null;
 
-type View = "checking" | "unavailable" | "missing" | "disconnected" | "pending" | "expired" | "connected";
+type View = "checking" | "unavailable" | "missing" | "disconnected" | "pending" | "expired" | "failed" | "connected";
 
 const rowMotion = {
   initial: { opacity: 0, height: 0 },
@@ -37,6 +37,7 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
   const [expired, setExpired] = useState(false);
   const [checkError, setCheckError] = useState(false);
   const [justConnected, setJustConnected] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const controls = useAnimationControls();
 
   const keepLogin = (l: PendingLogin | null) => {
@@ -62,6 +63,9 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
     if (!waiting || expired) return;
     let live = true;
     const startedAt = login?.startedAt ?? Date.now();
+    // gh peut se terminer un instant avant que la connexion soit visible : on revérifie
+    // jusqu'à 15 s après sa fin avant de conclure.
+    let graceUntil = 0;
     const tick = async () => {
       if (!live) return;
       if (Date.now() - startedAt > LOGIN_TIMEOUT_MS) {
@@ -75,7 +79,13 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
         keepLogin(null);
         setJustConnected(true);
       } else if (!res.github.loginPending) {
-        setExpired(true);
+        if (res.github.loginResult === "failed") {
+          keepLogin(null);
+          setFailure(res.github.loginError ?? "GitHub a refusé la connexion.");
+          return;
+        }
+        if (!graceUntil) graceUntil = Date.now() + 15000;
+        else if (Date.now() > graceUntil) setExpired(true);
       }
     };
     const id = setInterval(tick, POLL_MS);
@@ -107,6 +117,7 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
       return;
     }
     setExpired(false);
+    setFailure(null);
     keepLogin({ code: res.code, verificationUrl: res.verificationUrl, startedAt: Date.now() });
   };
 
@@ -125,6 +136,8 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
 
   const view: View = checkError
     ? "unavailable"
+    : failure && !status?.loggedIn
+      ? "failed"
     : !status
       ? "checking"
       : !status.installed
@@ -186,6 +199,17 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
                 <GithubMark />
                 <span className="flex-1 text-sm font-medium">GitHub</span>
                 <ConnectButton busy={busy} onClick={start} label="Se connecter" />
+              </Row>
+            )}
+
+            {view === "failed" && (
+              <Row>
+                <GithubMark />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-sm">Connexion refusée par GitHub</span>
+                  <span className="truncate text-xs text-muted-foreground" title={failure ?? undefined}>{failure}</span>
+                </div>
+                <ConnectButton busy={busy} onClick={start} label="Réessayer" />
               </Row>
             )}
 

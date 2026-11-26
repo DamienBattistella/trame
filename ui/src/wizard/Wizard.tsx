@@ -3,11 +3,13 @@ import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { BrainPicker, BrainId } from "@/components/BrainPicker";
-import { BrainConnect } from "@/components/BrainConnect";
+import type { BrainId } from "@/components/BrainPicker";
+import { BrainChoice } from "@/components/BrainConnect";
+import { TeamsLogo } from "@/brands";
 import { ConversationList } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
 import { SoulHelp } from "@/components/SoulHelp";
+import { SoulInsight } from "@/components/SoulInsight";
 import { GithubConnect } from "@/components/GithubConnect";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
@@ -132,6 +134,11 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   // « Réglages » (qui marque l'onboarding comme fait) passe en dernier : un échec avant
   // laisse le wizard à refaire, jamais un panneau sans watchlist.
+  // Première arrivée sur l'étape de vérification : elle se lance toute seule.
+  useEffect(() => {
+    if (step === 2 && probe === "idle" && live) runProbe();
+  }, [step, live]);
+
   // L'auto-test du démarrage peut dater d'avant l'ouverture de Teams : on le refait à l'accueil.
   useEffect(() => {
     if (step === 0 && connected) trame.selftest();
@@ -194,23 +201,24 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
     {
       title: "Bonjour",
-      sub: "Trame lit tes conversations Teams et prépare tes réponses, dans ta voix. Sans toucher à ton compte.",
+      sub: "Tes réponses Teams, préparées dans ta voix.",
       body: (
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ ...pop, delay: 0.25 }}
           className={cn(
-            "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm",
+            "flex items-center gap-2 rounded-full py-1.5 pr-4 pl-2 text-sm",
             !live ? "bg-muted text-muted-foreground" : trame.state.selftestOk ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
           )}
         >
+          <TeamsLogo className="size-7" />
           {!live ? (
-            <><Loader2 className="size-4 animate-spin" /> Démarrage du moteur…</>
+            <><Loader2 className="size-3.5 animate-spin" /> Démarrage…</>
           ) : trame.state.selftestOk ? (
-            <><Check className="size-4" /> Microsoft Teams détecté</>
+            <><span className="font-medium text-foreground">Teams</span> <Check className="size-4" strokeWidth={3} /></>
           ) : (
-            <>Teams n'est pas encore repéré</>
+            <>Pas encore repéré</>
           )}
         </motion.div>
       ),
@@ -220,14 +228,13 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       sub: "Choisis, puis connecte-le. Tu pourras changer à tout moment.",
       body: (
         <div className="flex w-full flex-col gap-4">
-          <BrainPicker value={brain} onChange={pickBrain} />
-          <BrainConnect trame={trame} brain={brain} />
+          <BrainChoice trame={trame} value={brain} onChange={pickBrain} />
         </div>
       ),
     },
     {
       title: "Vérification de Teams",
-      sub: "Ouvre une conversation dans Teams, puis lance la vérification.",
+      sub: "Garde une conversation ouverte dans Teams.",
       body: (
         <div className="flex w-full flex-col items-center gap-4">
           <GroupList>
@@ -331,7 +338,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       body: (
         <div className="flex w-full flex-col items-center gap-3">
           <SoulDrop value={soul} onChange={setSoul} />
-          <SoulHelp />
+          {soul ? <SoulInsight trame={trame} content={soul.content} /> : <SoulHelp />}
         </div>
       ),
     },
@@ -554,7 +561,8 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
         animate={{ scale: state === "drag" ? 1.02 : 1 }}
         transition={{ type: "spring", stiffness: 400, damping: 25 }}
         className={cn(
-          "flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed p-7 transition-colors duration-200",
+          "flex w-full cursor-pointer items-center gap-3 rounded-2xl border-2 border-dashed transition-all duration-200",
+          state === "ok" ? "flex-row justify-center px-4 py-3" : "flex-col p-7",
           state === "idle" && "text-muted-foreground hover:border-primary/60 hover:text-foreground",
           state === "drag" && "border-primary bg-primary/5 text-foreground",
           state === "ok" && "border-success/60 bg-success/5 text-foreground",
@@ -562,7 +570,7 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
         )}
       >
         <input ref={input} type="file" accept=".md,.txt" className="hidden" onChange={(e) => accept(e.target.files?.[0])} />
-        <SoulGhost state={state} />
+        <SoulGhost state={state} size={state === "ok" ? 36 : 76} />
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={state === "ok" ? "ok" : state}
@@ -570,7 +578,7 @@ function SoulDrop({ value, onChange }: { value: Soul | null; onChange: (s: Soul)
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18, delay: state === "ok" ? 0.4 : 0 }}
-            className="flex flex-col items-center gap-0.5 text-center"
+            className={cn("flex flex-col gap-0.5", state === "ok" ? "items-start text-left" : "items-center text-center")}
           >
             {state === "ok" && file ? (
               <>

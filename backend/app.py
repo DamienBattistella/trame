@@ -113,6 +113,13 @@ class BriefBody(BaseModel):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
 
+SOUL_SAMPLE = "Salut, tu peux jeter un œil à la PR #214 avant demain ? Je bloque sur le mapping OBX."
+
+
+class SoulPreviewBody(BaseModel):
+    content: str = Field(min_length=1, max_length=64 * 1024)
+
+
 class SoulBody(BaseModel):
     filename: str
     content: str
@@ -289,6 +296,10 @@ def create_app(
     def delete_people():
         watcher.clear_people()
         return {"ok": True}
+
+    @app.post("/api/soul/preview")
+    def soul_preview(body: SoulPreviewBody):
+        return {"ok": True, "incoming": SOUL_SAMPLE, "reply": watcher.preview_soul(body.content, SOUL_SAMPLE)}
 
     @app.post("/api/selftest")
     def selftest():

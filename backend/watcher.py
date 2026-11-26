@@ -519,6 +519,16 @@ class Watcher:
             self.people = peoplemod.remove()
         self.log("info", "Entourage retiré")
 
+    def preview_soul(self, content: str, incoming: str) -> str:
+        """A sample reply written with this persona (not saved), to show what it changes."""
+        try:
+            reply = self.brain.draft(content, "", incoming)
+        except Exception as e:
+            raise ActionError(502, f"Le cerveau n'a pas pu rédiger d'exemple : {e}")
+        if not reply.strip():
+            raise ActionError(502, "Le cerveau a rendu une réponse vide.")
+        return reply.strip()
+
     def set_soul(self, content: str) -> None:
         with self._lock:
             try:

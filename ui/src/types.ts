@@ -100,6 +100,8 @@ export interface GithubStatus {
   scopes: string[];
   ssoBlocked: string[];
   loginPending: boolean;
+  loginResult?: "ok" | "failed" | null;
+  loginError?: string | null;
 }
 
 export interface GithubLogin {

@@ -281,14 +281,16 @@ def test_status_gh_missing(make_client):
     client, _w, _d = make_client()
     assert client.get("/api/github/status").json() == {"ok": True, "github": {
         "installed": False, "logged_in": False, "account": None, "scopes": [],
-        "sso_blocked": ["dedalus"], "login_pending": False}}
+        "sso_blocked": ["dedalus"], "login_pending": False,
+        "login_result": None, "login_error": None}}
 
 
 def test_status_logged_in(make_client):
     client, _w, _d = make_client(github_auth=_auth(STATUS_NEW_MULTI))
     assert client.get("/api/github/status").json()["github"] == {
         "installed": True, "logged_in": True, "account": "DamienPro",
-        "scopes": ["gist", "read:org", "repo", "workflow"], "sso_blocked": [], "login_pending": False}
+        "scopes": ["gist", "read:org", "repo", "workflow"], "sso_blocked": [], "login_pending": False,
+        "login_result": None, "login_error": None}
 
 
 def test_login_gh_missing(make_client):
@@ -379,3 +381,27 @@ def test_repo_list_is_cached(monkeypatch):
     monkeypatch.setattr(gh, "_repos_cache", (gh._repos_cache[0] - gh.REPOS_TTL - 1, gh._repos_cache[1]))
     gh.list_repos()
     assert len(calls) == 2
+
+
+def test_login_outcome_reported_after_gh_exits():
+    ok = FakeProc(LOGIN_OUTPUT, exit_code=0)
+    auth = ghauth.GithubAuth(which=lambda _n: GH, run=lambda cmd, t: subprocess.CompletedProcess(cmd, 1, "", ""),
+                             spawn=Launcher(ok))
+    auth.login()
+    for _ in range(50):
+        if auth.status().login_result:
+            break
+        threading.Event().wait(0.02)
+    st = auth.status()
+    assert st.login_pending is False and st.login_result == "ok" and st.login_error is None
+
+    bad = FakeProc(["! First copy your one-time code: AB12-CD34\n", "error: authorization denied\n"], exit_code=1)
+    auth = ghauth.GithubAuth(which=lambda _n: GH, run=lambda cmd, t: subprocess.CompletedProcess(cmd, 1, "", ""),
+                             spawn=Launcher(bad))
+    auth.login()
+    for _ in range(50):
+        if auth.status().login_result:
+            break
+        threading.Event().wait(0.02)
+    st = auth.status()
+    assert st.login_result == "failed" and "authorization denied" in st.login_error
