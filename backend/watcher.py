@@ -514,7 +514,8 @@ class Watcher:
         entity = self._conversation(thread_id)
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
-                "reactions": list(m.reactions)} for m in msgs]
+                "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
+                "images": [i.model_dump() for i in m.images]} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
@@ -1049,7 +1050,17 @@ class Watcher:
         return next((c for c in claims if c.verdict == "contredit"), None)
 
     def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé") -> list[IncomingMessage]:
-        return self._read_history_focused(thread_id, name, last_n, purpose)[0]
+        # For the brain (brief, proposal): text only. A message with only an image or a
+        # file says so in words, without the image data.
+        return [self._as_text(m) for m in self._read_history_focused(thread_id, name, last_n, purpose)[0]
+                if m.text or m.files or m.images]
+
+    @staticmethod
+    def _as_text(m: IncomingMessage) -> IncomingMessage:
+        extra = [f"[fichier joint : {f.name}]" for f in m.files] + ["[image]"] * len(m.images)
+        if not extra:
+            return m
+        return m.model_copy(update={"text": "\n".join([m.text, *extra]).strip(), "images": []})
 
     def _read_history_focused(self, thread_id: str, name: str, last_n: int,
                               purpose: str = "Résumé") -> tuple[list[IncomingMessage], bool]:

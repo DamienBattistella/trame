@@ -846,7 +846,7 @@ export function useTrame() {
       const messages: ThreadMessage[] = [
         { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
         { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
-        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [] },
+        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);
       return { ok: true, messages, top: true };
