@@ -57,6 +57,49 @@
     document.execCommand("selectAll", false);
     document.execCommand("delete", false);
   };
+  const caretAtEnd = (box) => {
+    box.focus();
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  // La fenêtre Teams de Trame est cachée : sans focus, execCommand n'insère souvent
+  // rien. Le collage simulé puis l'événement beforeinput passent par l'éditeur de
+  // Teams lui-même, sans focus.
+  const insert = async (box, text) => {
+    const ok = () => flat(box.innerText).includes(flat(text).slice(0, 20));
+    const tries = [
+      ["execCommand", () => document.execCommand("insertText", false, text)],
+      [
+        "paste",
+        () => {
+          const dt = new DataTransfer();
+          dt.setData("text/plain", text);
+          box.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        },
+      ],
+      [
+        "beforeinput",
+        () => {
+          box.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: text, bubbles: true, cancelable: true }));
+        },
+      ],
+    ];
+    for (const [name, run] of tries) {
+      caretAtEnd(box);
+      try {
+        run();
+      } catch {
+        continue;
+      }
+      if (await waitFor(ok, 600)) return name;
+      if (box.innerText.trim()) clear(box);
+    }
+    return null;
+  };
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
@@ -102,14 +145,12 @@
       const box = editor();
       if (!box) return { ok: false, error: "zone de saisie introuvable" };
       if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
-      box.focus();
-      document.execCommand("insertText", false, text);
-      await sleep(150);
       const fail = (error) => {
         clear(box);
         return { ok: false, error };
       };
-      if (!flat(box.innerText).includes(flat(text).slice(0, 20))) return fail("texte non inséré");
+      const how = await insert(box, text);
+      if (!how) return fail(`texte non inséré (focus : ${document.hasFocus() ? "oui" : "non"})`);
       if (!send) return { ok: true };
       if (!isOpen(name)) return fail("conversation changée avant l'envoi");
       if (late()) return fail("délai dépassé avant l'envoi");
@@ -132,6 +173,8 @@
         return e ? { tag: e.tagName, tid: e.getAttribute("data-tid") || "", role: e.getAttribute("role") || "", filled: Boolean(e.innerText.trim()) } : null;
       })(),
       textboxes: document.querySelectorAll('[contenteditable="true"]').length,
+      has_focus: document.hasFocus(),
+      visibility: document.visibilityState,
       send_button: Boolean(sendButton()),
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
     }),
