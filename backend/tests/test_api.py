@@ -89,7 +89,7 @@ def test_type_reply_guard_on_mock():
 def test_auto_send_and_refusal(make_client):
     _client, watcher, driver = make_client()
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
+    assert driver.typed == [(DM_AUTO, "Réponse de test 🤖", True)]
 
     _client2, watcher2, driver2 = make_client(driver=RefusingDriver(interval=9999))
     assert watcher2._process(_msg(DM_AUTO)) == "draft"
@@ -154,6 +154,7 @@ def test_settings_get(make_client):
             "selftest_gate": True,
             "countdown_seconds": 0,
             "never_auto_send_if_message_contains": ["mot de passe", "confidentiel", "RH", "salaire"],
+            "mark_auto_replies": True,
         },
         "brief": {"enabled": True, "last_messages": 30},
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},

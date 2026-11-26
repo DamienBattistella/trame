@@ -43,6 +43,8 @@ class SafetySettings(BaseModel):
     selftest_gate: bool
     countdown_seconds: int = Field(ge=0, le=60)
     never_auto_send_if_message_contains: list[str]
+    # 🤖 at the end of every message sent without a click (Auto mode).
+    mark_auto_replies: bool = True
 
     @field_validator("never_auto_send_if_message_contains")
     @classmethod
@@ -117,6 +119,7 @@ class SafetyPatch(_Patch):
     selftest_gate: Optional[bool] = None
     countdown_seconds: Optional[int] = Field(default=None, ge=0, le=60)
     never_auto_send_if_message_contains: Optional[list[str]] = None
+    mark_auto_replies: Optional[bool] = None
 
 
 class BriefPatch(_Patch):
@@ -190,6 +193,7 @@ def from_config(cfg: dict) -> Settings:
             never_auto_send_if_message_contains=[
                 t for t in safety.get("never_auto_send_if_message_contains", []) if isinstance(t, str)
             ],
+            mark_auto_replies=bool(safety.get("mark_auto_replies", True)),
         ),
         brief=BriefSettings(
             enabled=bool(brief.get("enabled", True)),
@@ -242,6 +246,7 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety = out.setdefault("safety", {})
     safety["auto_pause_on_screen_share"] = merged.safety.auto_pause_on_screen_share
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
+    safety["mark_auto_replies"] = merged.safety.mark_auto_replies
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     out["telemetry"] = merged.telemetry.model_dump()
     out["mcp"] = merged.mcp.model_dump()

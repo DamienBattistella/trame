@@ -57,7 +57,7 @@ def test_focused_without_restore_and_unknown_target():
 def test_auto_send_restores_user_view(make_client):
     _client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)))
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
+    assert driver.typed == [(DM_AUTO, "Réponse de test 🤖", True)]
     assert driver.opened == [DM_AUTO, USER_VIEW, DM_AUTO, USER_VIEW]
     assert driver.active_thread() == USER_VIEW
 
@@ -65,7 +65,7 @@ def test_auto_send_restores_user_view(make_client):
 def test_auto_send_warns_when_view_cannot_be_restored(make_client):
     _client, watcher, driver = make_client(driver=_looking_at(NoReturnDriver(interval=9999)))
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
+    assert driver.typed == [(DM_AUTO, "Réponse de test 🤖", True)]
     assert any(log.level == "warn" and "rouvrir" in log.text for log in watcher.state.logs)
 
 

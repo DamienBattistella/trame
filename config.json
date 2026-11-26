@@ -61,6 +61,7 @@
       "RH",
       "salaire"
     ],
+    "mark_auto_replies": true,
     "log_file": "logs/activity.log"
   },
   "ui": {

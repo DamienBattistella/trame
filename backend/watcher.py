@@ -272,13 +272,15 @@ class Watcher:
 
         if mode == "auto":
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
-            self.log("info", f"Réponse à {msg.sender} envoyée dans {secs} s (la pause l'annule)")
+            # Sent without a click: the people on the other side see it went out alone.
+            outgoing = safety.mark_automatic(proposal) if safety.marks_automatic(cfg) else proposal
+            self.log("info", f"Réponse à {msg.sender} envoyée dans {secs} s (la pause l'annule) : « {outgoing} »")
             if not self._countdown_ok(secs):
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi à {msg.sender} annulé : réponse gardée en brouillon")
                 return "draft"
-            if self._deliver(msg.thread_id, proposal, send=True, restore=True, auto=True):
-                self.log("sent", f"Envoyé à {msg.sender} : « {proposal[:60]} »")
+            if self._deliver(msg.thread_id, outgoing, send=True, restore=True, auto=True):
+                self.log("sent", f"Envoyé à {msg.sender} : « {outgoing[:60]} »")
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
             self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
@@ -311,8 +313,9 @@ class Watcher:
         with self._lock:
             recent = [(t, x) for t, x in self._sent_recent.get(msg.thread_id, []) if now - t < self.SELF_ECHO_TTL]
             self._sent_recent[msg.thread_id] = recent
-        text = msg.text.strip()
-        return any(text == x for _t, x in recent)
+        # Compared without the 🤖 marker: Teams may show the emoji differently (or not at all).
+        text = safety.unmark(msg.text)
+        return any(text == safety.unmark(x) for _t, x in recent)
 
     def _remember_sent(self, thread_id: str, text: str) -> None:
         with self._lock:
