@@ -11,9 +11,10 @@ import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
 import { TeamsWebRelay } from "@/components/TeamsWebRelay";
 import { WhatsNew } from "@/components/Changelog";
+import { UpdateLed } from "@/components/UpdateLed";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
-import { installUpdate, isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
+import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
 
 // Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
@@ -72,29 +73,16 @@ export default function App() {
   togglePauseRef.current = togglePause;
   useEffect(() => onTrayTogglePause(() => togglePauseRef.current(!pausedRef.current)), []);
   // Mise à jour au lancement (faite par l'application de bureau) : on prévient, sans rien demander.
+  // Celles trouvées ensuite (toutes les 15 min) allument la LED de l'en-tête (UpdateLed).
   useEffect(() => {
     const offAvailable = onDesktopEvent<string>("update-available", (version) =>
       toast.info(`Mise à jour vers la version ${version}`, { description: "Téléchargement en cours. Trame redémarrera tout seul." })
-    );
-    const offReady = onDesktopEvent<string>("update-ready", (version) =>
-      toast(`Trame ${version} est disponible`, {
-        description: "Installe-la maintenant : Trame redémarre en quelques secondes.",
-        duration: Infinity,
-        action: {
-          label: "Mettre à jour",
-          onClick: async () => {
-            const error = await installUpdate();
-            if (error) toast.error("Mise à jour impossible", { description: error });
-          },
-        },
-      })
     );
     const offFailed = onDesktopEvent("update-failed", () =>
       toast.error("Mise à jour impossible", { description: "Trame continue avec la version actuelle et réessaiera au prochain lancement." })
     );
     return () => {
       offAvailable();
-      offReady();
       offFailed();
     };
   }, []);
@@ -171,6 +159,7 @@ export default function App() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
+            <UpdateLed />
             <ConnectionBadge connected={trame.connected} demo={trame.demoMode} />
 
             {configured && (

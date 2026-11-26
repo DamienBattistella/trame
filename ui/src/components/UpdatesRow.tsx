@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownToLine, Check, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { appVersion, checkUpdate, installUpdate, isDesktop } from "@/desktop";
+import { appVersion, checkUpdate, installUpdate, isDesktop, setAvailableUpdate } from "@/desktop";
 
 type State = { kind: "idle" } | { kind: "checking" } | { kind: "latest" } | { kind: "available"; version: string } | { kind: "installing" };
 
@@ -25,7 +25,8 @@ export function UpdatesRow() {
       toast.error("Recherche impossible", { description: res.error });
       return;
     }
-    setState(res.version ? { kind: "available", version: res.version } : { kind: "latest" });
+    setAvailableUpdate(res.update);
+    setState(res.update ? { kind: "available", version: res.update.version } : { kind: "latest" });
   };
 
   const install = async () => {
@@ -46,7 +47,7 @@ export function UpdatesRow() {
           ? `Version ${state.version} disponible`
           : state.kind === "installing"
             ? "Téléchargement et installation…"
-            : "Vérifiées au lancement puis toutes les 6 heures";
+            : "Vérifiées au lancement puis toutes les 15 minutes";
 
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">

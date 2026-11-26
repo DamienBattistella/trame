@@ -19,16 +19,34 @@ export async function appVersion(): Promise<string | null> {
   }
 }
 
+/** Version publiée plus récente que celle installée ; `notes` = changelog (JSON) de latest.json. */
+export type UpdateInfo = { version: string; notes: string | null };
+
 /** Mises à jour : version disponible (null si à jour) ; erreur explicite sinon. */
-export async function checkUpdate(): Promise<{ ok: true; version: string | null } | { ok: false; error: string }> {
+export async function checkUpdate(): Promise<{ ok: true; update: UpdateInfo | null } | { ok: false; error: string }> {
   const t = tauri();
   if (!t?.core) return { ok: false, error: "Disponible dans l'application installée." };
   try {
-    const v = await t.core.invoke("check_update");
-    return { ok: true, version: typeof v === "string" ? v : null };
+    const u = (await t.core.invoke("check_update")) as UpdateInfo | null;
+    return { ok: true, update: u?.version ? { version: u.version, notes: u.notes ?? null } : null };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
+}
+
+// Mise à jour disponible, partagée entre la LED de l'en-tête et Réglages › Mises à jour.
+let available: UpdateInfo | null = null;
+const updateListeners = new Set<() => void>();
+
+export function setAvailableUpdate(update: UpdateInfo | null): void {
+  if (available?.version === update?.version) return;
+  available = update;
+  updateListeners.forEach((l) => l());
+}
+export const getAvailableUpdate = () => available;
+export function subscribeAvailableUpdate(cb: () => void): () => void {
+  updateListeners.add(cb);
+  return () => updateListeners.delete(cb);
 }
 
 /** Télécharge, installe et redémarre Trame. Ne revient qu'en cas d'échec. */
