@@ -26,13 +26,51 @@
     }
     return out.slice(0, 8);
   };
-  const railItems = () =>
-    items().map((el) => ({
+  // « En train d'écrire » : dans la liste, Teams remplace l'aperçu de la ligne par trois
+  // points animés (data-testid typing-indicator), pour toute conversation sauf celle
+  // ouverte. Celle-ci l'écrit en toutes lettres sous le fil : « Ana est en train
+  // d’écrire… », « Ana and Marc are typing… ».
+  const TYPING_ROW = '[data-testid="typing-indicator"]';
+  const TYPING_TEXT = /\b(est|sont) en train d.\s?[eé]crire|\b(is|are) typing\b/i;
+  const paneTyping = () => {
+    const main = document.querySelector('[role="main"]');
+    if (!main) return "";
+    const walk = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (!TYPING_TEXT.test(n.data)) continue;
+      const el = n.parentElement;
+      // Un message qui contient ces mots n'est pas l'indicateur.
+      if (!el || el.closest(MSGS) || el.closest('[contenteditable="true"]') || !visible(el)) continue;
+      return flat(el.innerText || n.data).replace(/[.…\s]+$/, "").slice(0, 120);
+    }
+    return "";
+  };
+  // Accusé de lecture : l'icône d'état de ton dernier message (« Envoyé », « Vu »,
+  // « Sent », « Seen », « Lu par… »). Teams ne la met que sous ton dernier message.
+  const SEEN = /^(vu|seen|lu|read)\b/i;
+  const statusOf = (el) => {
+    const icon = el.querySelector('[id^="read-status-icon-"]');
+    const l = (icon?.getAttribute("aria-label") || "").trim();
+    return !l ? "" : SEEN.test(l) ? "seen" : "sent";
+  };
+  const lastStatus = () => {
+    const icons = Array.from(document.querySelectorAll(`${MSGS} [id^="read-status-icon-"]`));
+    const last = icons[icons.length - 1];
+    return last ? statusOf(last.closest(MSGS) || last.parentElement) : "";
+  };
+  const railItems = () => {
+    const open = titleName();
+    const openEl = open ? findItem(open) : null;
+    return items().map((el) => ({
       label: label(el),
       aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
       id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
       presence: presenceOf(el),
+      typing: Boolean(el.querySelector(TYPING_ROW)),
+      // La conversation ouverte dans cette fenêtre : ce que montre son fil.
+      ...(el === openEl ? { open: true, typing_text: paneTyping(), status: lastStatus() } : {}),
     }));
+  };
   const railScroller = () => {
     for (let el = rail(); el && el !== document.body; el = el.parentElement) {
       if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
@@ -796,6 +834,70 @@
     return null;
   };
 
+  // Son propre statut. Le bouton du profil (avatar en haut à droite) le dit dans son
+  // libellé (« Votre profil, statut Ne pas déranger ») et sur son badge (« do not
+  // disturb ») : le lire n'ouvre aucun menu. Le changer passe par son menu, entrée
+  // « Modifier l'état », puis le choix ; le moteur vérifie ensuite ce que Teams affiche.
+  const ME = '[data-tid="me-control-avatar-trigger"]';
+  const ME_MENU = '[data-tid="me-control-menu-dialog"]';
+  const STATUS_ENTRY = '[data-tid="set-presence-status-menu-item"]';
+  const STATUS_TIDS = {
+    available: "me_control_presence_availability_available",
+    busy: "me_control_presence_availability_busy",
+    dnd: "me_control_presence_availability_do_not_disturb",
+    brb: "me_control_presence_availability_be_right_back",
+    away: "me_control_presence_availability_appear_away",
+    offline: "me_control_presence_availability_appear_offline",
+    reset: "set-availability-reset-status",
+  };
+  const NOTE = '[data-tid="me-control-status-note-container"]';
+  const NOTE_EDIT =
+    '[data-tid="me-control-menu-status-message-edit-button"], [data-tid="me-control-set-status-message-button"], [data-tid="me-control-menu-set-status-message"]';
+  const NOTE_CLEAR = '[data-tid="me-control-menu-status-message-clear-button"]';
+  const NOTE_PANEL = '[data-tid="me-control-set-status-message"]';
+  const NOTE_DONE = '[data-tid="me-control-set-status-message-update-status-message-button"]';
+  const NOTE_BACK = '[data-tid="me-control-set-status-message-back-button"]';
+  const firstVisible = (sel) => Array.from(document.querySelectorAll(sel)).find(visible) || null;
+  const myLabels = () => {
+    const out = [];
+    const trigger = document.querySelector(ME);
+    const badge = document.querySelector('[data-tid="me-control-avatar-presence"]');
+    for (const el of [trigger, badge]) {
+      const t = (el?.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+      if (t) out.push(t);
+    }
+    return out;
+  };
+  const meMenuOpen = () => visible(document.querySelector(ME_MENU));
+  const openMeMenu = async () => {
+    if (meMenuOpen()) return true;
+    const trigger = document.querySelector(ME);
+    if (!trigger) return false;
+    trigger.click();
+    return waitFor(meMenuOpen, 3000);
+  };
+  // Échap ferme le sous-menu puis le menu ; en dernier recours, le bouton du profil
+  // le referme. Jamais de menu laissé ouvert dans la fenêtre Teams de Trame.
+  const closeMeMenu = async () => {
+    for (let i = 0; i < 3 && meMenuOpen(); i++) {
+      (document.activeElement || document.body).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true })
+      );
+      await waitFor(() => !meMenuOpen(), 600);
+    }
+    if (meMenuOpen()) {
+      document.querySelector(ME)?.click();
+      await waitFor(() => !meMenuOpen(), 800);
+    }
+    return !meMenuOpen();
+  };
+  const noteText = () => flat(document.querySelector(NOTE)?.innerText || "");
+  const readNote = async () => {
+    if (!(await openMeMenu())) return null;
+    await waitFor(() => document.querySelector(NOTE) || firstVisible(NOTE_EDIT), 1500);
+    return noteText();
+  };
+
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     title: () => document.title,
@@ -993,6 +1095,7 @@
             text,
             at,
             mid: msgId(el),
+            status: statusOf(el),
             reactions: myReactions(el),
             files,
             images,
@@ -1043,7 +1146,7 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        out.push({ sender, text: m.text, at: m.at, id: m.mid, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
       }
       const shown = out.slice(-last);
       await thumbnails(shown);
@@ -1135,6 +1238,87 @@
       toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
     },
+    mystatus: async ({ message } = {}) => {
+      if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
+      if (!message) return { ok: true, labels: myLabels() };
+      try {
+        const note = await readNote();
+        if (note === null) return { ok: false, error: "menu du profil non ouvert", labels: myLabels() };
+        return { ok: true, labels: myLabels(), message: note };
+      } finally {
+        await closeMeMenu();
+      }
+    },
+    // Un statut du menu de Teams. Rien n'est saisi : deux clics (« Modifier l'état », le
+    // choix), puis on attend que le bouton du profil change ; le moteur compare.
+    setstatus: async ({ choice }) => {
+      const tid = STATUS_TIDS[choice];
+      if (!tid) return { ok: false, error: `statut inconnu : ${choice}` };
+      if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
+      const before = myLabels().join("|");
+      try {
+        if (!(await openMeMenu())) return { ok: false, error: "menu du profil non ouvert" };
+        const entry = () => firstVisible(`[data-tid="${tid}"]`);
+        if (!entry()) {
+          const sub = firstVisible(STATUS_ENTRY);
+          if (!sub) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
+          sub.click();
+          if (!(await waitFor(entry, 3000))) return { ok: false, error: "choix de statut absents du menu de Teams" };
+        }
+        if (late()) return { ok: false, error: "commande expirée" };
+        entry().click();
+        await waitFor(() => myLabels().join("|") !== before, 4000);
+        await sleep(300);
+      } finally {
+        await closeMeMenu();
+      }
+      return { ok: true, labels: myLabels() };
+    },
+    // Message de statut : vide, le bouton « Supprimer » ; sinon « Modifier », le texte
+    // dans l'éditeur du message, vérifié, puis « Terminé ». On relit ensuite ce que
+    // Teams affiche. En cas de doute avant « Terminé », retour arrière sans enregistrer.
+    setnote: async ({ text }) => {
+      const want = flat(text);
+      try {
+        if (!(await openMeMenu())) return { ok: false, error: "menu du profil non ouvert" };
+        await waitFor(() => document.querySelector(NOTE) || firstVisible(NOTE_EDIT), 1500);
+        if (!want) {
+          const clear = firstVisible(NOTE_CLEAR);
+          if (clear) {
+            clear.click();
+            await waitFor(() => !noteText(), 3000);
+          }
+        } else {
+          if (noteText() === want) return { ok: true, message: want };
+          const edit = firstVisible(NOTE_EDIT);
+          if (!edit) return { ok: false, error: "bouton « Définir le message de statut » introuvable" };
+          edit.click();
+          const box = () => firstVisible(`${NOTE_PANEL} [contenteditable="true"]`);
+          if (!(await waitFor(box, 3000))) return { ok: false, error: "zone du message de statut introuvable" };
+          const back = async (error) => {
+            firstVisible(NOTE_BACK)?.click();
+            await sleep(300);
+            return { ok: false, error };
+          };
+          const ed = cke(box());
+          if (!ed) return back("éditeur du message de statut illisible");
+          ed.setData("");
+          typeInModel(box(), want);
+          if (modelText(box()) !== want) return back("texte non saisi dans le message de statut");
+          const done = firstVisible(NOTE_DONE);
+          if (!done || done.disabled || done.getAttribute("aria-disabled") === "true") return back("bouton « Terminé » inactif");
+          if (late()) return back("commande expirée");
+          done.click();
+          await waitFor(() => !firstVisible(NOTE_PANEL), 4000);
+        }
+        // Teams peut refermer le menu après « Terminé » : on le rouvre pour relire.
+        const note = await readNote();
+        if (note === null) return { ok: false, error: "message de statut non relu" };
+        return { ok: true, message: note };
+      } finally {
+        await closeMeMenu();
+      }
+    },
     diagnose: () => ({
       url: location.href,
       title: document.title,
@@ -1142,6 +1326,7 @@
       rail: Boolean(rail()),
       items: items().length,
       sample: items().slice(0, 6).map((el) => label(el).split(/\s+/).slice(0, 3).join(" ")),
+      own_status: myLabels(),
       presence_sample: items().slice(0, 6).map((el) => presenceOf(el).filter((t) => t.split(" ").length <= 4)),
       editor: Boolean(editor()),
       editor_info: (() => {

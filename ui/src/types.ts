@@ -2,6 +2,8 @@ export type Surface = "dm" | "group" | "channel";
 export type Mode = "draft" | "auto";
 /** Présence Teams de la personne d'une conversation privée. */
 export type Presence = "available" | "busy" | "in_call" | "in_meeting" | "presenting" | "dnd" | "brb" | "away" | "ooo" | "offline";
+/** Ce que l'on peut choisir comme statut dans Teams (« Réinitialiser » : Teams décide à nouveau). */
+export type StatusChoice = "available" | "busy" | "dnd" | "brb" | "away" | "offline" | "reset";
 
 export interface WatchEntity {
   threadId: string;
@@ -153,6 +155,18 @@ export interface ThreadMessage {
   images?: ReceivedImage[];
   /** Message auquel celui-ci répond (affiché en citation). */
   replyTo?: MessageRef | null;
+  /** Tes messages : true « Vu », false « Envoyé », absent ou null si Teams ne le dit pas. */
+  seen?: boolean | null;
+}
+
+/** Activité d'une conversation, lue dans la liste que Trame interroge déjà. */
+export interface ThreadActivity {
+  /** Quelqu'un est en train d'écrire. */
+  typing: boolean;
+  /** « Ana est en train d'écrire », seulement pour la conversation ouverte dans la fenêtre Teams de Trame. */
+  typingText: string | null;
+  /** Ton dernier message vu, en direct ; null si la fenêtre Teams de Trame montre une autre conversation. */
+  seen: boolean | null;
 }
 
 /** Un message trouvé : dans l'historique déjà lu par Trame, ou par la recherche de Teams. */
@@ -294,4 +308,33 @@ export interface PendingFile {
   size: number;
   type: string;
   data: string;
+}
+
+/** Une étape d'une action suivie dans le panneau Réflexion : étape de Trame, réflexion du modèle, ou échec. */
+export interface ReflectionStep {
+  /** Millisecondes depuis le début de l'action. */
+  atMs: number;
+  kind: "step" | "thinking" | "error";
+  text: string;
+}
+
+export type ReflectionAction = "correct" | "check" | "suggest";
+
+/** Ce que fait le modèle pendant une action de la zone de réponse. Reste local : jamais envoyé dans Teams. */
+export interface ReflectionRun {
+  id: string;
+  action: ReflectionAction | string;
+  title: string;
+  threadId: string | null;
+  conversation: string | null;
+  provider: string;
+  model: string;
+  startedAt: string;
+  status: "running" | "done" | "error" | "cancelled";
+  steps: ReflectionStep[];
+  result: string;
+  durationMs: number | null;
+  /** Le cerveau a transmis le texte de sa réflexion (sinon : étapes de Trame seulement). */
+  reasoning: boolean;
+  rev: number;
 }

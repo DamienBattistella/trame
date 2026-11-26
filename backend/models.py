@@ -58,6 +58,8 @@ class IncomingMessage(BaseModel):
     # Pièces jointes reçues : fichiers (nom et lien Teams/SharePoint) et images (aperçu).
     files: list["FileRef"] = Field(default_factory=list)
     images: list["ImageRef"] = Field(default_factory=list)
+    # Accusé de lecture d'un de tes messages : True « Vu », False « Envoyé », None inconnu.
+    seen: Optional[bool] = None
 
 
 class FileRef(BaseModel):
@@ -130,6 +132,8 @@ class Capabilities(BaseModel):
     react: bool = False
     reply: bool = False
     mentions: bool = False
+    # Changer son propre statut Teams (Disponible, Ne pas déranger…).
+    own_status: bool = False
 
 
 class AppState(BaseModel):
@@ -143,6 +147,8 @@ class AppState(BaseModel):
     logs: list[LogItem] = Field(default_factory=list)
     notices: list[Notice] = Field(default_factory=list)
     capabilities: Capabilities = Field(default_factory=Capabilities)
+    # Son propre statut Teams, tel que Teams l'affiche ; None quand il ne le dit pas.
+    my_presence: Optional[Presence] = None
 
 
 class GithubHit(BaseModel):

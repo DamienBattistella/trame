@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import attachments as attachmod
 import config as cfgmod
+import presence as presencemod
 import journal as journalmod
 import soul_template as soultpl
 from mcp_server import make_router as make_mcp_router
@@ -100,6 +101,8 @@ class LocalOnly:
 
 WS_POLL = 0.25
 WS_KEEPALIVE = 15.0
+# While the model thinks, the reflection panel is fed this often.
+WS_REFLECTION_POLL = 0.08
 
 
 class PauseBody(BaseModel):
@@ -141,6 +144,8 @@ class ReactBody(BaseModel):
 
 class CorrectBody(BaseModel):
     text: str = ""
+    # The conversation being written in, to file the action in the reflection panel.
+    thread_id: Optional[str] = None
 
 
 class SuggestBody(BaseModel):
@@ -167,6 +172,14 @@ class StartBody(BaseModel):
 class SearchBody(BaseModel):
     q: str = Field(max_length=200)
     limit: int = Field(default=25, ge=1, le=50)
+
+
+class StatusBody(BaseModel):
+    presence: presencemod.Choice
+
+
+class StatusMessageBody(BaseModel):
+    text: str = Field(default="", max_length=presencemod.MESSAGE_MAX * 2)
 
 
 class BriefBody(BaseModel):
@@ -331,6 +344,11 @@ def create_app(
         messages, top = watcher.thread_history(thread_id, max(5, min(500, last)), fresh)
         return {"ok": True, "messages": messages, "top": top}
 
+    @app.get("/api/threads/{thread_id:path}/activity")
+    def thread_activity(thread_id: str):
+        # typing / typing_text: someone is writing; seen: your last message was read.
+        return {"ok": True, **watcher.thread_activity(thread_id)}
+
     @app.get("/api/search")
     def search_messages(q: str = "", limit: int = 50):
         return {"ok": True, **watcher.search_messages(q, max(1, min(200, limit)))}
@@ -338,6 +356,19 @@ def create_app(
     @app.post("/api/search/teams")
     def search_teams(body: SearchBody):
         return {"ok": True, **watcher.search_teams(body.q, body.limit)}
+
+    @app.get("/api/me/status")
+    def get_my_status():
+        """Own Teams status and status message (opens Teams' profile menu, then closes it)."""
+        return {"ok": True, **watcher.my_status()}
+
+    @app.post("/api/me/status")
+    def post_my_status(body: StatusBody):
+        return {"ok": True, **watcher.set_my_status(body.presence)}
+
+    @app.post("/api/me/status-message")
+    def post_status_message(body: StatusMessageBody):
+        return {"ok": True, **watcher.set_status_message(body.text)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):
@@ -364,8 +395,19 @@ def create_app(
 
     @app.post("/api/correct")
     def correct_text(body: CorrectBody):
-        text = watcher.correct_text(body.text)
+        text = watcher.correct_text(body.text, body.thread_id)
         return {"ok": True, "text": text, "changed": text != body.text.strip()}
+
+    @app.get("/api/reflections")
+    def get_reflections():
+        """The last reply-box actions and what the model did during each, newest first."""
+        return {"ok": True, "runs": watcher.reflections.snapshot()}
+
+    @app.post("/api/reflections/{run_id}/cancel")
+    def cancel_reflection(run_id: str):
+        if not watcher.reflections.cancel(run_id):
+            return _error(409, "Cette action n'est plus en cours.")
+        return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):
@@ -561,16 +603,26 @@ def create_app(
             closed.set()
 
         reader = asyncio.create_task(until_closed())
+        # Reflection runs go apart from the state, each one again only when it changed,
+        # and more often while one is running: the panel follows the model as it thinks.
+        revs: dict[str, int] = {}
+        seen = -1
         try:
             while not closed.is_set():
                 payload = state_payload()
                 if payload != last or idle >= WS_KEEPALIVE:
                     await socket.send_text(payload)
                     last, idle = payload, 0.0
+                if watcher.reflections.seq != seen:
+                    seen = watcher.reflections.seq
+                    for run in watcher.reflections.changed_since(revs):
+                        revs[run["id"]] = run["rev"]
+                        await socket.send_text(json.dumps({"kind": "reflection", "run": run}, ensure_ascii=False))
+                pause = WS_REFLECTION_POLL if watcher.reflections.running() else WS_POLL
                 try:
-                    await asyncio.wait_for(closed.wait(), WS_POLL)
+                    await asyncio.wait_for(closed.wait(), pause)
                 except asyncio.TimeoutError:
-                    idle += WS_POLL
+                    idle += pause
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:

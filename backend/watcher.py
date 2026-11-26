@@ -15,6 +15,7 @@ import people as peoplemod
 import presence as presencemod
 import search as searchmod
 import journal as journalmod
+import reflection
 import telemetry
 from drivers import rail_label
 import settings as settingsmod
@@ -31,6 +32,14 @@ from brain.factcheck import FactCheckParseError, build_factcheck_prompt, parse_f
 _DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 _MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
            "novembre", "décembre")
+
+
+CANCELLED = "Action annulée."
+
+
+def _gathered(n_messages: int, people: str) -> str:
+    who = f"entourage ({sum(1 for x in people.splitlines() if x.strip())} ligne(s))" if people else "entourage (personne de connu)"
+    return f"Contexte rassemblé : fil ({n_messages} message(s)), {who}, GitHub (non utilisé pour une proposition)"
 
 
 def _today() -> str:
@@ -70,7 +79,8 @@ class Watcher:
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
             capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
                                       reply=bool(getattr(driver, "supports_reply", False)),
-                                      mentions=bool(getattr(driver, "supports_mentions", False))),
+                                      mentions=bool(getattr(driver, "supports_mentions", False)),
+                                      own_status=bool(getattr(driver, "can_set_status", False))),
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -83,6 +93,8 @@ class Watcher:
         self.archive = searchmod.MessageArchive()
         self.journal = journalmod.Journal(cfgmod.HOME / "journal.jsonl")
         self._in_flight: set[str] = set()
+        # What the model does during the reply-box actions, for the reflection panel.
+        self.reflections = reflection.Reflections()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
         # lists them itself (a brand-new chat only shows up there after its first message).
@@ -167,6 +179,82 @@ class Watcher:
                 value = seen.get(w.thread_id) if w.surface == Surface.dm and not w.is_self else None
                 if w.presence != value:
                     w.presence = value
+        self.apply_own_status()
+
+    def apply_own_status(self) -> None:
+        """The user's own status, read on Teams' profile button (no menu opened)."""
+        if not self.state.capabilities.own_status:
+            return
+        try:
+            mine = self.driver.my_status().get("presence")
+        except Exception:
+            mine = None
+        with self._lock:
+            self.state.my_presence = mine
+
+    # --- the user's own status, changed from Trame ---
+    def my_status(self) -> dict:
+        """Status and status message as Teams shows them. Reading the message opens
+        Teams' profile menu in Trame's hidden Teams window, then closes it."""
+        self._require_own_status()
+        with self._ui_lock:
+            try:
+                got = self.driver.my_status(with_message=True)
+            except Exception as e:
+                raise ActionError(502, f"Statut Teams illisible : {e}")
+        with self._lock:
+            self.state.my_presence = got.get("presence")
+        return {"presence": got.get("presence"), "message": got.get("message") or ""}
+
+    def set_my_status(self, choice: str) -> dict:
+        """Pick a status in Teams' menu, then check Teams shows it: never a false
+        success. « reset » lets Teams decide again; whatever it then shows is reported."""
+        self._require_own_status()
+        if choice not in presencemod.CHOICES:
+            raise ActionError(422, f"Statut inconnu : {choice}.")
+        wanted = presencemod.LABELS.get(choice, "Réinitialiser")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                shown = self.driver.set_my_status(choice)
+            except Exception as e:
+                self.log("warn", f"Statut « {wanted} » non appliqué : {e}")
+                raise ActionError(502, f"Statut non changé : {e}")
+        with self._lock:
+            self.state.my_presence = shown
+        if choice != "reset" and shown != choice:
+            seen = presencemod.LABELS.get(shown or "", "aucun statut lisible")
+            self.log("warn", f"Statut « {wanted} » demandé, Teams affiche « {seen} »")
+            raise ActionError(409, f"Teams affiche « {seen} » au lieu de « {wanted} ». Vérifie dans Teams.")
+        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}")
+        return {"presence": shown}
+
+    def set_status_message(self, text: str) -> dict:
+        """Set (empty: clear) the status message, then check Teams shows exactly it."""
+        self._require_own_status()
+        want = " ".join((text or "").split())
+        if len(want) > presencemod.MESSAGE_MAX:
+            raise ActionError(422, f"Message de statut trop long ({len(want)} caractères, {presencemod.MESSAGE_MAX} au plus).")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
+            try:
+                shown = self.driver.set_status_message(want)
+            except Exception as e:
+                self.log("warn", f"Message de statut non appliqué : {e}")
+                raise ActionError(502, f"Message de statut non changé : {e}")
+        if shown != want:
+            self.log("warn", "Message de statut : Teams n'affiche pas le texte demandé")
+            raise ActionError(409, "Teams n'affiche pas le message demandé. Vérifie dans Teams.")
+        self.log("info", "Message de statut effacé" if not want else "Message de statut mis à jour")
+        return {"message": shown}
+
+    def _require_own_status(self) -> None:
+        if not self.state.capabilities.own_status:
+            raise ActionError(501, f"Statut Teams indisponible : {self.driver.status_unsupported}.")
 
     # --- core reaction ---
     MAX_NOTICES = 20
@@ -528,9 +616,14 @@ class Watcher:
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
                 "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
-                "images": [i.model_dump() for i in m.images]} for m in msgs]
+                "images": [i.model_dump() for i in m.images], "seen": m.seen} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
+
+    def thread_activity(self, thread_id: str) -> dict:
+        """Someone typing in thread_id, and whether your last message there was seen, as
+        the chat list Trame already polls shows it: nothing is opened or read in Teams."""
+        return self.driver.activity(thread_id)
 
     def search_messages(self, query: str, limit: int = 50) -> dict:
         """Messages already read by Trame that contain `query` (case and accents ignored).
@@ -668,11 +761,42 @@ class Watcher:
                 return i
         return None
 
+    @contextmanager
+    def _reflect(self, action: str, thread_id: Optional[str] = None) -> Iterator[reflection.Run]:
+        """Follow a reply-box action in the reflection panel. An action the user
+        cancelled answers 409 « Action annulée. », whatever the brain raised."""
+        name = None
+        if thread_id:
+            entity = next((w for w in self.state.watchlist if w.thread_id == thread_id), None)
+            name = entity.display_name if entity else None
+        provider = self.brain.label or self.state.brain
+        model = getattr(self.brain, "model", "") or "modèle par défaut"
+        run: Optional[reflection.Run] = None
+        try:
+            with self.reflections.track(action, provider, model, thread_id, name) as run:
+                yield run
+        except Exception as e:
+            if run is not None and run._cancel.is_set():
+                raise ActionError(409, CANCELLED) from e
+            raise
+
+    def _brain_call(self, what: str) -> None:
+        reflection.step(f"Appel envoyé à {self.brain.label or self.state.brain} : {what}")
+
     def suggest_reply(self, thread_id: str, last_n: int = 15, target: Optional[MessageRef] = None) -> str:
         """Proposal for the last message from someone else, or for target: the brain
         then answers that very message, with the thread up to it as context."""
+        with self._reflect("suggest", thread_id):
+            reply = self._suggest_reply(thread_id, last_n, target)
+            reflection.step(f"Réponse reçue et nettoyée ({len(reply)} caractères)")
+            reflection.result(reply)
+            return reply
+
+    def _suggest_reply(self, thread_id: str, last_n: int, target: Optional[MessageRef]) -> str:
         entity = self._conversation(thread_id)
+        reflection.step(f"Lecture du fil ({last_n} derniers messages au plus)")
         msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
+        reflection.check_cancelled()
         if target is not None:
             idx = self._locate(msgs, target)
             if idx is None:
@@ -684,8 +808,11 @@ class Watcher:
                 last, before = msgs[idx], msgs[:idx]
             summary = "\n".join(f"{m.sender}: {m.text}" for m in before)
             summary += f"\n(La réponse cite et répond précisément au message suivant de {last.sender}, pas au dernier du fil.)"
+            people = self._people_context(last, summary)
+            reflection.step(_gathered(len(before), people))
+            self._brain_call(f"réponse au message cité de {last.sender}")
             try:
-                reply = self.brain.draft(self.soul, summary.strip(), last.text, "", self._people_context(last, summary))
+                reply = self.brain.draft(self.soul, summary.strip(), last.text, "", people)
             except Exception as e:
                 raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
             return reply.strip()
@@ -694,19 +821,32 @@ class Watcher:
             raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
         last = theirs[-1]
         summary = "\n".join(f"{m.sender}: {m.text}" for m in msgs[:-1])
+        people = self._people_context(last, summary, entity)
+        reflection.step(_gathered(len(msgs), people))
+        self._brain_call(f"réponse au dernier message de {last.sender}")
         try:
-            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary, entity))
+            reply = self.brain.draft(self.soul, summary, last.text, "", people)
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
 
-    def correct_text(self, text: str) -> str:
+    def correct_text(self, text: str, thread_id: Optional[str] = None) -> str:
         """Spelling, grammar and typography of a message being written, by the chosen
         brain. Never sends: the user accepts or rejects the result."""
         if not text.strip():
             raise ActionError(400, "Rien à corriger : le message est vide.")
         if len(text) > CORRECT_MAX_CHARS:
             raise ActionError(413, f"Message trop long pour la correction ({CORRECT_MAX_CHARS} caractères au plus).")
+        with self._reflect("correct", thread_id):
+            reflection.step(f"Message à corriger : {len(text)} caractères (ni le fil ni l'entourage ne sont lus)")
+            self._brain_call("correction de l'orthographe et de la typographie")
+            fixed = self._correct(text)
+            reflection.step("Réponse reçue et validée : liens, mentions et code intacts"
+                            if fixed != text.strip() else "Réponse reçue : rien à corriger")
+            reflection.result(fixed)
+            return fixed
+
+    def _correct(self, text: str) -> str:
         brain = self.brain
         try:
             fixed = brain.correct(text)
@@ -1041,8 +1181,18 @@ class Watcher:
         body = (text or "").strip()
         if not body:
             raise ActionError(422, "Le message à vérifier est vide.")
-        name = entity.display_name
+        with self._reflect("check", thread_id):
+            check = self._fact_check(entity, body, target)
+            bad = sum(c.verdict == "contredit" for c in check.claims)
+            reflection.result(f"{len(check.claims)} affirmation(s) relevée(s), {bad} contredite(s)" if check.claims
+                              else "Rien à signaler")
+            return check
+
+    def _fact_check(self, entity: WatchEntity, body: str, target: Optional[MessageRef]) -> FactCheck:
+        thread_id, name = entity.thread_id, entity.display_name
+        reflection.step(f"Lecture du fil ({self.FACT_CHECK_MESSAGES} derniers messages au plus)")
         msgs, _top = self.thread_history(thread_id, self.FACT_CHECK_MESSAGES)
+        reflection.check_cancelled()
         lines = [f"[{m['at']}] {m['sender']}: {m['text']}" if m.get("at") else f"{m['sender']}: {m['text']}" for m in msgs]
         if target is not None:
             when = f" ({target.at})" if target.at else ""
@@ -1052,6 +1202,9 @@ class Watcher:
             senders.insert(0, name)
         cards = self._people_cards(senders, body)
         github = self._github_facts(body)
+        reflection.step(f"Contexte rassemblé : fil ({len(msgs)} message(s)), entourage ({len(cards)} fiche(s)), "
+                        + (f"GitHub ({len(github.splitlines())} ligne(s))" if github else "GitHub (rien à lire)"))
+        self._brain_call("vérification des affirmations du message")
         try:
             claims = self._check_claims(body, "\n".join(lines), "\n".join(cards), github)
         except FactCheckParseError as e:
@@ -1060,6 +1213,7 @@ class Watcher:
         except Exception as e:
             self.log("warn", f"Vérification impossible pour {name} : le cerveau a échoué ({str(e)[:120]})")
             raise ActionError(502, "Le cerveau n'a pas pu vérifier le message. Ton message est intact, tu peux réessayer.")
+        reflection.step(f"Réponse reçue et validée : {len(claims)} affirmation(s) exploitable(s)")
         bad = sum(c.verdict == "contredit" for c in claims)
         verdict = f"{bad} affirmation(s) contredite(s)" if bad else "rien de contredit"
         self.log("info", f"Message vérifié pour {name} : {verdict}")

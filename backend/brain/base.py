@@ -27,6 +27,9 @@ def clean_reply(text: str) -> str:
 
 
 class Brain(ABC):
+    # Who answers, as the reflection panel names it.
+    label = ""
+
     @abstractmethod
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         """Return the reply text only, in the persona's voice. No preamble, no quotes."""

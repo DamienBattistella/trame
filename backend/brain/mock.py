@@ -1,6 +1,10 @@
 from __future__ import annotations
 import json
+import os
 import re
+import time
+
+import reflection
 
 from brain.base import Brain
 from brain.correct import mock_correct
@@ -9,7 +13,16 @@ from brain.correct import mock_correct
 class MockBrain(Brain):
     """Deterministic offline brain (TRAME_BRAIN=mock): no CLI call, no subscription used."""
 
+    label = "Cerveau hors ligne"
+    model = "simulé"
+
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
+        _think(
+            f"Le dernier message dit : « {_short(incoming)} ». "
+            + ("Le fil donne le contexte des échanges précédents, je m'appuie dessus. " if thread_summary else "")
+            + ("Je connais mes interlocuteurs grâce à l'entourage : j'adapte le tutoiement. " if people_context else "")
+            + "La voix du persona est courte et directe : une ou deux phrases, un engagement concret, pas de formule creuse."
+        )
         low = incoming.lower()
         if "#" in incoming or "pr" in low.split():
             return "Je regarde la PR dans la matinée et je te fais un retour en commentaire."
@@ -22,10 +35,18 @@ class MockBrain(Brain):
         return "Bien reçu, je regarde et je te reviens vite."
 
     def correct(self, text: str) -> str:
+        _think(
+            f"Je relis « {_short(text)} » pour l'orthographe, les accords et la typographie française. "
+            "Je garde le ton, les mentions, les liens et les emoji tels quels, je ne réécris rien."
+        )
         return mock_correct(text)
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         if "Message à vérifier :" in prompt:
+            _think(
+                "Je relève les heures, les jours et les numéros cités dans le message, puis je cherche dans le fil "
+                "qui les a donnés et quand. Une valeur différente dans le fil est une contradiction, avec sa source."
+            )
             return _fact_check(prompt)
         marker = "Conversation (du plus ancien au plus récent) :"
         transcript = prompt.split(marker, 1)[1] if marker in prompt else prompt
@@ -72,6 +93,26 @@ class MockBrain(Brain):
             "search_queries": list(dict.fromkeys(queries))[:5],
         }
         return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
+
+
+def _short(text: str, n: int = 70) -> str:
+    one = " ".join(text.split())
+    return one if len(one) <= n else one[:n].rstrip() + "…"
+
+
+def _think(text: str) -> None:
+    """Offline reasoning, streamed a few words at a time when an action is followed in
+    the reflection panel (TRAME_MOCK_THINK_DELAY seconds between pieces)."""
+    if not reflection.active():
+        return
+    delay = float(os.environ.get("TRAME_MOCK_THINK_DELAY", "0.06"))
+    words = text.split(" ")
+    for i in range(0, len(words), 3):
+        reflection.check_cancelled()
+        reflection.thinking(" ".join(words[i:i + 3]) + (" " if i + 3 < len(words) else ""))
+        if delay:
+            time.sleep(delay)
+    reflection.check_cancelled()
 
 
 _HOUR = re.compile(r"\b\d{1,2} ?h ?(?:\d{2})?\b", re.IGNORECASE)

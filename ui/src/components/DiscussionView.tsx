@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
+import { BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -13,12 +13,13 @@ import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
 import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
+import { ThreadActivity } from "@/components/ThreadActivity";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
-import { Trame } from "@/api";
+import { CANCELLED, Trame } from "@/api";
 import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
@@ -225,6 +226,9 @@ export function DiscussionView({
   draft,
   found = null,
   onBrief,
+  reflectionOpen = false,
+  onReflection,
+  autoReflection = false,
 }: {
   trame: Trame;
   conversation: WatchEntity;
@@ -232,6 +236,11 @@ export function DiscussionView({
   /** Message trouvé par la recherche : la discussion s'ouvre dessus, surligné. */
   found?: MessageHit | null;
   onBrief: (t: BriefTarget) => void;
+  /** Panneau Réflexion (ce que fait le modèle pendant une action) ouvert à droite. */
+  reflectionOpen?: boolean;
+  onReflection?: (open: boolean) => void;
+  /** Ouvrir la réflexion à chaque action (fenêtre assez large pour le panneau ancré). */
+  autoReflection?: boolean;
 }) {
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -400,7 +409,9 @@ export function DiscussionView({
     });
   };
 
+  // Annulée depuis le panneau Réflexion : l'utilisateur le sait déjà.
   const fail = (title: string, error: string) => {
+    if (error === CANCELLED) return;
     controls.start(shake);
     toast.error(title, { description: error });
   };
@@ -532,8 +543,13 @@ export function DiscussionView({
     base.current = "";
   };
 
+  const reflect = () => {
+    if (autoReflection) onReflection?.(true);
+  };
+
   const suggest = async () => {
     setBusy("suggest");
+    reflect();
     const res = await trame.suggestInThread(c.threadId, replyTo);
     setBusy("idle");
     if (!res.ok) return fail("Proposition impossible", res.error);
@@ -544,9 +560,10 @@ export function DiscussionView({
     const body = text.trim();
     if (!body || checking) return;
     setChecking(true);
+    reflect();
     const res = await trame.checkInThread(c.threadId, body, replyTo);
     setChecking(false);
-    if (!res.ok) return toast.error("Vérification impossible", { description: res.error });
+    if (!res.ok) return res.error === CANCELLED ? undefined : toast.error("Vérification impossible", { description: res.error });
     setCheck({ result: res.check, text: body });
   };
 
@@ -561,7 +578,8 @@ export function DiscussionView({
     const before = text;
     if (!before.trim() || busy !== "idle") return;
     setBusy("correct");
-    const res = await trame.correctText(before);
+    reflect();
+    const res = await trame.correctText(before, c.threadId);
     setBusy("idle");
     if (!res.ok) return fail("Correction impossible", res.error);
     if (!res.changed) return toast.success("Rien à corriger", { description: "Ton message est déjà propre." });
@@ -642,6 +660,11 @@ export function DiscussionView({
             )}
           </AnimatePresence>
           <div className="flex items-center">
+            {onReflection && (
+              <IconAction label={reflectionOpen ? "Masquer la réflexion du modèle" : "Réflexion du modèle"} onClick={() => onReflection(!reflectionOpen)}>
+                <Brain className="size-4" />
+              </IconAction>
+            )}
             <IconAction label="Résumé de la conversation" disabled={!trame.briefPrefs.enabled} onClick={() => onBrief({ threadId: c.threadId, displayName: c.displayName })}>
               <BookOpenText className="size-4" />
             </IconAction>
@@ -768,6 +791,7 @@ export function DiscussionView({
                   </motion.div>
                 );
               })}
+              {messages !== null && <ThreadActivity trame={trame} conversation={c} last={shown[shown.length - 1]} />}
             </>
           )}
         </StickToBottom.Content>

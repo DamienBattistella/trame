@@ -8,6 +8,7 @@ import {
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
+  ThreadActivity,
   ThreadMessage,
   PeopleSearch,
   PeopleSummary,
@@ -28,6 +29,9 @@ import {
   WatchEntity,
   AttachmentLimits,
   PendingFile,
+  Presence,
+  StatusChoice,
+  ReflectionRun,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -35,12 +39,16 @@ import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import { DEFAULT_LIMITS } from "@/lib/attachments";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
+import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
 const HTTP = `http://${ENGINE}`;
 const WS = `ws://${ENGINE}/ws`;
 const SOUL_MAX_BYTES = 64 * 1024;
+/** Réponse du moteur à une action annulée depuis le panneau Réflexion : pas une erreur à signaler. */
+export const CANCELLED = "Action annulée.";
+const MAX_REFLECTIONS = 20;
 
 export interface TrameState {
   paused: boolean;
@@ -53,7 +61,9 @@ export interface TrameState {
   logs: LogItem[];
   notices: Notice[];
   /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
-  capabilities: { react: boolean; reply: boolean; mentions: boolean };
+  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean };
+  /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
+  myPresence: Presence | null;
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -112,7 +122,13 @@ function mapState(s: any): TrameState {
       at: n.at,
       surface: n.surface as Surface,
     })),
-    capabilities: { react: Boolean(s.capabilities?.react), reply: Boolean(s.capabilities?.reply), mentions: Boolean(s.capabilities?.mentions) },
+    capabilities: {
+      react: Boolean(s.capabilities?.react),
+      reply: Boolean(s.capabilities?.reply),
+      mentions: Boolean(s.capabilities?.mentions),
+      ownStatus: Boolean(s.capabilities?.own_status),
+    },
+    myPresence: s.my_presence ?? null,
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -367,7 +383,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false } };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false }, myPresence: null };
   }
   return {
     paused: false,
@@ -379,7 +395,8 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
-    capabilities: { react: true, reply: true, mentions: true },
+    capabilities: { react: true, reply: true, mentions: true, ownStatus: true },
+    myPresence: "available",
   };
 }
 
@@ -405,6 +422,8 @@ const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
 const demoArchive = new DemoArchive();
 for (const d of mockDrafts) demoArchive.add(d.threadId, [{ sender: d.from, text: d.incoming, at: d.receivedAt, mine: false }]);
+/** Démo : message de statut. */
+let demoStatusMessage = "";
 /** Démo : réactions posées, par conversation et message. */
 const demoReactions = new Map<string, Reaction[]>();
 
@@ -487,6 +506,18 @@ export function useTrame() {
   // Dernier état connu de la connexion GitHub (null tant qu'il n'a pas été vérifié).
   const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
+  // Panneau Réflexion : les dernières actions de la zone de réponse, la plus récente d'abord.
+  const [reflections, setReflections] = useState<ReflectionRun[]>([]);
+  const demoStopped = useRef(new Set<string>());
+  const upsertReflection = (run: ReflectionRun) =>
+    setReflections((list) => {
+      const i = list.findIndex((r) => r.id === run.id);
+      if (i < 0) return [run, ...list].slice(0, MAX_REFLECTIONS);
+      if (list[i].rev > run.rev) return list;
+      const next = list.slice();
+      next[i] = run;
+      return next;
+    });
 
   useEffect(() => {
     let closed = false;
@@ -520,6 +551,8 @@ export function useTrame() {
         if (closed) return;
         setConnected(true);
         setEverConnected(true);
+        // Le moteur renvoie toutes ses actions à chaque connexion ; redémarré, il en recompte les numéros.
+        setReflections([]);
       };
       ws.onmessage = (e) => {
         if (closed) return;
@@ -527,7 +560,10 @@ export function useTrame() {
         if (e.data === lastFrame) return;
         lastFrame = e.data;
         try {
-          const next = mapState(JSON.parse(e.data));
+          const data = JSON.parse(e.data);
+          // Trames à part : une action suivie dans le panneau Réflexion.
+          if (data?.kind === "reflection") return upsertReflection(data.run as ReflectionRun);
+          const next = mapState(data);
           announce(next);
           setState(next);
         } catch {
@@ -557,6 +593,25 @@ export function useTrame() {
       wsRef.current?.close();
     };
   }, []);
+
+  /** Démo : rejoue la réflexion de l'action dans le panneau, puis rend le résultat simulé. */
+  const demoReflect = async <T,>(plan: DemoPlan, data: T): Promise<Result<T>> => {
+    if (!demoRef.current) return { ok: false, error: OFFLINE };
+    const outcome = await playDemoReflection(plan, upsertReflection, (id) => demoStopped.current.has(id));
+    return outcome === "done" ? ({ ok: true, ...data } as Result<T>) : { ok: false, error: CANCELLED, status: 409 };
+  };
+  const conversationName = (threadId: string | null) =>
+    stateRef.current.watchlist.find((w) => w.threadId === threadId)?.displayName ?? null;
+
+  /** Arrête une action en cours (le processus du cerveau est tué). */
+  const cancelReflection = async (id: string): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      demoStopped.current.add(id);
+      return { ok: true };
+    }
+    return request("POST", `/api/reflections/${encodeURIComponent(id)}/cancel`);
+  };
 
   /** Hors backend : succès simulé en démo, échec explicite sinon. */
   const demo = async <T,>(ms: number, data: T): Promise<Result<T>> => {
@@ -600,6 +655,33 @@ export function useTrame() {
     const res = await request("POST", "/api/pause", { paused: p });
     if (!res.ok) setState((s) => ({ ...s, paused: !p }));
     return res;
+  };
+
+  /** Son statut Teams et son message de statut (le moteur ouvre puis referme le menu du profil). */
+  const getMyStatus = async (): Promise<Result<{ presence: Presence | null; message: string }>> => {
+    if (!connectedRef.current) return demo(300, { presence: stateRef.current.myPresence, message: demoStatusMessage });
+    return request<{ presence: Presence | null; message: string }>("GET", "/api/me/status");
+  };
+  /** Change son statut dans Teams ; réussi seulement si Teams affiche ensuite ce statut. */
+  const setMyStatus = async (choice: StatusChoice): Promise<Result<{ presence: Presence | null }>> => {
+    if (!connectedRef.current) {
+      const presence: Presence = choice === "reset" ? "available" : choice;
+      const res = await demo(500, { presence });
+      if (res.ok) setState((s) => ({ ...s, myPresence: presence }));
+      return res;
+    }
+    const res = await request<{ presence: Presence | null }>("POST", "/api/me/status", { presence: choice });
+    if (res.ok) setState((s) => ({ ...s, myPresence: res.presence ?? null }));
+    return res;
+  };
+  /** Message de statut (vide : l'efface), vérifié dans Teams. */
+  const setStatusMessage = async (text: string): Promise<Result<{ message: string }>> => {
+    if (!connectedRef.current) {
+      const res = await demo(500, { message: text.replace(/\s+/g, " ").trim() });
+      if (res.ok) demoStatusMessage = res.message;
+      return res;
+    }
+    return request<{ message: string }>("POST", "/api/me/status-message", { text });
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
@@ -870,6 +952,17 @@ export function useTrame() {
     );
     return res.ok ? { ...res, top: Boolean(res.top) } : res;
   };
+  /** Quelqu'un écrit, ton dernier message est vu : ce que montre la liste que le moteur
+   *  interroge déjà (rien n'est ouvert dans Teams). Démo : rien à signaler. */
+  const threadActivity = async (threadId: string): Promise<Result<ThreadActivity>> => {
+    if (!connectedRef.current) return demoRef.current ? { ok: true, typing: false, typingText: null, seen: null } : { ok: false, error: OFFLINE };
+    const res = await request<{ typing?: boolean; typing_text?: string | null; seen?: boolean | null }>(
+      "GET",
+      `/api/threads/${encodeURIComponent(threadId)}/activity`
+    );
+    if (!res.ok) return res;
+    return { ok: true, typing: Boolean(res.typing), typingText: res.typing_text || null, seen: typeof res.seen === "boolean" ? res.seen : null };
+  };
   /** Recherche dans les messages déjà lus par le moteur (rien n'est relu dans Teams). */
   const searchMessages = async (q: string): Promise<Result<{ results: MessageHit[]; scope: SearchScope }>> => {
     if (!connectedRef.current) {
@@ -936,7 +1029,21 @@ export function useTrame() {
       const text = target
         ? `Bien vu pour « ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} » : je m'en occupe et je te dis.`
         : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
-      return demo(1500, { text });
+      const who = conversationName(threadId) ?? "ton interlocuteur";
+      return demoReflect(
+        {
+          action: "suggest",
+          threadId,
+          conversation: conversationName(threadId),
+          before: ["Lecture du fil (15 derniers messages au plus)", "Contexte rassemblé : fil (3 messages), entourage (1 fiche), GitHub (non utilisé pour une proposition)"],
+          thinking: target
+            ? `${who} attend une réponse à un message précis, pas au dernier du fil. Je le cite et je réponds sur ce point seulement. Ton direct, tutoiement comme dans le fil, une phrase et un engagement.`
+            : `${who} demande une relecture de la PR #214 avant ce soir. Le fil montre que c'est attendu aujourd'hui : je m'engage sur un créneau précis plutôt qu'un « je regarde ». Ton direct, tutoiement, une phrase.`,
+          after: `Réponse reçue et nettoyée (${text.length} caractères)`,
+          result: text,
+        },
+        { text }
+      );
     }
     return request<{ text: string }>("POST", `/api/threads/${encodeURIComponent(threadId)}/suggest`, target ? { message: messageRef(target) } : undefined);
   };
@@ -945,7 +1052,20 @@ export function useTrame() {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       const who = stateRef.current.watchlist.find((w) => w.threadId === threadId)?.displayName ?? "Quelqu'un";
-      return demo(1200, { check: demoCheck(threadId, who, text) });
+      const check = demoCheck(threadId, who, text);
+      const bad = check.claims.filter((c) => c.verdict === "contredit").length;
+      return demoReflect(
+        {
+          action: "check",
+          threadId,
+          conversation: conversationName(threadId),
+          before: ["Lecture du fil (30 derniers messages au plus)", "Contexte rassemblé : fil (3 messages), entourage (1 fiche), GitHub (rien à lire)"],
+          thinking: `Je relève les numéros, heures et jours cités dans le message, puis je cherche qui les a donnés dans le fil. ${who} a parlé de la PR #214 « avant ce soir » à 10:02 : c'est la source à comparer. Une valeur différente est une contradiction, une heure que personne n'a donnée reste non vérifiable.`,
+          after: `Réponse reçue et validée : ${check.claims.length} affirmation(s) exploitable(s)`,
+          result: check.claims.length ? `${check.claims.length} affirmation(s) relevée(s), ${bad} contredite(s)` : "Rien à signaler",
+        },
+        { check }
+      );
     }
     const res = await request<{ check: any }>("POST", `/api/threads/${encodeURIComponent(threadId)}/check`, {
       text,
@@ -954,12 +1074,24 @@ export function useTrame() {
     return res.ok ? { ok: true, check: mapCheck(res.check) } : res;
   };
   /** Orthographe, grammaire et typographie du message en cours, par le cerveau choisi. N'envoie rien. */
-  const correctText = async (text: string): Promise<Result<{ text: string; changed: boolean }>> => {
+  const correctText = async (text: string, threadId: string | null = null): Promise<Result<{ text: string; changed: boolean }>> => {
     if (!connectedRef.current) {
       const fixed = demoCorrect(text);
-      return demo(900, { text: fixed, changed: fixed !== text.trim() });
+      const changed = fixed !== text.trim();
+      return demoReflect(
+        {
+          action: "correct",
+          threadId,
+          conversation: conversationName(threadId),
+          before: [`Message à corriger : ${text.length} caractères (ni le fil ni l'entourage ne sont lus)`],
+          thinking: "Je relis l'orthographe, les accords et la typographie française : espaces insécables, apostrophes, guillemets. Je garde le ton, les mentions, les liens et les emoji tels quels, je ne réécris aucune phrase.",
+          after: changed ? "Réponse reçue et validée : liens, mentions et code intacts" : "Réponse reçue : rien à corriger",
+          result: fixed,
+        },
+        { text: fixed, changed }
+      );
     }
-    return request<{ text: string; changed: boolean }>("POST", "/api/correct", { text });
+    return request<{ text: string; changed: boolean }>("POST", "/api/correct", { text, thread_id: threadId });
   };
   /** Réaction en un clic sur un message précis. Réussie seulement si Teams l'affiche. */
   const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction): Promise<Result> => {
@@ -1193,6 +1325,9 @@ export function useTrame() {
     everConnected,
     demoMode,
     setPaused,
+    getMyStatus,
+    setMyStatus,
+    setStatusMessage,
     sendDraft,
     composeDraft,
     removeDraft,
@@ -1218,6 +1353,7 @@ export function useTrame() {
     getSoulTemplate,
     factoryReset,
     threadMessages,
+    threadActivity,
     searchMessages,
     searchTeams,
     reactInThread,
@@ -1226,6 +1362,8 @@ export function useTrame() {
     suggestInThread,
     checkInThread,
     correctText,
+    reflections,
+    cancelReflection,
     showInTeams,
     markRead,
     diagnoseTeams,
