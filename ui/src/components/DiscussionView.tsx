@@ -897,7 +897,8 @@ export function DiscussionView({
               }}
               onKeyDown={(e) => {
                 if (mentioning && suggestions.length && mentionKey(e)) return;
-                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                // Entrée envoie, Maj+Entrée va à la ligne (pas pendant une saisie IME).
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   send();
                 } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && showGhost) {
@@ -986,8 +987,9 @@ export function DiscussionView({
             <IconAction label={attachHint} disabled={!canAttach || busy === "send"} onClick={() => picker.current?.click()}>
               <Paperclip className="size-4" />
             </IconAction>
-            <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
-              <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd> pour envoyer
+            <span className="hidden items-center gap-1 whitespace-nowrap text-xs text-muted-foreground sm:flex" title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne">
+              <Kbd>Entrée</Kbd> envoyer
+              <span className="hidden items-center gap-1 xl:flex">· <Kbd>Maj</Kbd>+<Kbd>Entrée</Kbd> à la ligne</span>
             </span>
             <div className="ml-auto flex gap-2">
               {draft && (
