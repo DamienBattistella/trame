@@ -336,6 +336,8 @@ class WebBridgeDriver(TeamsDriver):
         # Going back in the history scrolls Teams up until enough messages were seen.
         res = self._rpc("read", last=last_n, timeout=30) or {}
         raw, top = res.get("messages") or [], bool(res.get("top"))
+        # A meeting chat: the page gives the meeting's join link, checked before keeping it.
+        self._note_meeting(thread_id, res.get("meeting"))
         msgs = []
         for m in raw:
             text = (m.get("text") or "").strip()

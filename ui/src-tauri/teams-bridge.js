@@ -551,6 +551,33 @@
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
+  // --- Réunion de la conversation ouverte (lecture seule) ---
+  // Une conversation de réunion porte, dans son en-tête, un bouton « Rejoindre » sans lien :
+  // le lien de la réunion n'est que dans les données de la conversation que Teams donne aux
+  // composants de cet en-tête (chat.meetingInformation.meetingJoinUrl), et « en cours » dans
+  // isLive / chat.activeCall. Rien n'est cliqué. Pas de repli sur un lien collé dans le fil :
+  // dans un groupe, il mènerait à une autre réunion que celle de la conversation.
+  const MEETING_FROM = ['[data-tid="chat-join-button"]', '[data-tid="entity-header-toolbar"]', '[data-tid="chat-meeting-details"]'];
+  const MEETUP = /^https:\/\/teams\.microsoft\.com\/l\/meetup-join\//;
+  const fiberOf = (el) => {
+    const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
+    return key ? el[key] : null;
+  };
+  const meetingInfo = () => {
+    for (const sel of MEETING_FROM) {
+      const el = document.querySelector(sel);
+      for (let f = el && fiberOf(el), i = 0; f && i < 40; f = f.return, i++) {
+        const props = f.memoizedProps;
+        const chat = props && typeof props === "object" ? props.chat : null;
+        if (!chat || typeof chat !== "object" || !("meetingInformation" in chat)) continue;
+        const url = chat.meetingInformation?.meetingJoinUrl;
+        if (typeof url !== "string" || !MEETUP.test(url)) return null;
+        return { url, live: props.isLive === true || Boolean(chat.activeCall) };
+      }
+    }
+    return null;
+  };
+
   // --- Pièces jointes reçues (lecture seule) ---
   // Fichier : une carte de « file-attachment-grid », nommée par son aria-label ; son titre
   // porte « nom + lien » (SharePoint / OneDrive). Trame n'en lit que le nom et le lien.
@@ -1331,7 +1358,7 @@
       }
       const shown = out.slice(-last);
       await thumbnails(shown);
-      return { messages: shown.map(({ key, ...m }) => m), top };
+      return { messages: shown.map(({ key, ...m }) => m), top, meeting: meetingInfo() };
     },
     type: async ({ name, text, send, quote, mentions, files }) => {
       if (mentions && mentions.length) {

@@ -17,13 +17,14 @@ import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { ThreadActivity } from "@/components/ThreadActivity";
 import { OutboxItems } from "@/components/OutboxItems";
+import { JoinMeeting } from "@/components/JoinMeeting";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
-import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
+import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsShort, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -268,6 +269,8 @@ export function DiscussionView({
   autoReflection?: boolean;
 }) {
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
+  // Conversation de réunion : son lien, pour « Rejoindre dans Teams » (null sinon).
+  const [meeting, setMeeting] = useState<MeetingLink | null>(null);
   const [error, setError] = useState<string | null>(null);
   // La réponse proposée n'entre pas d'office dans la zone de saisie : elle s'y montre
   // en texte fantôme tant que la zone est vide, et Tab (ou le badge) l'y fait entrer.
@@ -327,6 +330,7 @@ export function DiscussionView({
       return false;
     }
     setMessages(res.messages);
+    setMeeting(res.meeting);
     if (res.top) setEdge("start");
     return true;
   };
@@ -350,6 +354,7 @@ export function DiscussionView({
     // Rien de plus ancien revenu : Teams n'en charge pas davantage dans le temps imparti.
     const gained = res.messages.length > (messages?.length ?? 0);
     setMessages(res.messages);
+    setMeeting(res.meeting);
     setEdge(res.top ? "start" : !gained || want.current >= MAX ? "limit" : null);
   };
 
@@ -363,6 +368,7 @@ export function DiscussionView({
 
   useEffect(() => {
     setMessages(null);
+    setMeeting(null);
     setFiles([]);
     setText("");
     setGhost(draft?.proposal ?? "");
@@ -705,9 +711,10 @@ export function DiscussionView({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold">{c.displayName}</span>
           <span className="truncate text-xs text-muted-foreground">
-            {[KIND[c.surface], c.presence && PRESENCE[c.presence]?.label, draft?.senderLabel].filter(Boolean).join(" · ")}
+            {[meeting ? (meeting.live ? "Réunion en cours" : "Conversation de réunion") : KIND[c.surface], c.presence && PRESENCE[c.presence]?.label, draft?.senderLabel].filter(Boolean).join(" · ")}
           </span>
         </div>
+        <JoinMeeting meeting={meeting} />
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Switch
