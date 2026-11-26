@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional, Sequence
 import meeting as meetingmod
 from models import IncomingMessage, MessageRef, WatchEntity
@@ -241,9 +242,11 @@ class TeamsDriver(ABC):
         Raises with the reason when the driver cannot tell."""
         raise NotSupported(self.status_unsupported)
 
-    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
         """Pick choice (presence.CHOICES) in Teams' status menu, for duration
-        (presence.DURATIONS: Teams puts the status back afterwards) or until changed.
+        (presence.DURATIONS: Teams puts the status back afterwards), until a local date
+        and time (« Personnalisé », checked by presence.parse_until), or until changed.
         Returns the status Teams shows afterwards, checked against the choice by the
         caller. Raises with the reason when the menu could not be used; menus are closed
         in any case."""
