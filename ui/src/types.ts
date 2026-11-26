@@ -129,14 +129,12 @@ export interface Brief {
 }
 
 /** Le petit jeu de réactions de Teams. */
-export type Reaction = "like" | "heart" | "laugh" | "surprised" | "sad" | "angry";
+export type Reaction = "like" | "heart" | "laugh" | "surprised";
 export const REACTIONS: { key: Reaction; emoji: string; label: string }[] = [
   { key: "like", emoji: "👍", label: "J'aime" },
   { key: "heart", emoji: "❤️", label: "Cœur" },
-  { key: "laugh", emoji: "😆", label: "Rire" },
+  { key: "laugh", emoji: "😆", label: "Rigole" },
   { key: "surprised", emoji: "😮", label: "Surpris" },
-  { key: "sad", emoji: "😢", label: "Triste" },
-  { key: "angry", emoji: "😡", label: "En colère" },
 ];
 
 export interface ThreadMessage {

@@ -248,25 +248,28 @@
     if (c) return c.id.slice("content-".length);
     return el.getAttribute("data-mid") || el.querySelector("[data-mid]")?.getAttribute("data-mid") || "";
   };
-  // Le petit jeu de réactions de Teams, avec les libellés possibles (anglais, français).
+  // Les réactions en un clic de la barre de survol de Teams (data-tid message-actions-<clé>),
+  // avec leurs libellés (anglais, français) pour les pastilles posées sous les messages :
+  // « 1 réaction J’aime. », « 2 réactions Rigole ».
   const REACTION_NAMES = {
-    like: ["like", "j'aime", "j’aime", "jaime", "pouce"],
-    heart: ["heart", "love", "coeur", "adore"],
-    laugh: ["laugh", "rire", "haha", "drole"],
-    surprised: ["surprised", "surpris", "wow"],
-    sad: ["sad", "triste"],
-    angry: ["angry", "en colere", "colere", "fache"],
+    like: ["like", "j'aime", "j’aime", "jaime"],
+    heart: ["heart", "coeur", "cœur"],
+    laugh: ["laugh", "rigole", "rire"],
+    surprised: ["surprised", "surpris"],
   };
+  // Mots du libellé, ponctuation retirée : « J’aime. » donne « j’aime ».
+  const words = (text) => ` ${norm(text).replace(/[^\p{L}\p{N}'’]+/gu, " ").trim()} `;
   const reactionOf = (text) => {
-    const n = norm(text);
-    for (const [key, names] of Object.entries(REACTION_NAMES)) if (names.some((x) => n === x || n.startsWith(x + " ") || n.includes(" " + x + " ") || n.endsWith(" " + x))) return key;
+    const w = words(text);
+    for (const [key, names] of Object.entries(REACTION_NAMES)) if (names.some((x) => w.includes(` ${x} `))) return key;
     return null;
   };
-  // Réactions que l'utilisateur a déjà mises sur ce message : pastilles enfoncées ou
-  // dont le libellé dit « vous » / « you ».
+  // Réactions que l'utilisateur a déjà mises sur ce message : pastilles enfoncées
+  // (aria-pressed), ou dont le libellé dit « vous » / « you ».
   const myReactions = (el) => {
     const out = new Set();
-    for (const b of el.querySelectorAll('button, [role="button"]')) {
+    const pills = el.querySelectorAll('[data-tid="diverse-reaction-pill-button"], button, [role="button"]');
+    for (const b of pills) {
       const l = label(b) || b.getAttribute("title") || "";
       const key = reactionOf(l);
       if (!key || !/\d/.test(l + b.innerText)) continue;
@@ -301,15 +304,22 @@
       el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window, button: 0, isPrimary: true }));
     }
   };
+  const fire = (node, types) => {
+    for (const type of types) {
+      const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+      node.dispatchEvent(new Ctor(type, { bubbles: type.endsWith("over") || type.endsWith("out") || type === "mousemove", view: window }));
+    }
+  };
+  // Une barre d'actions ouverte reste là tant que la souris n'a pas « quitté » son message :
+  // on quitte tous les messages avant d'en survoler un autre.
+  const unhover = () => {
+    for (const b of document.querySelectorAll('[data-tid="chat-pane-message"]')) fire(b, ["pointerout", "pointerleave", "mouseout", "mouseleave"]);
+  };
   // Teams n'affiche la barre d'actions d'un message qu'au survol.
   const hover = (el) => {
+    unhover();
     const target = el.querySelector('[data-tid="chat-pane-message"]') || el;
-    for (const node of [el, target]) {
-      for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"]) {
-        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
-        node.dispatchEvent(new Ctor(type, { bubbles: type.endsWith("over") || type === "mousemove", view: window }));
-      }
-    }
+    for (const node of [el, target]) fire(node, ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"]);
   };
   const ACTIONABLE = 'button, [role="button"], [role="menuitem"]';
   const actions = () => Array.from(document.querySelectorAll(ACTIONABLE)).filter(visible);
@@ -318,6 +328,24 @@
     const l = label(b) || b.getAttribute("title") || "";
     return l && !/\d/.test(l) && match(l);
   });
+  // La barre d'actions de Teams est dessinée hors du message, dans un calque à part : son
+  // id commence par celui du message (« <id>-popover-surface »). Jamais la barre d'un autre.
+  const barFor = (el) => {
+    const mid = msgId(el);
+    if (!mid) return null;
+    return Array.from(document.querySelectorAll('[data-tid="message-actions-container"]'))
+      .find((b) => visible(b) && (b.id || "").startsWith(`${mid}-`)) || null;
+  };
+  // Un bouton de la barre de ce message : par son data-tid, sinon par son libellé.
+  const barAction = async (el, tid, match) => {
+    let bar = null;
+    if (!(await waitFor(() => (bar = barFor(el)), 1500))) return null;
+    return bar.querySelector(`[data-tid="${tid}"]`) ||
+      Array.from(bar.querySelectorAll(ACTIONABLE)).find((b) => {
+        const l = label(b) || b.getAttribute("title") || "";
+        return l && !/\d/.test(l) && match(l);
+      }) || null;
+  };
   const lookup = async (m) => {
     const found = findMessage(m);
     if (!found) return null;
@@ -326,29 +354,31 @@
     await sleep(250);
     return found;
   };
-  const QUOTE_SEL = '[data-tid*="quote" i], [data-tid*="reply" i], blockquote, [class*="quote" i]';
+  const QUOTE_SEL = '[data-tid="quoted-reply-card"], [data-tid*="quote" i], [data-tid*="reply" i], blockquote, [class*="quote" i]';
   const composeArea = (box) =>
     box.closest('[data-tid="message-compose"], [data-tid*="compose" i], form') || box.parentElement?.parentElement || box;
+  // La citation (« quoted-reply-card ») est dessinée dans la zone de saisie elle-même.
   const quoted = (box, text) => {
     const key = norm(text).slice(0, 24);
-    return Array.from(composeArea(box).querySelectorAll(QUOTE_SEL)).some((q) => norm(q.innerText).includes(key));
+    const cards = [...box.querySelectorAll(QUOTE_SEL), ...composeArea(box).querySelectorAll(QUOTE_SEL)];
+    return cards.some((q) => norm(q.innerText).includes(key));
   };
-  // « Répondre » sur le message : dans la barre d'actions, sinon dans « Plus d'options ».
+  // Retire une citation laissée dans la zone de saisie (bouton « Supprimer la référence »).
+  const unquote = (box) => {
+    for (const root of [box, composeArea(box)]) {
+      const close = root.querySelector('[data-tid="close-quoted-reply"]');
+      if (close) return void close.click();
+    }
+  };
+  // « Répondre avec une citation », dans la barre d'actions de ce message.
   const quoteMessage = async (target, box) => {
     const found = await lookup(target);
     if (!found) return "message cité introuvable ou différent de celui choisi";
     const isReply = (l) => /^(reply|repondre|quote|citer)\b/.test(norm(l));
-    let btn = findAction(isReply);
-    if (!btn) {
-      const more = findAction((l) => /^(more options|plus d.options|autres options|more actions|plus d.actions)/.test(norm(l)));
-      if (more) {
-        press(more);
-        await waitFor(() => Boolean(findAction(isReply)), 1500);
-        btn = findAction(isReply);
-      }
-    }
+    const btn = await barAction(found.el, "message-actions-quoted-reply", isReply);
     if (!btn) return "action « Répondre » introuvable sur ce message";
     press(btn);
+    unhover();
     if (!(await waitFor(() => quoted(box, target.text), 2500))) return "citation du message non visible dans la zone de saisie";
     return null;
   };
@@ -598,6 +628,7 @@
       if (!box) return { ok: false, error: "zone de saisie introuvable" };
       if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
       const fail = (error) => {
+        if (quote) unquote(box);
         clear(box);
         return { ok: false, error };
       };
@@ -635,11 +666,12 @@
       if (!found) return { ok: false, error: "message introuvable ou différent de celui choisi" };
       // Déjà là : cliquer à nouveau l'enlèverait.
       if (myReactions(found.el).includes(reaction)) return { ok: true, already: true };
-      const btn = findAction((l) => reactionOf(l) === reaction);
+      const btn = await barAction(found.el, `message-actions-${reaction}`, (l) => reactionOf(l) === reaction);
       if (!btn) return { ok: false, error: "bouton de réaction introuvable sur ce message" };
       if (!isOpen(name)) return { ok: false, error: "conversation changée avant la réaction" };
       if (late()) return { ok: false, error: "délai dépassé avant la réaction" };
       press(btn);
+      unhover();
       // Posée seulement si Teams l'affiche sous le message.
       const shown = await waitFor(() => {
         const again = findMessage(message);

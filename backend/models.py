@@ -40,10 +40,8 @@ REACTIONS: dict[str, str] = {
     "heart": "❤️",
     "laugh": "😆",
     "surprised": "😮",
-    "sad": "😢",
-    "angry": "😡",
 }
-Reaction = Literal["like", "heart", "laugh", "surprised", "sad", "angry"]
+Reaction = Literal["like", "heart", "laugh", "surprised"]
 
 
 class IncomingMessage(BaseModel):
