@@ -36,6 +36,8 @@ import {
   Presence,
   StatusChoice, StatusDuration,
   ReflectionRun,
+  Meeting,
+  SavedTranscript,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -620,6 +622,21 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
   }
 }
 
+// Mode démo : réunions fictives, rien n'est lu ni écrit.
+const DEMO_TRANSCRIPTS_DIR = String.raw`C:\Users\vous\Documents\Trame\Transcriptions`;
+const DEMO_MEETINGS: Meeting[] = [
+  { meetingId: "demo-1", threadId: "19:meeting_demo1@thread.v2", mid: "1", title: "Point interop HL7", when: "mardi 24 novembre 2026 10:00 - 10:30",
+    date: "2026-11-24", chat: "Point interop HL7", organizer: "", transcript: true },
+  { meetingId: "demo-2", threadId: "19:meeting_demo2@thread.v2", mid: "2", title: "Rétro sprint 42", when: "lundi 23 novembre 2026 16:00 - 17:00",
+    date: "2026-11-23", chat: "Rétro sprint 42", organizer: "", transcript: true },
+  { meetingId: "demo-3", threadId: "19:meeting_demo3@thread.v2", mid: "3", title: "Café d'équipe", when: "vendredi 20 novembre 2026 09:00 - 09:15",
+    date: "2026-11-20", chat: "Café d'équipe", organizer: "", transcript: false },
+];
+const mapMeeting = (m: any): Meeting => ({
+  meetingId: m.meeting_id || `${m.thread_id}#${m.mid}`, threadId: m.thread_id, mid: String(m.mid), title: m.title || m.chat || "Réunion",
+  when: m.when || "", date: m.date ?? null, chat: m.chat || "", organizer: m.organizer || "", transcript: Boolean(m.transcript),
+});
+
 /** Seuls le nom, le type et le contenu partent : jamais un chemin sur le disque. */
 const wireFiles = (files: PendingFile[]) => files.map(({ name, type, data }) => ({ name, type, data }));
 
@@ -1180,6 +1197,32 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, results: res.results.map(mapHit), scope: res.scope };
   };
+  /** Réunions terminées des conversations de réunion récentes (Trame les ouvre dans Teams, en lecture). */
+  const listMeetings = async (): Promise<Result<{ meetings: Meeting[]; directory: string }>> => {
+    if (!connectedRef.current) return demo(1200, { meetings: DEMO_MEETINGS.map((m) => ({ ...m })), directory: DEMO_TRANSCRIPTS_DIR });
+    const res = await request<{ meetings: any[]; directory: string }>("GET", "/api/meetings");
+    return res.ok ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory } : res;
+  };
+  /** Relit la transcription d'une réunion dans Teams et l'enregistre en .vtt sur le poste. */
+  const saveTranscript = async (m: Meeting, directory?: string): Promise<Result<SavedTranscript>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(2200);
+      if (!m.transcript) return { ok: false, error: "Pas de transcription pour cette réunion.", status: 404 };
+      const dir = directory || DEMO_TRANSCRIPTS_DIR;
+      const name = `${m.date ? m.date + " " : ""}${m.title.replace(/[<>:"/\\|?*]/g, " ").replace(/\s+/g, " ").trim()}.vtt`;
+      return { ok: true, path: `${dir}\\${name}`, name, directory: dir, cues: 4, speakers: ["Lucas Bernard", "Sofia Marino"], complete: true, organizer: "Sofia Marino" };
+    }
+    const res = await request<any>("POST", "/api/meetings/transcript", { thread_id: m.threadId, mid: m.mid, directory: directory || null });
+    if (!res.ok) return res;
+    return { ok: true, path: res.path, name: res.name, directory: res.directory, cues: res.cues, speakers: res.speakers || [],
+      complete: Boolean(res.complete), organizer: res.organizer || "" };
+  };
+  /** Ouvre le dossier des transcriptions dans l'Explorateur (créé s'il manque). */
+  const openTranscriptsFolder = async (directory?: string): Promise<Result<{ directory: string }>> => {
+    if (!connectedRef.current) return demo(300, { directory: directory || DEMO_TRANSCRIPTS_DIR });
+    return request("POST", "/api/meetings/open-folder", { directory: directory || null });
+  };
   /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
   const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
     if (!connectedRef.current) {
@@ -1636,6 +1679,9 @@ export function useTrame() {
     githubLink,
     searchMessages,
     searchTeams,
+    listMeetings,
+    saveTranscript,
+    openTranscriptsFolder,
     reactInThread,
     deleteInThread,
     sendInThread,

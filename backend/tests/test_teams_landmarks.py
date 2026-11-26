@@ -51,6 +51,8 @@ NOT_WATCHED = {
     "chat-join-button": "seulement dans une conversation de réunion",
     "entity-header-toolbar": "lu pour le lien de réunion, absent ou présent selon la conversation",
     "chat-meeting-details": "seulement dans une conversation de réunion",
+    # Transcription d'une réunion : retour à l'onglet Conversation après l'onglet Transcript.
+    "tab-item-com.microsoft.chattabs.chat": "onglets d'une conversation de réunion seulement, retour sans effet sur le résultat",
 }
 
 

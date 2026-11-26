@@ -32,6 +32,7 @@ import { TeamsCheckBanner } from "@/components/TeamsCheck";
 import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Inbox } from "@/components/Inbox";
+import { Meetings } from "@/components/Meetings";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -69,7 +70,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
   );
 }
 
-export type PanelTab = "inbox" | "logs" | "settings";
+export type PanelTab = "inbox" | "meetings" | "logs" | "settings";
 
 export function Panel({
   trame,
@@ -135,6 +136,9 @@ export function Panel({
 
         <TabsContent value="inbox" className="min-h-0 flex-1 overflow-hidden">
           <Inbox trame={trame} onBrief={setBriefFor} />
+        </TabsContent>
+        <TabsContent value="meetings" className="flex-1 overflow-auto">
+          <Meetings trame={trame} />
         </TabsContent>
         <TabsContent value="logs" className="flex-1 overflow-auto">
           <ActivityLog logs={state.logs} trame={trame} />

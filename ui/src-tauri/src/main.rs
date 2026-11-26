@@ -304,7 +304,9 @@ async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
         .visible(false)
         .data_directory(profile)
         .additional_browser_args(TEAMS_ARGS)
-        .initialization_script(TEAMS_BRIDGE)
+        // Toutes les frames : la transcription d'une réunion s'affiche dans une iframe
+        // SharePoint, où le même script ne fait que la relire (voir teams-bridge.js).
+        .initialization_script_for_all_frames(TEAMS_BRIDGE)
         .build()
         .map_err(|e| e.to_string())?;
     if visible {
