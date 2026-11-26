@@ -117,6 +117,22 @@ def _fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn").casefold()
 
 
+# Older messages, only reachable through Teams' own search (dates as Teams shows them).
+_OLDER: dict[str, list[tuple[str, str, str]]] = {
+    "19:aa11@thread.v2": [
+        ("12/10 09:41", "Sofia Marino", "On avait déjà eu ce souci de cache sur le runner Windows en septembre."),
+        ("12/10 09:45", "Damien Battistella", "Oui, l'épinglage de l'image avait été repoussé au trimestre suivant."),
+    ],
+    "19:bb22@thread.v2": [
+        ("03/09 16:20", "Lucas Bernard", "Pour le premier jet du mapping HL7, je pars sur une table de correspondance UCUM ?"),
+        ("03/09 16:24", "Damien Battistella", "Oui, garde le code local quand il n'y a pas de correspondance."),
+    ],
+    "19:dd44@thread.v2": [
+        ("28/08 11:02", "Marc Lefèvre", "Incident clos : la latence du connecteur HL7 venait du pool MLLP trop petit."),
+    ],
+}
+
+
 class MockTeamsDriver(TeamsDriver):
     PRESENCE_STEP = 120.0
     can_start_chat = True
@@ -189,6 +205,22 @@ class MockTeamsDriver(TeamsDriver):
             return []
         hits = [n for n in _TEAMS_PEOPLE if all(any(t.startswith(w) for t in _fold(n).split()) for w in words)]
         return hits[:limit]
+
+    def search_messages(self, query: str, limit: int = 25) -> list[dict]:
+        """Like Teams' search: every conversation, older messages included."""
+        q = _fold(" ".join((query or "").split()))
+        if len(q) < 2:
+            return []
+        names = {c.thread_id: c.display_name for c in self._convs}
+        out = []
+        for thread_id, history in [*_OLDER.items(), *_HISTORY.items()]:
+            for at, sender, text in reversed(history):
+                if q in _fold(text):
+                    mine = sender == "Damien Battistella"
+                    dm = next((c.surface == Surface.dm for c in self._convs if c.thread_id == thread_id), False)
+                    out.append({"conversation": names[thread_id] if not (dm and mine) else "", "sender": sender,
+                                "mine": mine, "at": at, "text": text})
+        return out[:limit]
 
     def start_chat(self, name: str) -> Optional[WatchEntity]:
         name = " ".join((name or "").split())
