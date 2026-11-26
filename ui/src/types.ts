@@ -43,10 +43,30 @@ export interface Notice {
   surface: Surface;
 }
 
+export type LogLevel = "info" | "warn" | "sent" | "draft";
+
 export interface LogItem {
   at: string;
-  level: "info" | "warn" | "sent" | "draft";
+  /** Date et heure ISO locales (vide pour une ligne d'avant ce champ). */
+  ts?: string;
+  level: LogLevel;
   text: string;
+}
+
+/** Recherche et filtres du panneau Activité. Aucun niveau choisi = tous. */
+export interface LogFilters {
+  q: string;
+  levels: LogLevel[];
+  /** Date et heure ISO locales, sans fuseau. */
+  since?: string;
+}
+
+export interface LogPage {
+  items: LogItem[];
+  /** Lignes qui correspondent en tout, au-delà de cette page. */
+  total: number;
+  /** Curseur de la page suivante (plus ancienne), null à la fin. */
+  next: string | null;
 }
 
 export type Brain = "claude" | "copilot";

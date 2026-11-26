@@ -74,6 +74,8 @@ class Notice(BaseModel):
 
 class LogItem(BaseModel):
     at: str
+    # ISO date and time: `at` alone is the time of day, too short for a journal kept across days.
+    ts: str = ""
     level: Literal["info", "warn", "sent", "draft"]
     text: str
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+import journal as journalmod
 import telemetry
 from watcher import ActionError, Watcher
 
@@ -40,10 +41,12 @@ TOOLS: list[dict] = [
     _tool("get_status", "État de Trame",
           "Version, cerveau, pause, partage d'écran, connexion à Teams, nombre de discussions suivies et de réponses à relire."),
     _tool("get_logs", "Journal de Trame",
-          "Événements récents. full=true : export complet (journal, diagnostic Teams, fin de backend.log et "
+          "Événements récents, conservés d'un démarrage à l'autre. full=true : export complet (journal, diagnostic Teams, fin de backend.log et "
           "d'OpenTelemetry). Le texte des messages reste masqué « … » sauf réglage contraire.",
           {"full": {"type": "boolean", "default": False},
            "level": {"type": "string", "enum": ["all", "warn", "sent", "draft", "info"], "default": "all"},
+           "query": {"type": "string", "description": "Texte cherché, sans tenir compte des accents ni de la casse."},
+           "since": {"type": "string", "description": "Date et heure ISO : seulement les événements depuis."},
            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}}),
     _tool("get_telemetry", "Télémétrie OpenTelemetry",
           "Derniers spans et logs OpenTelemetry (trame.message, brain.draft, teams.read, teams.type…) du fichier local otel.jsonl.",
@@ -190,8 +193,9 @@ def make_router(watcher: Watcher) -> APIRouter:
         if args.get("full"):
             return {"text": watcher.export_logs(tail_lines=limit * 2, otel_records=limit)}
         level = args.get("level", "all")
-        items = [l for l in watcher.state.logs if level == "all" or l.level == level][:limit]
-        return [{"at": l.at, "level": l.level, "text": telemetry.redact(l.text)} for l in items]
+        res = watcher.journal.query(str(args.get("query") or ""), None if level == "all" else [level],
+                                    journalmod.local_iso(args.get("since")), limit=max(1, min(500, limit)))
+        return [{"at": l.ts or l.at, "level": l.level, "text": telemetry.redact(l.text)} for l in res["items"]]
 
     def tool_telemetry(args: dict) -> Any:
         limit = int(args.get("limit", 100))

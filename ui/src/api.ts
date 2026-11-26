@@ -12,7 +12,9 @@ import {
   PeopleSummary,
   Person,
   PersonSuggestion,
+  LogFilters,
   LogItem,
+  LogPage,
   MessageHit,
   Mode,
   Notice,
@@ -25,6 +27,7 @@ import {
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive } from "@/lib/textSearch";
+import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 
 const HTTP = "http://127.0.0.1:8731";
 const WS = "ws://127.0.0.1:8731/ws";
@@ -835,14 +838,29 @@ export function useTrame() {
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/show`);
   };
 
-  /** Journal, fin du backend.log et dernières traces OpenTelemetry, en un seul texte. */
-  const exportLogs = async (): Promise<Result<{ filename: string; text: string }>> => {
+  /** Journal, fin du backend.log et dernières traces OpenTelemetry, en un seul texte ;
+   *  avec des filtres, seulement les lignes d'Activité qu'ils gardent. */
+  const exportLogs = async (filters?: LogFilters): Promise<Result<{ filename: string; text: string }>> => {
+    const filtered = !!filters && isFiltered(filters);
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
-      const lines = stateRef.current.logs.map((l) => `${l.at}  ${l.level.padEnd(5)}  ${l.text}`);
-      return { ok: true, filename: "trame-journaux-demo.txt", text: ["# Trame : journaux (démo)", "", "## Journal", ...lines].join("\n") + "\n" };
+      const logs = filtered ? filterLogs(stateRef.current.logs, filters!) : stateRef.current.logs;
+      const lines = logs.map((l) => `${l.at}  ${l.level.padEnd(5)}  ${l.text}`);
+      const title = filtered ? "# Trame : activité filtrée (démo)" : "# Trame : journaux (démo)";
+      const filename = filtered ? "trame-activite-demo.txt" : "trame-journaux-demo.txt";
+      return { ok: true, filename, text: [title, "", "## Journal", ...lines].join("\n") + "\n" };
     }
-    return request<{ filename: string; text: string }>("GET", "/api/logs/export");
+    return request<{ filename: string; text: string }>("GET", `/api/logs/export${filtered ? logParams(filters!) : ""}`);
+  };
+
+  /** Activité conservée d'un démarrage à l'autre, filtrée, la plus récente d'abord. */
+  const queryLogs = async (filters: LogFilters, before?: string | null, limit = 100): Promise<Result<LogPage>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const all = filterLogs(stateRef.current.logs, filters);
+      return { ok: true, items: all, total: all.length, next: null };
+    }
+    return request<LogPage>("GET", `/api/logs${logParams(filters, { limit: String(limit), ...(before ? { before } : {}) })}`);
   };
 
   /** Teams intégré : état du pont (relais, page prête, titre). */
@@ -1062,6 +1080,7 @@ export function useTrame() {
     diagnoseTeams,
     teamsWebStatus,
     exportLogs,
+    queryLogs,
     previewSoul,
     getPeople,
     listPeople,

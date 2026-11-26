@@ -25,6 +25,7 @@ import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
+import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
 import { ChangelogRow } from "@/components/Changelog";
@@ -35,7 +36,7 @@ import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
 import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
-import { DraftItem, LogItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
+import { DraftItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
 
 
 type OpenBrief = (t: BriefTarget) => void;
@@ -133,7 +134,7 @@ export function Panel({
           <Inbox trame={trame} onBrief={setBriefFor} />
         </TabsContent>
         <TabsContent value="logs" className="flex-1 overflow-auto">
-          <Logs logs={state.logs} trame={trame} />
+          <ActivityLog logs={state.logs} trame={trame} />
         </TabsContent>
         <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
           <SettingsView trame={trame} onRestartSetup={onRestartSetup} onBrief={setBriefFor} />
@@ -213,45 +214,6 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
         )}
       />
       <ConversationSheet key={open?.threadId ?? "none"} trame={trame} conversation={open} onClose={() => setOpen(null)} />
-    </div>
-  );
-}
-
-function Logs({ logs, trame }: { logs: LogItem[]; trame: Trame }) {
-  const dot = { info: "bg-muted-foreground", warn: "bg-warning", sent: "bg-success", draft: "bg-primary" } as const;
-  return (
-    <div className="flex flex-col gap-3 py-5">
-      <div className="flex items-end justify-between gap-3">
-        <SectionLabel>Activité</SectionLabel>
-        <div className="mb-2">
-          <LogExportButtons trame={trame} />
-        </div>
-      </div>
-      <GroupList>
-        <ScrollArea className="h-[58vh]">
-          {logs.length === 0 && (
-            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-              Aucune activité pour l'instant. Chaque message lu, réponse proposée ou envoi apparaîtra ici.
-            </div>
-          )}
-          <AnimatePresence initial={false}>
-            {logs.map((l) => (
-              <motion.div
-                key={`${l.at}-${l.text}`}
-                layout
-                initial={{ opacity: 0, y: -6, backgroundColor: "color-mix(in oklch, var(--primary) 12%, transparent)" }}
-                animate={{ opacity: 1, y: 0, backgroundColor: "rgba(0,0,0,0)" }}
-                transition={{ duration: 0.6 }}
-                className="flex items-center gap-3 px-4 py-3 text-sm"
-              >
-                <span className={cn("size-2 shrink-0 rounded-full", dot[l.level])} />
-                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{l.at}</span>
-                <span className="flex-1">{l.text}</span>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </ScrollArea>
-      </GroupList>
     </div>
   );
 }
