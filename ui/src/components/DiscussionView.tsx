@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -79,6 +79,12 @@ const EMOJI = Object.fromEntries(REACTIONS.map((r) => [r.key, r.emoji])) as Reco
 const refOf = (m: ThreadMessage): MessageRef => ({ id: m.id ?? null, sender: m.sender, text: m.text, at: m.at });
 const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
   Boolean(a) && (a!.id && b.id ? a!.id === b.id : a!.text === b.text && a!.sender === b.sender);
+/** Le message à qui proposer une réponse : une image ou un fichier seul est nommé
+ *  comme le moteur le lit (« [image] », « [fichier joint : nom] »). */
+const proposalRef = (m: ThreadMessage): MessageRef => {
+  const named = [...(m.files ?? []).map((f) => `[fichier joint : ${f.name}]`), ...(m.images ?? []).map(() => "[image]")];
+  return { ...refOf(m), text: m.text.trim() || named.join("\n") };
+};
 const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 /** Citation d'un message, dans le fil ou au-dessus de la zone de saisie (comme une réponse Teams). */
 function Quote({ target, className, children }: { target: MessageRef; className?: string; children?: React.ReactNode }) {
@@ -155,28 +161,34 @@ function CopyButton({ text, separated }: { text: string; separated: boolean }) {
 }
 
 /** Barre de gestes au survol d'un message : le petit jeu de réactions Teams, « Répondre »,
- *  « Copier » (toujours là, il ne passe pas par Teams) et, sur tes messages, « Supprimer ». */
+ *  « Proposer une réponse à ce message » (le cerveau, jamais d'envoi), « Copier » (toujours
+ *  là, il ne passe pas par Teams) et, sur tes messages, « Supprimer ». */
 function MessageActions({
   message,
   canReact,
   canReply,
   canDelete,
+  propose,
   pending,
   onReact,
   onReply,
+  onPropose,
   onDelete,
 }: {
   message: ThreadMessage;
   canReact: boolean;
   canReply: boolean;
   canDelete: boolean;
+  /** « Proposer une réponse à ce message » : null si absent ; `blocked` dit pourquoi il est inactif. */
+  propose: { busy: boolean; blocked: string | null } | null;
   pending: Reaction | null;
   onReact: (r: Reaction) => void;
   onReply: () => void;
+  onPropose: () => void;
   onDelete: () => void;
 }) {
   const canCopy = Boolean(message.text.trim()) && !message.deleted;
-  if (!canReact && !canReply && !canCopy && !canDelete) return null;
+  if (!canReact && !canReply && !propose && !canCopy && !canDelete) return null;
   const mine = message.reactions ?? [];
   return (
     <div
@@ -185,7 +197,7 @@ function MessageActions({
       className={cn(
         "absolute -top-4 z-10 flex items-center gap-0.5 rounded-full border bg-popover p-0.5 shadow-sm transition-opacity",
         message.mine ? "right-2" : "left-2",
-        pending ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+        pending || propose?.busy ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
       )}
     >
       {canReact &&
@@ -225,7 +237,35 @@ function MessageActions({
           <TooltipContent>Répondre à ce message</TooltipContent>
         </Tooltip>
       )}
-      {canCopy && <CopyButton text={message.text} separated={canReact && !canReply} />}
+      {propose && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* aria-disabled plutôt que disabled : l'infobulle reste lisible et dit pourquoi. */}
+            <button
+              type="button"
+              aria-label={message.mine ? "Proposer une relance de ce message" : "Proposer une réponse à ce message"}
+              aria-disabled={Boolean(pending) || Boolean(propose.blocked) || propose.busy}
+              aria-busy={propose.busy}
+              data-testid="propose-on-message"
+              onClick={() => !pending && !propose.blocked && !propose.busy && onPropose()}
+              className={cn(
+                "grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                canReact && !canReply && "ml-0.5 border-l",
+                propose.busy && "text-primary",
+                (propose.blocked || pending) && !propose.busy && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
+              )}
+            >
+              {propose.busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {propose.busy
+              ? "Proposition en cours…"
+              : propose.blocked ?? (message.mine ? "Proposer une relance ou un complément à ce message" : "Proposer une réponse à ce message")}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {canCopy && <CopyButton text={message.text} separated={canReact && !canReply && !propose} />}
       {canDelete && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -297,6 +337,8 @@ export function DiscussionView({
   const [check, setCheck] = useState<{ result: FactCheck; text: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [reacting, setReacting] = useState<{ index: number; reaction: Reaction } | null>(null);
+  // Message dont la proposition est en cours (« Proposer une réponse à ce message »).
+  const [proposingFor, setProposingFor] = useState<MessageRef | null>(null);
   // Suppression d'un de tes messages : à confirmer dans un dialogue, jamais en un clic.
   const [toDelete, setToDelete] = useState<ThreadMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -630,14 +672,33 @@ export function DiscussionView({
     if (autoReflection) onReflection?.(true);
   };
 
-  const suggest = async () => {
+  const suggest = async (target: MessageRef | null = replyTo, mine = false) => {
     setBusy("suggest");
     reflect();
-    const res = await trame.suggestInThread(c.threadId, replyTo);
+    const res = await trame.suggestInThread(c.threadId, target, { mine });
     setBusy("idle");
+    setProposingFor(null);
     if (!res.ok) return fail("Proposition impossible", res.error);
     offer(res.text);
   };
+
+  // « Proposer une réponse à ce message » : la réponse citée est préparée sur ce message
+  // (quand Teams sait citer) et le cerveau rédige pour lui. Rien ne part sans ton envoi.
+  const proposeOn = (m: ThreadMessage) => {
+    if (busy !== "idle") return;
+    if (caps.reply) setReplyTo(refOf(m));
+    setProposingFor(refOf(m));
+    requestAnimationFrame(() => composer.current?.focus());
+    void suggest(proposalRef(m), m.mine);
+  };
+  // Pourquoi « Proposer » est inactif sur un message, null s'il est prêt.
+  const proposeBlocked = !trame.connected && !trame.demoMode
+    ? "Cerveau indisponible : le moteur de Trame est injoignable"
+    : busy === "suggest"
+      ? "Une proposition est déjà en cours"
+      : busy !== "idle"
+        ? "Attends la fin de l'action en cours"
+        : null;
 
   const verify = async () => {
     const body = text.trim();
@@ -822,6 +883,7 @@ export function DiscussionView({
                 const canReply = live && caps.reply;
                 // Seulement tes messages, connus de Teams par leur identifiant.
                 const canDelete = live && caps.delete && m.mine && Boolean(m.id);
+                const canPropose = live && Boolean(m.text.trim() || m.files?.length || m.images?.length);
                 const targeted = sameRef(replyTo, m);
                 const pending = reacting?.index === i ? reacting.reaction : null;
                 return (
@@ -839,9 +901,11 @@ export function DiscussionView({
                       canReact={canReact}
                       canReply={canReply}
                       canDelete={canDelete}
+                      propose={canPropose ? { busy: busy === "suggest" && sameRef(proposingFor, m), blocked: proposeBlocked } : null}
                       pending={pending}
                       onReact={(r) => react(m, i, r)}
                       onReply={() => replyToMessage(m)}
+                      onPropose={() => proposeOn(m)}
                       onDelete={() => setToDelete(m)}
                     />
                     <div
@@ -1219,7 +1283,7 @@ export function DiscussionView({
                       className="rounded-full"
                       aria-label={replyTo ? "Proposer une réponse à ce message" : draft ? "Autre proposition" : "Proposer une réponse"}
                       disabled={busy !== "idle"}
-                      onClick={suggest}
+                      onClick={() => void suggest()}
                     >
                       {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
                       {draft && !replyTo ? "Autre proposition" : "Proposer"}
