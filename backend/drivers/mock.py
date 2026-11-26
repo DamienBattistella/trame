@@ -14,6 +14,16 @@ _SEED = [
     WatchEntity(thread_id="19:ee55@thread.v2", display_name="Chiara Rossi", surface=Surface.dm, watch=False, mode="draft"),
 ]
 
+
+def _say(line: str) -> None:
+    """Console trace of the mock. A Windows console in cp1252 cannot print an emoji
+    (the 🤖 of automatic sends): never let the trace fail the send it describes."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("ascii", "backslashreplace").decode("ascii"))
+
+
 _SCRIPT = [
     ("19:bb22@thread.v2", "Lucas Bernard", "Tu peux relire la PR #214 sur le mapping HL7 ? Je bloque sur le segment OBX.", []),
     ("19:cc33@thread.v2", "Sofia Marino", "@Damien dispo pour un point interop demain 10h ?", ["Damien"]),
@@ -247,7 +257,7 @@ class MockTeamsDriver(TeamsDriver):
             return False
         self.typed.append((thread_id, text, send))
         action = "ENVOYÉ" if send else "SAISI"
-        print(f"[mock] {action} -> {thread_id}: {text[:80]}")
+        _say(f"[mock] {action} -> {thread_id}: {text[:80]}")
         return True
 
     def mark_read(self, thread_id: str) -> bool:
@@ -268,7 +278,7 @@ class MockTeamsDriver(TeamsDriver):
         self.typed.append((thread_id, text, send))
         self.replies.append((thread_id, target.text, text, send))
         action = "RÉPONSE ENVOYÉE" if send else "RÉPONSE SAISIE"
-        print(f"[mock] {action} -> {thread_id} (à « {target.text[:30]} »): {text[:80]}")
+        _say(f"[mock] {action} -> {thread_id} (à « {target.text[:30]} »): {text[:80]}")
         return True
 
     def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],
@@ -288,7 +298,7 @@ class MockTeamsDriver(TeamsDriver):
         mine = self.reactions.setdefault(f"{thread_id}/{mid}", [])
         if reaction not in mine:
             mine.append(reaction)
-        print(f"[mock] RÉACTION {reaction} -> {thread_id}/{mid}")
+        _say(f"[mock] RÉACTION {reaction} -> {thread_id}/{mid}")
         return True
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

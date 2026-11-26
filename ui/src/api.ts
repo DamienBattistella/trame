@@ -137,6 +137,7 @@ function mapSettings(s: any): Settings {
       neverAutoSendIfMessageContains: Array.isArray(f.never_auto_send_if_message_contains)
         ? f.never_auto_send_if_message_contains
         : [],
+      markAutoReplies: f.mark_auto_replies === undefined ? true : Boolean(f.mark_auto_replies),
     },
     brief: {
       enabled: b.enabled === undefined ? true : Boolean(b.enabled),
@@ -314,6 +315,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.safety.countdownSeconds !== undefined) f.countdown_seconds = p.safety.countdownSeconds;
     if (p.safety.neverAutoSendIfMessageContains !== undefined)
       f.never_auto_send_if_message_contains = p.safety.neverAutoSendIfMessageContains;
+    if (p.safety.markAutoReplies !== undefined) f.mark_auto_replies = p.safety.markAutoReplies;
     out.safety = f;
   }
   if (p.brief) {
@@ -389,6 +391,7 @@ let localSettings: Settings = {
     selftestGate: true,
     countdownSeconds: 5,
     neverAutoSendIfMessageContains: ["RH", "confidentiel", "salaire"],
+    markAutoReplies: true,
   },
   brief: { enabled: true, lastMessages: 30 },
   telemetry: { enabled: false, endpoint: "", includeContent: false },

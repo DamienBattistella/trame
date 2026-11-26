@@ -157,7 +157,7 @@ def test_auto_send_held_back_when_contradicted(make_client):
 def test_auto_send_goes_on_when_check_fails_or_is_clean(make_client):
     _client, watcher, driver = make_client(brain=FakeBrain(completion="pas de JSON"))
     assert watcher._process(_incoming()) == "sent"
-    assert driver.typed == [(SOFIA, "Réponse de test", True)]
+    assert driver.typed == [(SOFIA, "Réponse de test 🤖", True)]
 
     _client2, watcher2, driver2 = make_client(brain=_brain({"claims": []}))
     assert watcher2._process(_incoming()) == "sent"

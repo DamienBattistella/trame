@@ -84,6 +84,8 @@ export interface Settings {
     selftestGate: boolean;
     countdownSeconds: number;
     neverAutoSendIfMessageContains: string[];
+    /** 🤖 à la fin de chaque message envoyé sans clic (mode Auto). */
+    markAutoReplies: boolean;
   };
   brief: { enabled: boolean; lastMessages: number };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };

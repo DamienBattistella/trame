@@ -482,6 +482,12 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             checked={safety.selftestGate}
             onChange={(v) => update("safety", { safety: { ...safety, selftestGate: v } })}
           />
+          <ToggleRow
+            label="Marquer les envois auto d'un 🤖"
+            hint="Tes interlocuteurs savent qu'une réponse est partie seule. Suivi d'un emoji selon le ton (😊 😔 😎 🎉 🤔). Rien n'est ajouté quand tu cliques sur « Envoyer »."
+            checked={safety.markAutoReplies}
+            onChange={(v) => update("safety", { safety: { ...safety, markAutoReplies: v } })}
+          />
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <span className="text-sm">Compte à rebours avant envoi auto</span>
             <Segment
@@ -813,19 +819,24 @@ function BlockedWords({ words, onChange }: { words: string[]; onChange: (w: stri
 
 function ToggleRow({
   label,
+  hint,
   checked,
   onChange,
   disabled,
 }: {
   label: string;
+  hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
 }) {
   const id = useId();
   return (
-    <div className="flex items-center justify-between px-4 py-3">
-      <Label htmlFor={id} className={cn("font-normal transition-colors", disabled && "text-muted-foreground")}>{label}</Label>
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="flex min-w-0 flex-col">
+        <Label htmlFor={id} className={cn("font-normal transition-colors", disabled && "text-muted-foreground")}>{label}</Label>
+        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+      </div>
       <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
