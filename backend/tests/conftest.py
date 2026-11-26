@@ -82,6 +82,9 @@ def fresh_home(monkeypatch):
     monkeypatch.setattr(gh, "_run", _no_process)
     gh._sso_blocked.clear()
     monkeypatch.setattr(gh, "_repos_cache", None)
+    # Le contrôle de la page Teams en arrière-plan ne tourne que dans ses propres tests.
+    from watcher import Watcher
+    monkeypatch.setattr(Watcher, "CHECK_SETTLE", 3600.0)
     yield home
     gh._sso_blocked.clear()
 

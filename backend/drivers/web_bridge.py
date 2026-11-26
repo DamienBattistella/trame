@@ -129,12 +129,33 @@ class WebBridgeDriver(TeamsDriver):
         try:
             if not slot["event"].wait(wait):
                 raise BridgeUnavailable(f"Teams intégré : pas de réponse à « {op} ».")
+            result = slot.get("result")
+            # Teams a refusé (ou l'opération a planté dans la page) : un repère a peut-être
+            # changé, le moteur recontrôle la page plutôt que d'attendre l'heure suivante.
+            if op not in self._QUIET_OPS and (not slot.get("ok") or (isinstance(result, dict) and result.get("ok") is False)):
+                self._page_failed()
             if not slot.get("ok"):
                 raise BridgeUnavailable(f"Teams intégré : {slot.get('error') or op + ' a échoué'}")
-            return slot.get("result")
+            return result
         finally:
             with self._lock:
                 self._pending.pop(cid, None)
+
+    # Opérations sans geste dans Teams : leur échec ne dit rien des repères.
+    _QUIET_OPS = frozenset({"ping", "title", "probe", "diagnose"})
+
+    def _page_failed(self) -> None:
+        hook = self.on_page_failure
+        if hook is not None:
+            try:
+                hook()
+            except Exception:
+                pass
+
+    def probe_page(self) -> Optional[dict]:
+        # Lecture seule dans la page ; un survol du dernier message au plus (voir le pont).
+        res = self._rpc("probe", timeout=8)
+        return res if isinstance(res, dict) else None
 
     # --- TeamsDriver ---
     def status(self) -> dict:
