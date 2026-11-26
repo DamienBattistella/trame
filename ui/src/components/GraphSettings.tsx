@@ -19,6 +19,8 @@ const ACTIONS: Record<string, string> = {
   delete: "Supprimer mon message",
   set_status: "Changer mon statut",
   set_note: "Message de statut",
+  send: "Envoi de messages",
+  start_chat: "Nouvelle conversation",
 };
 
 /** Réglages › Général › Microsoft Graph : la voie supportée, une fois Trame enregistré par la DSI. */

@@ -134,11 +134,12 @@ def test_my_status_and_people_search():
     assert d.search_people("  ") == []
 
 
-def test_writes_stay_on_the_page():
-    fake = routes()
-    d, page = driver(fake)
-    assert d.type_reply.__self__ is page  # not overridden in this step
-    assert not any(m == "POST" and p.startswith("/chats") for m, p, _ in fake.calls)
+def test_without_graph_sending_stays_on_the_page():
+    d, page = driver()
+    sent = []
+    page.type_focused = lambda *a, **k: sent.append(a) or "page"
+    assert d.type_focused(DM, "Bonjour", send=True, restore=True) == "page"
+    assert sent and d.routes()["send"] == {**d.routes()["send"], "via": "page", "reason": "Graph non connecté"}
 
 
 def test_client_only_talks_to_graph_and_reports_errors():
@@ -338,3 +339,119 @@ def test_generic_write_error_type():
     d, _page = driver(StatefulGraph(fail=(("POST", f"/chats/{DM}/markChatReadForUser"), 500)))
     with pytest.raises(WriteUncertain):
         d.mark_read(DM)
+
+
+# --- step 3: sending and new chats ---
+from drivers.base import SendUncertain  # noqa: E402
+
+
+class SendGraph(StatefulGraph):
+    """Keeps what is posted, so the read-back proof can be tested (or broken)."""
+
+    def __init__(self, echo=True, post_status=201, members=None):
+        super().__init__()
+        self.echo, self.post_status, self.posted = echo, post_status, []
+        self.members = members if members is not None else [
+            {"userId": ME, "displayName": "Moi"}, {"userId": ALICE, "displayName": "Alice Martin"}]
+
+    def __call__(self, method, url, headers, body):
+        path = url[len(BASE):].split("?")[0]
+        data = json.loads(body) if body else None
+        if (method, path) == ("POST", f"/chats/{DM}/messages"):
+            self.calls.append((method, path, data))
+            if self.post_status >= 400:
+                return self.post_status, {}, b'{"error": {"code": "Boom"}}'
+            self.posted.append(data)
+            return 201, {}, json.dumps({"id": "99"}).encode()
+        if (method, path) == ("GET", f"/chats/{DM}/messages/99"):
+            self.calls.append((method, path, None))
+            shown = self.posted[-1]["body"] if self.echo else {"contentType": "text", "content": "autre chose"}
+            return 200, {}, json.dumps({"id": "99", "body": shown}).encode()
+        if (method, path) == ("GET", f"/chats/{DM}/members"):
+            self.calls.append((method, path, None))
+            return 200, {}, json.dumps({"value": self.members}).encode()
+        if (method, path) == ("GET", "/users"):
+            self.calls.append((method, path, None))
+            return 200, {}, json.dumps({"value": [{"id": ALICE, "displayName": "Alice Martin"}]}).encode()
+        if (method, path) == ("POST", "/chats"):
+            self.calls.append((method, path, data))
+            return 201, {}, json.dumps({"id": DM}).encode()
+        return super().__call__(method, url, headers, body)
+
+
+def page_never(d):
+    d.inner.type_focused = lambda *a, **k: pytest.fail("envoyé aussi par la page")
+
+
+def test_send_plain_text_is_escaped_and_proven():
+    fake = SendGraph()
+    d, _page = driver(fake)
+    page_never(d)
+    assert d.type_focused(DM, "Ok pour <14h>\nà tout'", send=True, restore=True).ok
+    assert fake.posted == [{"body": {"contentType": "html", "content": "Ok pour &lt;14h&gt;<br>à tout'"}}]
+    assert d.routes()["send"]["via"] == "graph"
+
+
+def test_send_with_a_real_mention():
+    fake = SendGraph()
+    d, _page = driver(fake)
+    assert d.type_focused(DM, "@Alice Martin tu valides ?", send=True, restore=True, mentions=["Alice Martin"]).ok
+    sent = fake.posted[0]
+    assert sent["body"]["content"] == '<at id="0">Alice Martin</at> tu valides ?'
+    assert sent["mentions"] == [{"id": 0, "mentionText": "Alice Martin", "mentioned": {"user": {
+        "id": ALICE, "displayName": "Alice Martin", "userIdentityType": "aadUser"}}}]
+
+
+def test_ambiguous_mention_goes_to_the_page():
+    fake = SendGraph(members=[{"userId": ALICE, "displayName": "Alice Martin"}, {"userId": "x", "displayName": "Alice Martin"}])
+    d, _page = driver(fake)
+    d.inner.type_focused = lambda *a, **k: "page"
+    assert d.type_focused(DM, "@Alice Martin ?", send=True, restore=True, mentions=["Alice Martin"]) == "page"
+    assert not fake.posted and "plusieurs" in d.routes()["send"]["reason"]
+
+
+def test_quoted_reply_references_the_checked_message():
+    fake = SendGraph()
+    d, _page = driver(fake)
+    assert d.type_focused(DM, "Oui, 14h", send=True, restore=True, reply_to=target()).ok
+    sent = fake.posted[0]
+    assert sent["body"]["content"] == '<attachment id="3"></attachment>Oui, 14h'
+    ref = sent["attachments"][0]
+    assert ref["id"] == "3" and ref["contentType"] == "messageReference"
+    assert json.loads(ref["content"])["messagePreview"] == "On se voit à 14h ?"
+
+
+def test_server_error_while_sending_is_uncertain_and_never_resent():
+    d, _page = driver(SendGraph(post_status=503))
+    page_never(d)
+    with pytest.raises(SendUncertain):
+        d.type_focused(DM, "Bonjour", send=True, restore=True)
+
+
+def test_message_not_found_afterwards_is_uncertain():
+    d, _page = driver(SendGraph(echo=False))
+    page_never(d)
+    with pytest.raises(SendUncertain):
+        d.type_focused(DM, "Bonjour", send=True, restore=True)
+
+
+def test_refused_send_goes_to_the_page_and_typing_without_send_stays_there():
+    fake = SendGraph(post_status=403)
+    d, _page = driver(fake)
+    calls = []
+    d.inner.type_focused = lambda *a, **k: calls.append((a, k)) or "page"
+    assert d.type_focused(DM, "Bonjour", send=True, restore=True) == "page"
+    assert d.type_focused(DM, "Brouillon", send=False, restore=True) == "page"
+    assert d.type_focused(DM, "Avec fichier", send=True, restore=True, files=["f"]) == "page"
+    assert len(calls) == 3 and len([c for c in fake.calls if c[0] == "POST" and c[1].endswith("/messages")]) == 1
+
+
+def test_new_chat_with_exactly_one_person():
+    fake = SendGraph()
+    d, _page = driver(fake)
+    entity = d.start_chat("  Alice   Martin ")
+    assert (entity.thread_id, entity.display_name, entity.surface) == (DM, "Alice Martin", Surface.dm)
+    chat_call = next(c for c in fake.calls if c[:2] == ("POST", "/chats"))
+    assert [m["user@odata.bind"] for m in chat_call[2]["members"]] == [
+        f"https://graph.microsoft.com/v1.0/users('{ME}')", f"https://graph.microsoft.com/v1.0/users('{ALICE}')"]
+    assert d.read_context("name:Alice Martin", 5) is not None  # known by name afterwards
