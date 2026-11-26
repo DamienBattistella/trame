@@ -101,6 +101,8 @@ class LocalOnly:
 
 WS_POLL = 0.25
 WS_KEEPALIVE = 15.0
+# While the model thinks, the reflection panel is fed this often.
+WS_REFLECTION_POLL = 0.08
 
 
 class PauseBody(BaseModel):
@@ -142,6 +144,8 @@ class ReactBody(BaseModel):
 
 class CorrectBody(BaseModel):
     text: str = ""
+    # The conversation being written in, to file the action in the reflection panel.
+    thread_id: Optional[str] = None
 
 
 class SuggestBody(BaseModel):
@@ -386,8 +390,19 @@ def create_app(
 
     @app.post("/api/correct")
     def correct_text(body: CorrectBody):
-        text = watcher.correct_text(body.text)
+        text = watcher.correct_text(body.text, body.thread_id)
         return {"ok": True, "text": text, "changed": text != body.text.strip()}
+
+    @app.get("/api/reflections")
+    def get_reflections():
+        """The last reply-box actions and what the model did during each, newest first."""
+        return {"ok": True, "runs": watcher.reflections.snapshot()}
+
+    @app.post("/api/reflections/{run_id}/cancel")
+    def cancel_reflection(run_id: str):
+        if not watcher.reflections.cancel(run_id):
+            return _error(409, "Cette action n'est plus en cours.")
+        return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):
@@ -583,16 +598,26 @@ def create_app(
             closed.set()
 
         reader = asyncio.create_task(until_closed())
+        # Reflection runs go apart from the state, each one again only when it changed,
+        # and more often while one is running: the panel follows the model as it thinks.
+        revs: dict[str, int] = {}
+        seen = -1
         try:
             while not closed.is_set():
                 payload = state_payload()
                 if payload != last or idle >= WS_KEEPALIVE:
                     await socket.send_text(payload)
                     last, idle = payload, 0.0
+                if watcher.reflections.seq != seen:
+                    seen = watcher.reflections.seq
+                    for run in watcher.reflections.changed_since(revs):
+                        revs[run["id"]] = run["rev"]
+                        await socket.send_text(json.dumps({"kind": "reflection", "run": run}, ensure_ascii=False))
+                pause = WS_REFLECTION_POLL if watcher.reflections.running() else WS_POLL
                 try:
-                    await asyncio.wait_for(closed.wait(), WS_POLL)
+                    await asyncio.wait_for(closed.wait(), pause)
                 except asyncio.TimeoutError:
-                    idle += WS_POLL
+                    idle += pause
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
