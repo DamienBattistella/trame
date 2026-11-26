@@ -243,6 +243,60 @@ def test_api_directory_is_remembered(make_client, tmp_path):
     assert opened["directory"] == str(target)
 
 
+def test_meetings_survive_a_restart(make_client):
+    """Une mise à jour relance l'app : la liste lue avant revient sans relire Teams."""
+    client, _w, _d = make_client()
+    assert client.get("/api/meetings/known").json()["meetings"] == []
+    read = client.get("/api/meetings").json()
+    assert read["meetings"] and read["read_at"]
+    saved = client.post("/api/meetings/transcript",
+                        json={"thread_id": "19:meeting_mock2@thread.v2", "mid": "1700000002"}).json()
+    from drivers.mock import MockTeamsDriver
+
+    class Restarted(MockTeamsDriver):
+        def list_meetings(self, limit=None):
+            raise AssertionError("Teams n'est pas relu")
+
+    again, _w2, _d2 = make_client(driver=Restarted(interval=9999))
+    known = again.get("/api/meetings/known").json()
+    assert [m["meeting_id"] for m in known["meetings"]] == [m["meeting_id"] for m in read["meetings"]]
+    assert known["read_at"] == read["read_at"]
+    one = next(m for m in known["meetings"] if m["mid"] == "1700000002")
+    assert one["saved"]["path"] == saved["path"] and one["organizer"] == saved["organizer"]
+
+
+def test_meeting_out_of_the_recent_window_is_kept(make_client):
+    from drivers.mock import MockTeamsDriver
+
+    class Shrinking(MockTeamsDriver):
+        calls = 0
+
+        def list_meetings(self, limit=None):
+            Shrinking.calls += 1
+            found = super().list_meetings(limit)
+            return found if Shrinking.calls == 1 else found[:1]
+
+    client, _w, _d = make_client(driver=Shrinking(interval=9999))
+    first = client.get("/api/meetings").json()["meetings"]
+    second = client.get("/api/meetings").json()["meetings"]
+    assert len(first) > 1 and {m["meeting_id"] for m in second} == {m["meeting_id"] for m in first}
+
+
+def test_merge_keeps_known_organizer_and_caps():
+    known = [{"meeting_id": "a", "thread_id": "t", "mid": "1", "date": "2026-01-01", "organizer": "Ana"}]
+    merged = t.merge_meetings(known, [{"meeting_id": "a", "thread_id": "t", "mid": "1", "date": "2026-01-01",
+                                       "title": "Point", "organizer": ""}])
+    assert merged == [{"meeting_id": "a", "thread_id": "t", "mid": "1", "date": "2026-01-01", "title": "Point",
+                       "organizer": "Ana"}]
+    many = [{"meeting_id": str(i), "date": f"2026-01-{i % 28 + 1:02d}"} for i in range(t.MEETINGS_KEPT + 5)]
+    assert len(t.merge_meetings([], many)) == t.MEETINGS_KEPT
+
+
+def test_corrupt_meetings_file_is_ignored(tmp_path):
+    (tmp_path / "meetings.json").write_text("{pas du json", encoding="utf-8")
+    assert t.load_meetings(tmp_path) == ([], None)
+
+
 def test_driver_without_transcripts_is_refused(make_client):
     from drivers.mock import MockTeamsDriver
 
