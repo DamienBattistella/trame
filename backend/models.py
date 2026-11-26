@@ -55,6 +55,26 @@ class IncomingMessage(BaseModel):
     # l'utilisateur y a déjà mises (clés de REACTIONS).
     id: Optional[str] = None
     reactions: list[str] = Field(default_factory=list)
+    # Pièces jointes reçues : fichiers (nom et lien Teams/SharePoint) et images (aperçu).
+    files: list["FileRef"] = Field(default_factory=list)
+    images: list["ImageRef"] = Field(default_factory=list)
+
+
+class FileRef(BaseModel):
+    """Un fichier joint à un message : son nom et le lien pour l'ouvrir (https seulement)."""
+    name: str
+    url: str = ""
+
+
+class ImageRef(BaseModel):
+    """Une image d'un message. data : aperçu JPEG/PNG en data URL, absent quand Teams
+    ne l'affichait pas au moment de la lecture (l'image se voit alors dans Teams)."""
+    data: Optional[str] = None
+    width: int = 0
+    height: int = 0
+
+
+IncomingMessage.model_rebuild()
 
 
 class MessageRef(BaseModel):

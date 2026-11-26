@@ -1,5 +1,6 @@
 from __future__ import annotations
 import itertools
+import re
 import queue
 import threading
 import time
@@ -9,11 +10,41 @@ import presence as presencemod
 from drivers import rail_label
 from drivers.base import ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import REACTIONS, IncomingMessage, MessageRef, Surface, WatchEntity
+from models import REACTIONS, FileRef, ImageRef, IncomingMessage, MessageRef, Surface, WatchEntity
 
 
 class BridgeUnavailable(RuntimeError):
     pass
+
+
+# Received attachments: what the page reports is checked before it reaches the UI.
+# A link is kept only on Microsoft's file hosts (it opens in the user's browser).
+FILE_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.(live\.)?com|1drv\.ms|teams\.microsoft\.com|"
+                        r"teams\.cloud\.microsoft)(/|$)", re.IGNORECASE)
+IMAGE_DATA = re.compile(r"^data:image/(jpeg|png);base64,[A-Za-z0-9+/]+=*$")
+MAX_FILES, MAX_IMAGES, MAX_IMAGE_CHARS = 10, 8, 1_500_000
+
+
+def _files(raw: Any) -> list[FileRef]:
+    out = []
+    for f in (raw if isinstance(raw, list) else [])[:MAX_FILES]:
+        name = " ".join(str((f or {}).get("name") or "").split())[:200] if isinstance(f, dict) else ""
+        if not name:
+            continue
+        url = str(f.get("url") or "")
+        out.append(FileRef(name=name, url=url if FILE_HOSTS.match(url) else ""))
+    return out
+
+
+def _images(raw: Any) -> list[ImageRef]:
+    out = []
+    for i in (raw if isinstance(raw, list) else [])[:MAX_IMAGES * 2]:
+        i = i if isinstance(i, dict) else {}
+        data = i.get("data")
+        ok = isinstance(data, str) and len(data) <= MAX_IMAGE_CHARS and IMAGE_DATA.match(data)
+        size = [max(0, min(10_000, int(i.get(k) or 0))) if str(i.get(k) or 0).isdigit() else 0 for k in ("width", "height")]
+        out.append(ImageRef(data=data if ok else None, width=size[0] if ok else 0, height=size[1] if ok else 0))
+    return out
 
 
 class WebBridgeDriver(TeamsDriver):
@@ -242,10 +273,16 @@ class WebBridgeDriver(TeamsDriver):
         # Going back in the history scrolls Teams up until enough messages were seen.
         res = self._rpc("read", last=last_n, timeout=30) or {}
         raw, top = res.get("messages") or [], bool(res.get("top"))
-        msgs = [IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=(m.get("text") or "").strip(),
-                                received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
-                                reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS])
-                for m in raw if (m.get("text") or "").strip()]
+        msgs = []
+        for m in raw:
+            text = (m.get("text") or "").strip()
+            files, images = _files(m.get("files")), _images(m.get("images"))
+            if not (text or files or images):
+                continue
+            msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=text,
+                                        received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
+                                        reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
+                                        files=files, images=images))
         return msgs, top
 
     @staticmethod

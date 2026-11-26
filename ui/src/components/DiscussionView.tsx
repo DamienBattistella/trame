@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
+import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
@@ -630,6 +631,7 @@ export function DiscussionView({
                     >
                       {m.replyTo && <Quote target={m.replyTo} />}
                       {i === foundIndex ? <Highlight text={m.text} range={findFolded(m.text, foundQuery)} /> : m.text}
+                      <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
                     </div>
                     {(m.at || (m.reactions?.length ?? 0) > 0) && (
                       <div className={cn("mx-1 flex items-center gap-1.5", m.mine && "flex-row-reverse")}>

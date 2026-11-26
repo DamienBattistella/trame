@@ -148,6 +148,9 @@ export interface ThreadMessage {
   mine: boolean;
   /** Réactions que tu as mises sur ce message. */
   reactions?: Reaction[];
+  /** Pièces jointes reçues : fichiers (nom, lien) et images (aperçu). */
+  files?: ReceivedFile[];
+  images?: ReceivedImage[];
   /** Message auquel celui-ci répond (affiché en citation). */
   replyTo?: MessageRef | null;
 }
@@ -257,6 +260,19 @@ export interface FactCheck {
   checkedAt: string;
   claims: FactClaim[];
   sources: { messages: number; people: number; github: number };
+}
+
+/** Fichier joint à un message reçu ; `url` vide : à ouvrir dans Teams. */
+export interface ReceivedFile {
+  name: string;
+  url: string;
+}
+
+/** Image d'un message reçu ; `data` absent quand Teams ne l'affichait pas à la lecture. */
+export interface ReceivedImage {
+  data: string | null;
+  width: number;
+  height: number;
 }
 
 /** Ce que le pilote Teams permet pour les pièces jointes, et les limites affichées. */

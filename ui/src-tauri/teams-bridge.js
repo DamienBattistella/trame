@@ -324,6 +324,66 @@
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
+  // --- Pièces jointes reçues (lecture seule) ---
+  // Fichier : une carte de « file-attachment-grid », nommée par son aria-label ; son titre
+  // porte « nom + lien » (SharePoint / OneDrive). Trame n'en lit que le nom et le lien.
+  const filesOf = (el) =>
+    Array.from(el.querySelectorAll('[data-tid="file-attachment-grid"] [role="group"][aria-label]')).map((card) => {
+      const title = card.querySelector('[data-testid="content-card-custom-title"]')?.getAttribute("aria-label") || "";
+      const url = (title.match(/https:\/\/\S+/) || [""])[0];
+      return { name: card.getAttribute("aria-label").trim(), url };
+    });
+  // Image : celles du corps du message (les émojis n'ont pas de data-gallery-src).
+  const imagesOf = (el) =>
+    Array.from(el.querySelectorAll('[data-tid="chat-pane-message"] img')).filter(
+      (img) => img.getAttribute("data-gallery-src") || img.getAttribute("data-orig-src")
+    );
+  const THUMBS = { max: 8, width: 1024, budget: 3_000_000 };
+  // Miniature JPEG d'une image déjà affichée par Teams (adresse blob: de la page) ;
+  // null si elle n'est pas chargée ou pas lisible.
+  const thumbnail = async (img) => {
+    try {
+      if (!img.complete || !img.naturalWidth) return null;
+      const src = img.currentSrc || img.src;
+      if (!src.startsWith("blob:") && new URL(src).origin !== location.origin) return null;
+      const bitmap = await createImageBitmap(await (await fetch(src)).blob());
+      const scale = Math.min(1, THUMBS.width / bitmap.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return { data: canvas.toDataURL("image/jpeg", 0.8), width: canvas.width, height: canvas.height };
+    } catch {
+      return null;
+    }
+  };
+  // Après la lecture, seuls les messages encore affichés ont leurs images dans la page :
+  // les plus récents d'abord, dans la limite du nombre et du poids. Les autres restent
+  // « image » sans aperçu (à voir dans Teams).
+  const thumbnails = async (messages) => {
+    const byId = new Map();
+    for (const el of document.querySelectorAll(MSGS)) {
+      const id = el.querySelector('[id^="content-"]')?.id || el.getAttribute("data-mid") || el.id;
+      if (id) byId.set(id, el);
+    }
+    let count = 0;
+    let weight = 0;
+    for (const m of [...messages].reverse()) {
+      const n = m.images;
+      const imgs = n ? imagesOf(byId.get(m.key) || document.createElement("div")) : [];
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const shot = count < THUMBS.max && weight < THUMBS.budget && imgs[i] ? await thumbnail(imgs[i]) : null;
+        if (shot) {
+          count++;
+          weight += shot.data.length;
+        }
+        out.push(shot || { data: null, width: 0, height: 0 });
+      }
+      m.images = out;
+    }
+  };
+
   // --- Mentions (@quelqu'un) ---
   // Teams n'ouvre ses suggestions de mention que sur une vraie frappe : les événements
   // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
@@ -791,20 +851,32 @@
             "";
           const time = el.querySelector("time");
           const at = time?.innerText?.trim() || time?.getAttribute("datetime") || "";
-          const text = body.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim();
+          const files = filesOf(el);
+          const names = new Set(files.map((f) => f.name));
+          // Le nom d'un fichier joint fait aussi partie du texte : il est déjà dans sa puce.
+          const text = body
+            .replace(REACTIONS, "")
+            .split("\n")
+            .filter((line) => !names.has(line.trim()))
+            .join("\n")
+            .replace(/\s+\n/g, "\n")
+            .trim();
+          const images = imagesOf(el).length;
           const id = el.querySelector('[id^="content-"]')?.id || el.getAttribute("data-mid") || el.id || "";
           return {
-            key: id || `${time?.getAttribute("datetime") || at}|${text.slice(0, 80)}`,
+            key: id || `${time?.getAttribute("datetime") || at}|${text.slice(0, 80)}|${files.map((f) => f.name).join("|")}`,
             who: el.querySelector('[data-tid="message-author-name"]')?.innerText?.trim() || "",
             text,
             at,
             mid: msgId(el),
             reactions: myReactions(el),
+            files,
+            images,
           };
         })
-        // Teams intercale des éléments vides (avatar seul) : sans texte ni identifiant,
+        // Teams intercale des éléments vides (avatar seul) : sans texte, fichier ni image,
         // ils se ressembleraient tous et fausseraient la fusion.
-        .filter((m) => m.text);
+        .filter((m) => m.text || m.files.length || m.images);
       // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
       // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
       let acc = snap();
@@ -847,9 +919,11 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        out.push({ sender, text: m.text, at: m.at, id: m.mid, reactions: m.reactions });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
       }
-      return { messages: out.slice(-last), top };
+      const shown = out.slice(-last);
+      await thumbnails(shown);
+      return { messages: shown.map(({ key, ...m }) => m), top };
     },
     type: async ({ name, text, send, quote, mentions, files }) => {
       if (mentions && mentions.length) {
