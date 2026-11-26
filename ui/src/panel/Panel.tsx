@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -24,6 +24,7 @@ import { EntourageSection } from "@/components/EntourageSection";
 import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
+import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -61,7 +62,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
   );
 }
 
-export type PanelTab = "drafts" | "watchlist" | "logs" | "settings";
+export type PanelTab = "inbox" | "logs" | "settings";
 
 export function Panel({
   trame,
@@ -83,7 +84,12 @@ export function Panel({
   }, [briefFor]);
 
   return (
-    <div className={cn("mx-auto flex h-full flex-col overflow-hidden px-6 pt-5 transition-[max-width] duration-300", tab === "settings" ? "max-w-5xl" : "max-w-3xl")}>
+    <div
+      className={cn(
+        "mx-auto flex h-full flex-col overflow-hidden",
+        tab === "inbox" ? "w-full" : cn("px-6 pt-5", tab === "settings" ? "max-w-5xl" : "max-w-3xl")
+      )}
+    >
       <AnimatePresence initial={false}>
         {state.paused && (
           <motion.div
@@ -118,17 +124,14 @@ export function Panel({
 
       <div className="flex min-h-0 flex-1 flex-col">
 
-        <TabsContent value="drafts" className="flex-1 overflow-auto">
-          <Drafts trame={trame} onBrief={setBriefFor} onChoose={() => onTab("watchlist")} />
-        </TabsContent>
-        <TabsContent value="watchlist" className="flex-1 overflow-auto">
-          <Watchlist trame={trame} onBrief={setBriefFor} />
+        <TabsContent value="inbox" className="min-h-0 flex-1 overflow-hidden">
+          <Inbox trame={trame} onBrief={setBriefFor} />
         </TabsContent>
         <TabsContent value="logs" className="flex-1 overflow-auto">
           <Logs logs={state.logs} />
         </TabsContent>
         <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
-          <SettingsView trame={trame} onRestartSetup={onRestartSetup} />
+          <SettingsView trame={trame} onRestartSetup={onRestartSetup} onBrief={setBriefFor} />
         </TabsContent>
       </div>
       {briefUsed && (
@@ -140,328 +143,13 @@ export function Panel({
   );
 }
 
-function Drafts({ trame, onBrief, onChoose }: { trame: Trame; onBrief: OpenBrief; onChoose: () => void }) {
-  const drafts = trame.state.drafts;
-  const [catching, setCatching] = useState<"idle" | "run" | "done">("idle");
-  const [added, setAdded] = useState(0);
-  const controls = useAnimationControls();
-
-  const catchUp = async () => {
-    setCatching("run");
-    const res = await trame.catchUp();
-    if (!res.ok) {
-      setCatching("idle");
-      controls.start(shake);
-      toast.error("Rattrapage impossible", { description: `${res.error} Aucun message n'a été perdu.` });
-      return;
-    }
-    const n = res.queued ?? 0;
-    setAdded(n);
-    setCatching("done");
-    if (n > 0) toast.success(`${n} réponse${n > 1 ? "s" : ""} à relire`);
-    else toast.info("Aucun message non lu");
-    setTimeout(() => setCatching("idle"), 1800);
-  };
-
-  return (
-    <div className="flex flex-col gap-4 py-5">
-      <div className="flex items-center justify-between gap-3">
-        <AnimatePresence mode="popLayout" initial={false}>
-          <motion.p
-            key={drafts.length === 0 ? "none" : "some"}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            className="ml-1 text-sm text-muted-foreground"
-          >
-            {drafts.length > 0 && `${drafts.length} réponse${drafts.length > 1 ? "s" : ""} à relire`}
-          </motion.p>
-        </AnimatePresence>
-        <motion.div animate={controls}>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn("rounded-full text-muted-foreground transition-colors", catching === "done" && "text-success")}
-            disabled={catching !== "idle"}
-            onClick={catchUp}
-            title="Préparer une réponse pour chaque message non lu des conversations suivies"
-          >
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={catching}
-                initial={{ y: 8, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -8, opacity: 0 }}
-                className="flex items-center gap-2"
-              >
-                {catching === "idle" && <><History className="size-4" /> Rattraper les non-lus</>}
-                {catching === "run" && <><Loader2 className="size-4 animate-spin" /> Lecture…</>}
-                {catching === "done" && (
-                  <>
-                    <Check className="size-4" strokeWidth={3} />
-                    {added > 0 ? `${added} ajouté${added > 1 ? "s" : ""}` : "Rien de neuf"}
-                  </>
-                )}
-              </motion.span>
-            </AnimatePresence>
-          </Button>
-        </motion.div>
-      </div>
-
-      <AnimatePresence initial={false} mode="popLayout">
-        {drafts.length === 0 && (
-          <EmptyDrafts key="empty" following={trame.state.watchlist.filter((w) => w.watch).length} onChoose={onChoose} />
-        )}
-        {drafts.map((d) => (
-          <DraftCard key={d.id} draft={d} trame={trame} onBrief={onBrief} />
-        ))}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function EmptyDrafts({ following, onChoose }: { following: number; onChoose: () => void }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0 }}
-      className="flex flex-col items-center gap-3 py-16 text-center"
-    >
-      <motion.span
-        initial={{ scale: 0 }}
-        animate={{ scale: 1 }}
-        transition={{ ...pop, delay: 0.1 }}
-        className="grid size-12 place-items-center rounded-full bg-success/15 text-success"
-      >
-        <Check className="size-6" strokeWidth={3} />
-      </motion.span>
-      {following > 0 ? (
-        <>
-          <p className="font-medium">Rien à relire</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            Trame suit {following} conversation{following > 1 ? "s" : ""}. Quand on t'y écrit, la réponse proposée apparaît ici.
-          </p>
-        </>
-      ) : (
-        <>
-          <p className="font-medium">Aucune conversation suivie</p>
-          <p className="max-w-xs text-sm text-muted-foreground">Trame ne lit que les conversations que tu choisis.</p>
-          <Button variant="secondary" className="rounded-full" onClick={onChoose}>
-            Choisir des conversations
-          </Button>
-        </>
-      )}
-    </motion.div>
-  );
-}
-
-function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Trame; onBrief: OpenBrief }) {
-  const [text, setText] = useState(d.proposal);
-  const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
-  const [compose, setCompose] = useState<"idle" | "opening">("idle");
-  const [leaving, setLeaving] = useState<"sent" | "dismissed">("sent");
-  const controls = useAnimationControls();
-  const busy = status !== "idle" || compose === "opening";
-  // Un nouveau message met à jour le brouillon sur place (même id). Sans modification de
-  // ta part, la nouvelle proposition remplace l'ancienne ; sinon ton texte est gardé et
-  // la nouvelle proposition t'est proposée.
-  const base = useRef(d.proposal);
-  const [fresher, setFresher] = useState<string | null>(null);
-  useEffect(() => {
-    if (d.proposal === base.current) return;
-    if (text.trim() === base.current.trim()) {
-      setText(d.proposal);
-      setFresher(null);
-    } else {
-      setFresher(d.proposal);
-    }
-    base.current = d.proposal;
-  }, [d.proposal]);
-  const edited = text.trim() !== d.proposal.trim();
-  const conversation = trame.state.watchlist.find((w) => w.threadId === d.threadId)?.displayName;
-  const place = d.surface !== "dm" && conversation && conversation !== d.from ? conversation : null;
-
-  const send = async () => {
-    if (busy || !text.trim()) return;
-    setStatus("sending");
-    const res = await trame.sendDraft(d.id, text);
-    if (!res.ok) {
-      setStatus("idle");
-      controls.start(shake);
-      toast.error(`Échec de l'envoi à ${d.from}`, { description: `${res.error} Ta réponse est conservée.` });
-      return;
-    }
-    setStatus("sent");
-    setTimeout(() => {
-      setLeaving("sent");
-      trame.removeDraft(d.id);
-    }, 700);
-  };
-
-  const openInTeams = async () => {
-    setCompose("opening");
-    const res = await trame.composeDraft(d.id, text);
-    setCompose("idle");
-    if (!res.ok) {
-      controls.start(shake);
-      toast.error("Impossible d'ouvrir la conversation dans Teams", {
-        description: `${res.error} Ta réponse est conservée ici.`,
-      });
-      return;
-    }
-    toast.success("Réponse copiée dans Teams", { description: "Termine-la et envoie-la depuis Teams." });
-  };
-
-  const dismiss = async () => {
-    setLeaving("dismissed");
-    const res = await trame.dismissDraft(d.id);
-    if (!res.ok) {
-      controls.start(shake);
-      toast.error("Impossible d'ignorer ce brouillon", { description: res.error });
-    }
-  };
-
-  return (
-    <motion.article
-      layout
-      initial={{ opacity: 0, y: -12, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={leaving === "sent" ? { opacity: 0, scale: 0.96, y: -8 } : { opacity: 0, x: -48 }}
-      transition={spring}
-      aria-label={`Réponse à ${d.from}`}
-    >
-      <MotionCard
-        animate={controls}
-        className={cn(
-          "gap-3 rounded-2xl p-4 shadow-none transition-colors duration-300",
-          status === "sent" && "border-success/50"
-        )}
-      >
-        <header className="flex items-center gap-3">
-          <InitialsAvatar name={d.from} className="size-8" />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span className="truncate font-medium">{d.from}</span>
-              {place && <span className="truncate text-sm text-muted-foreground">dans {place}</span>}
-            </div>
-            {d.senderLabel && <span className="truncate text-xs text-muted-foreground">{d.senderLabel}</span>}
-          </div>
-          <span className="shrink-0 text-xs text-muted-foreground">{d.receivedAt}</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-8 rounded-full" disabled={busy} aria-label="Plus d'actions">
-                {compose === "opening" ? <Loader2 className="size-4 animate-spin" /> : <MoreHorizontal className="size-4" />}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuItem onSelect={openInTeams}>
-                <Pencil /> Terminer dans Teams
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!trame.briefPrefs.enabled}
-                onSelect={() => onBrief({ threadId: d.threadId, displayName: conversation ?? d.from })}
-              >
-                <BookOpenText /> Résumé de la conversation
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </header>
-
-        <div className="max-w-[85%] self-start rounded-2xl rounded-tl-md bg-muted px-3.5 py-2 text-sm">
-          {d.incoming}
-        </div>
-
-        <div className="flex flex-col items-end gap-1.5">
-          <Label htmlFor={`reply-${d.id}`} className="mr-1 text-xs font-normal text-muted-foreground">
-            {edited ? "Ta réponse · modifiée" : "Réponse proposée · modifiable"}
-          </Label>
-          <Textarea
-            id={`reply-${d.id}`}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            disabled={busy}
-            rows={1}
-            className="field-sizing-content min-h-0 w-full max-w-[85%] resize-none rounded-2xl rounded-tr-md border-primary/30 bg-primary/10 px-3.5 py-2 text-sm leading-relaxed shadow-none focus-visible:border-primary/60 dark:bg-primary/15"
-          />
-          <AnimatePresence initial={false}>
-            {fresher && fresher.trim() !== text.trim() && (
-              <motion.div
-                key="fresher"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="flex items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-              >
-                Nouveau message : une autre réponse est proposée.
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 rounded-full text-link"
-                  onClick={() => {
-                    setText(fresher);
-                    setFresher(null);
-                  }}
-                >
-                  Utiliser
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {d.usedGithub && (
-            <span className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <GithubLogo className="size-3.5" /> {d.usedGithub}
-            </span>
-          )}
-        </div>
-
-        <footer className="flex items-center gap-2 pt-1">
-          <span className="hidden flex-1 items-center gap-1 text-xs text-muted-foreground sm:flex">
-            <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd> pour envoyer
-          </span>
-          <div className="flex-1 sm:hidden" />
-          <Button variant="ghost" className="rounded-full text-muted-foreground" disabled={busy} onClick={dismiss}>
-            Ignorer
-          </Button>
-          <Button
-            className={cn("min-w-28 rounded-full transition-colors", status === "sent" && "bg-success hover:bg-success")}
-            disabled={busy || !text.trim()}
-            onClick={send}
-          >
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={status}
-                initial={{ y: 8, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -8, opacity: 0 }}
-                className="flex items-center gap-2"
-              >
-                {status === "idle" && <><Send className="size-4" /> Envoyer</>}
-                {status === "sending" && <><Loader2 className="size-4 animate-spin" /> Envoi…</>}
-                {status === "sent" && <><Check className="size-4" strokeWidth={3} /> Envoyé</>}
-              </motion.span>
-            </AnimatePresence>
-          </Button>
-        </footer>
-      </MotionCard>
-    </motion.article>
-  );
-}
-
 function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   const [open, setOpen] = useState<WatchEntity | null>(null);
   const report = (what: string) => (res: Result) => {
     if (!res.ok) toast.error(what, { description: `${res.error} Rien n'a été modifié.` });
   };
   return (
-    <div className="flex flex-col gap-3 py-5">
-      <SectionLabel>Conversations suivies</SectionLabel>
+    <div className="flex flex-col gap-3">
       <ConversationList
         items={trame.state.watchlist}
         onBulk={(ids, watch) => trame.setWatchMany(ids, watch).then(report("Mise à jour groupée impossible"))}
@@ -586,9 +274,9 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "brain" | "people" | "github" | "brief" | "safety" | "advanced";
+type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "advanced";
 
-function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup: () => void }) {
+function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -693,6 +381,13 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
         />
       </motion.div>
       ),
+    },
+    {
+      id: "conversations",
+      label: "Conversations",
+      icon: MessagesSquare,
+      desc: "Quelles conversations Trame suit, et qui envoie : toi ou Trame.",
+      body: <Watchlist trame={trame} onBrief={onBrief} />,
     },
     {
       id: "people",

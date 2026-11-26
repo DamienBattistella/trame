@@ -50,7 +50,7 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [view, setView] = useState<"wizard" | "panel" | null>(null);
   const trame = useTrame();
-  const [panelTab, setPanelTab] = useState<PanelTab>("drafts");
+  const [panelTab, setPanelTab] = useState<PanelTab>("inbox");
   const configured = view === "panel";
 
   // Une fois le moteur joint, c'est lui qui dit si le wizard a déjà été fait ; hors ligne, wizard d'abord.
@@ -157,10 +157,9 @@ export default function App() {
           {configured && !booting && !engineDown && (
             <div className="ml-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
               <TabsList aria-label="Sections" className="h-8 rounded-full">
-                <TabsTrigger value="drafts" className="rounded-full px-3 text-xs">
-                  Brouillons <CountBadge n={trame.state.drafts.length} />
+                <TabsTrigger value="inbox" className="rounded-full px-3 text-xs">
+                  Discussions <CountBadge n={trame.state.drafts.length} />
                 </TabsTrigger>
-                <TabsTrigger value="watchlist" className="rounded-full px-3 text-xs">Conversations</TabsTrigger>
                 <TabsTrigger value="logs" className="rounded-full px-3 text-xs">Journal</TabsTrigger>
                 <TabsTrigger value="settings" className="rounded-full px-3 text-xs">Réglages</TabsTrigger>
               </TabsList>
@@ -235,7 +234,7 @@ export default function App() {
                       onTab={setPanelTab}
                       onRestartSetup={() => {
                         firstRun.current = false;
-                        setPanelTab("drafts");
+                        setPanelTab("inbox");
                         setView("wizard");
                       }}
                     />

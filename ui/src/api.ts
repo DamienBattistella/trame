@@ -558,7 +558,7 @@ export function useTrame() {
   };
 
   /** Mode manuel : historique d'une conversation, réponse tapée à la main, proposition, ouverture dans Teams. */
-  const threadMessages = async (threadId: string): Promise<Result<{ messages: ThreadMessage[] }>> => {
+  const threadMessages = async (threadId: string, fresh = false): Promise<Result<{ messages: ThreadMessage[] }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
@@ -573,7 +573,10 @@ export function useTrame() {
         ],
       };
     }
-    return request<{ messages: ThreadMessage[] }>("GET", `/api/threads/${encodeURIComponent(threadId)}/messages`);
+    return request<{ messages: ThreadMessage[] }>(
+      "GET",
+      `/api/threads/${encodeURIComponent(threadId)}/messages${fresh ? "?fresh=true" : ""}`
+    );
   };
   const sendInThread = async (threadId: string, text: string): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});

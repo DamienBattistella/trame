@@ -249,8 +249,8 @@ def create_app(
         return {"ok": True, "brief": brief.model_dump()}
 
     @app.get("/api/threads/{thread_id:path}/messages")
-    def thread_messages(thread_id: str, last: int = 30):
-        return {"ok": True, "messages": watcher.thread_messages(thread_id, max(5, min(100, last)))}
+    def thread_messages(thread_id: str, last: int = 30, fresh: bool = False):
+        return {"ok": True, "messages": watcher.thread_messages(thread_id, max(5, min(100, last)), fresh)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):

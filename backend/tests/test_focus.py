@@ -236,3 +236,13 @@ def test_manual_send_blocked_during_screen_share(make_client):
     client, _watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
     r = client.post("/api/threads/19%3Abb22%40thread.v2/send", json={"text": "Coucou"})
     assert r.status_code == 409 and driver.typed == []
+
+
+def test_thread_history_cached_between_clicks(make_client):
+    client, _watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)))
+    t = "19%3Abb22%40thread.v2"
+    client.get(f"/api/threads/{t}/messages")
+    client.get(f"/api/threads/{t}/messages")
+    assert driver.opened == [DM_DRAFT, USER_VIEW]
+    client.get(f"/api/threads/{t}/messages?fresh=true")
+    assert driver.opened == [DM_DRAFT, USER_VIEW, DM_DRAFT, USER_VIEW]

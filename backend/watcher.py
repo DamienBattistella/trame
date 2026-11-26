@@ -54,6 +54,7 @@ class Watcher:
         self._ui_lock = threading.Lock()
         self._briefs: dict[str, Brief] = {}
         self._history: dict[str, tuple[float, str]] = {}
+        self._thread_cache: dict[str, tuple[float, list[dict]]] = {}
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
 
@@ -300,10 +301,17 @@ class Watcher:
         s = (sender or "").strip().casefold()
         return s in ("you", "vous", "moi") or any(s == n.strip().casefold() for n in names if n.strip())
 
-    def thread_messages(self, thread_id: str, last_n: int = 30) -> list[dict]:
+    def thread_messages(self, thread_id: str, last_n: int = 30, fresh: bool = False) -> list[dict]:
+        """History shown in the discussion view. Kept HISTORY_TTL so that clicking
+        around the sidebar does not keep switching the conversation open in Teams."""
+        cached = self._thread_cache.get(thread_id)
+        if cached and not fresh and time.monotonic() - cached[0] < self.HISTORY_TTL:
+            return cached[1]
         entity = self._conversation(thread_id)
         msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
-        return [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
+        out = [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
+        self._thread_cache[thread_id] = (time.monotonic(), out)
+        return out
 
     def send_manual(self, thread_id: str, text: str) -> None:
         entity = self._conversation(thread_id)
@@ -314,6 +322,7 @@ class Watcher:
         if not self._deliver(thread_id, body, send=True, restore=True):
             raise ActionError(409, f"Impossible de confirmer « {entity.display_name} » dans Teams : rien n'a été envoyé.")
         self._history.pop(thread_id, None)
+        self._thread_cache.pop(thread_id, None)
         self.log("sent", f"Envoyé à {entity.display_name} : « {body[:60]} »")
 
     def suggest_reply(self, thread_id: str, last_n: int = 15) -> str:
@@ -600,6 +609,7 @@ class Watcher:
             self.people = peoplemod.remove()
             self._briefs.clear()
             self._history.clear()
+            self._thread_cache.clear()
             self._sent_recent.clear()
             self.state.drafts = []
             self.state.logs = []
