@@ -14,6 +14,11 @@ const ACTIONS: Record<string, string> = {
   my_status: "Mon statut",
   search_people: "Recherche de personnes",
   search_messages: "Recherche dans les messages",
+  mark_read: "Marquer comme lu",
+  react: "Réactions",
+  delete: "Supprimer mon message",
+  set_status: "Changer mon statut",
+  set_note: "Message de statut",
 };
 
 /** Réglages › Général › Microsoft Graph : la voie supportée, une fois Trame enregistré par la DSI. */
