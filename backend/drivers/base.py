@@ -215,10 +215,12 @@ class TeamsDriver(ABC):
         Raises with the reason when the driver cannot tell."""
         raise NotSupported(self.status_unsupported)
 
-    def set_my_status(self, choice: str) -> Optional[str]:
-        """Pick choice (presence.CHOICES) in Teams' status menu. Returns the status
-        Teams shows afterwards, checked against the choice by the caller. Raises with
-        the reason when the menu could not be used; menus are closed in any case."""
+    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
+        """Pick choice (presence.CHOICES) in Teams' status menu, for duration
+        (presence.DURATIONS: Teams puts the status back afterwards) or until changed.
+        Returns the status Teams shows afterwards, checked against the choice by the
+        caller. Raises with the reason when the menu could not be used; menus are closed
+        in any case."""
         raise NotSupported(self.status_unsupported)
 
     def set_status_message(self, text: str) -> str:

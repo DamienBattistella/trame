@@ -286,10 +286,15 @@ class WebBridgeDriver(TeamsDriver):
             out["message"] = " ".join(str(res.get("message") or "").split())
         return out
 
-    def set_my_status(self, choice: str) -> Optional[str]:
+    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
         if choice not in presencemod.CHOICES:
             raise ValueError(f"statut inconnu : {choice}")
-        res = self._rpc("setstatus", choice=choice, timeout=15) or {}
+        if duration is not None:
+            if duration not in presencemod.DURATIONS or choice == "reset":
+                raise ValueError(f"durée impossible : {duration}")
+            res = self._rpc("setstatusfor", choice=choice, duration=duration, timeout=20) or {}
+        else:
+            res = self._rpc("setstatus", choice=choice, timeout=15) or {}
         if not res.get("ok"):
             raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'changement de statut refusé'}")
         return presencemod.own_from_labels(res.get("labels"))

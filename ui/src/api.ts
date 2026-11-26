@@ -32,7 +32,7 @@ import {
   AttachmentLimits,
   PendingFile,
   Presence,
-  StatusChoice,
+  StatusChoice, StatusDuration,
   ReflectionRun,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
@@ -707,14 +707,18 @@ export function useTrame() {
     return request<{ presence: Presence | null; message: string }>("GET", "/api/me/status");
   };
   /** Change son statut dans Teams ; réussi seulement si Teams affiche ensuite ce statut. */
-  const setMyStatus = async (choice: StatusChoice): Promise<Result<{ presence: Presence | null }>> => {
+  /** `duration` : Teams remet le statut d'avant après ce délai ; null : jusqu'à changement. */
+  const setMyStatus = async (choice: StatusChoice, duration: StatusDuration | null = null): Promise<Result<{ presence: Presence | null }>> => {
     if (!connectedRef.current) {
       const presence: Presence = choice === "reset" ? "available" : choice;
       const res = await demo(500, { presence });
       if (res.ok) setState((s) => ({ ...s, myPresence: presence }));
       return res;
     }
-    const res = await request<{ presence: Presence | null }>("POST", "/api/me/status", { presence: choice });
+    const res = await request<{ presence: Presence | null }>("POST", "/api/me/status", {
+      presence: choice,
+      ...(duration && choice !== "reset" ? { duration } : {}),
+    });
     if (res.ok) setState((s) => ({ ...s, myPresence: res.presence ?? null }));
     return res;
   };
