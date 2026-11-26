@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { Check, Moon, Sun, Settings2, Pause, Play, Minus, Square, X, WifiOff, Loader2 } from "lucide-react";
+import { Check, Moon, Sun, Settings2, Pause, Play, Minus, Square, X, WifiOff, Loader2, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CountBadge } from "@/components/kit";
@@ -177,7 +177,7 @@ export default function App() {
 
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
             <UpdateLed />
-            <ConnectionBadge connected={trame.connected} demo={trame.demoMode} />
+            <ConnectionBadge connected={trame.connected} demo={trame.demoMode} lost={trame.everConnected} />
             {configured && !engineDown && trame.state.capabilities.ownStatus && <OwnStatus trame={trame} />}
 
             {configured && (
@@ -264,37 +264,45 @@ export default function App() {
   );
 }
 
-function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolean }) {
+/**
+ * Rien quand tout va bien : l'en-tête ne parle de la connexion que si elle manque.
+ * « Hors ligne » quand le moteur a été joint puis perdu (avant la première connexion,
+ * le démarrage et l'écran « moteur injoignable » s'en chargent) ; « Données d'exemple »
+ * en démo navigateur. Teams déconnecté ou modifié a son propre bandeau dans le panneau.
+ */
+function ConnectionBadge({ connected, demo, lost }: { connected: boolean; demo: boolean; lost: boolean }) {
+  const state = demo ? "demo" : !connected && lost ? "offline" : null;
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground">
-          <span className="relative grid size-2 place-items-center">
-            {/* Une seule onde à la connexion : elle confirme le changement d'état, puis le point reste calme. */}
-            <AnimatePresence>
-              {connected && (
-                <motion.span
-                  key="ping"
-                  className="absolute inset-0 rounded-full bg-success"
-                  initial={{ scale: 1, opacity: 0.6 }}
-                  animate={{ scale: 2.4, opacity: 0 }}
-                  transition={{ duration: 1.2, ease: "easeOut" }}
-                />
-              )}
-            </AnimatePresence>
-            <span className={cn("relative size-2 rounded-full transition-colors duration-300", connected ? "bg-success" : "bg-muted-foreground/50")} />
-          </span>
-          <span className="hidden sm:inline">{connected ? "En direct" : demo ? "Données d'exemple" : "Hors ligne"}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>
-        {connected
-          ? "Connecté au moteur Trame"
-          : demo
-            ? "Moteur injoignable : données d'exemple"
-            : "Moteur injoignable : reconnexion en cours"}
-      </TooltipContent>
-    </Tooltip>
+    <AnimatePresence initial={false}>
+      {state && (
+        <motion.div
+          key={state}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          transition={{ duration: 0.2 }}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                role="status"
+                tabIndex={0}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  state === "offline" ? "bg-destructive/10 text-destructive" : "bg-secondary text-muted-foreground"
+                )}
+              >
+                {state === "offline" ? <WifiOff className="size-3.5" /> : <FlaskConical className="size-3.5" />}
+                {state === "offline" ? "Hors ligne" : "Données d'exemple"}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              {state === "offline" ? "Moteur injoignable : reconnexion en cours" : "Moteur injoignable : données d'exemple"}
+            </TooltipContent>
+          </Tooltip>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
