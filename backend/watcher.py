@@ -2341,7 +2341,8 @@ class Watcher:
         candidate = Path(path) if path else None
         # Only a .vtt of the transcripts folder: anything else is ignored (the meeting is
         # then found by name, or fetched again).
-        if candidate is not None and candidate.suffix.lower() == ".vtt" and candidate.is_file()                 and candidate.resolve().parent == folder.resolve():
+        usable = candidate is not None and candidate.suffix.lower() == ".vtt" and candidate.is_file()
+        if usable and candidate.resolve().parent == folder.resolve():
             vtt = candidate
         else:
             try:
