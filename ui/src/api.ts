@@ -1365,6 +1365,14 @@ export function useTrame() {
     const res = await request<{ meetings: any[]; directory: string }>("GET", "/api/meetings");
     return res.ok ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory } : res;
   };
+  /** La liste de la dernière lecture, gardée sur le poste (survit aux mises à jour) : Teams n'est pas relu. */
+  const knownMeetings = async (): Promise<Result<{ meetings: Meeting[]; directory: string; readAt: Date | null }>> => {
+    if (!connectedRef.current) return demo(0, { meetings: [], directory: DEMO_TRANSCRIPTS_DIR, readAt: null });
+    const res = await request<{ meetings: any[]; directory: string; read_at: string | null }>("GET", "/api/meetings/known");
+    return res.ok
+      ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory, readAt: res.read_at ? new Date(res.read_at) : null }
+      : res;
+  };
   /** Relit la transcription d'une réunion dans Teams et l'enregistre en .vtt sur le poste. */
   const saveTranscript = async (m: Meeting, directory?: string): Promise<Result<SavedTranscript>> => {
     if (!connectedRef.current) {
@@ -2042,6 +2050,7 @@ export function useTrame() {
     searchMessages,
     searchTeams,
     listMeetings,
+    knownMeetings,
     saveTranscript,
     openTranscriptsFolder,
     getTranscriptsFolder,

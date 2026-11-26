@@ -418,22 +418,42 @@ class Watcher:
             except Exception as e:
                 self.log("warn", f"Réunions non lues : {e}")
                 raise ActionError(502, f"Réunions non lues : {e}")
-        folder = transcriptsmod.chosen_dir(cfgmod._home())
-        out = []
+        home = cfgmod._home()
+        fresh = []
         for m in found:
-            if transcript_only and not m.get("transcript"):
-                continue
             when = m.get("when") or ""
             day = transcriptsmod.parse_meeting_date(when)
             start, end = transcriptsmod.parse_meeting_slot(when)
             mid = transcriptsmod.meeting_id(m["thread_id"], m["mid"])
+            fresh.append({**m, "meeting_id": mid, "date": day.isoformat() if day else None, "start": start, "end": end,
+                          "organizer": self._meeting_owners.get(mid, "")})
+        # Gardée dans %APPDATA%\Trame : la liste survit au redémarrage et aux mises à jour,
+        # et une réunion sortie de la fenêtre récente de Teams reste dans la liste.
+        known, _ = transcriptsmod.load_meetings(home)
+        read_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        merged = transcriptsmod.merge_meetings(known, fresh)
+        transcriptsmod.store_meetings(home, merged, read_at)
+        if transcript_only:
+            merged = [m for m in merged if m.get("transcript")]
+        return self._meetings_view(home, merged, read_at)
+
+    def known_meetings(self) -> dict:
+        """La liste de la dernière lecture, gardée sur le poste : rien n'est lu dans Teams."""
+        home = cfgmod._home()
+        known, read_at = transcriptsmod.load_meetings(home)
+        return self._meetings_view(home, known, read_at)
+
+    @staticmethod
+    def _meetings_view(home, items: list[dict], read_at: Optional[str]) -> dict:
+        """Chaque réunion avec son .vtt déjà sur le disque (relu à chaque fois, jamais gardé)."""
+        folder = transcriptsmod.chosen_dir(home)
+        out = []
+        for m in items:
+            day = date.fromisoformat(m["date"]) if m.get("date") else None
             saved = transcriptsmod.saved_file(folder, str(m.get("title") or "Réunion"), day) if m.get("transcript") else None
-            out.append({**m, "meeting_id": mid, "date": day.isoformat() if day else None, "start": start, "end": end,
-                        "organizer": self._meeting_owners.get(mid, ""),
+            out.append({**m, "organizer": m.get("organizer") or "",
                         "saved": {"path": str(saved), "name": saved.name} if saved else None})
-        # La plus récente d'abord ; une réunion sans date lisible en dernier.
-        out.sort(key=lambda m: (m["date"] is not None, m["date"] or "", m["start"] or ""), reverse=True)
-        return {"meetings": out, "directory": str(folder)}
+        return {"meetings": out, "directory": str(folder), "read_at": read_at}
 
     def save_transcript(self, thread_id: str, mid: str, directory: Optional[str] = None,
                         save: bool = True, content: bool = False) -> dict:
@@ -474,6 +494,10 @@ class Watcher:
         key = transcriptsmod.meeting_id(thread_id, str(mid))
         if organizer:
             self._meeting_owners[key] = organizer
+            known, read_at = transcriptsmod.load_meetings(home)
+            if any(m["meeting_id"] == key and m.get("organizer") != organizer for m in known):
+                transcriptsmod.store_meetings(home, [{**m, "organizer": organizer} if m["meeting_id"] == key else m
+                                                     for m in known], read_at or "")
         vtt = transcriptsmod.build_vtt(cues, title=title, day=day, when=when, organizer=organizer)
         transcriptsmod.parse_vtt(vtt)
         complete = bool(res.get("complete", True)) and not res.get("gaps")

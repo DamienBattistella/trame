@@ -489,6 +489,11 @@ def create_app(
         """Finished meetings of the recent meeting chats (opens them in Teams intégré)."""
         return {"ok": True, **watcher.meetings()}
 
+    @app.get("/api/meetings/known")
+    def meetings_known():
+        """The meetings of the last reading, kept on this computer: Teams is not read."""
+        return {"ok": True, **watcher.known_meetings()}
+
     @app.post("/api/meetings/transcript")
     def meeting_transcript(body: TranscriptBody):
         """Read one meeting's transcript in Teams and save it as a .vtt on this computer."""
