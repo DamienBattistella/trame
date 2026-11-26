@@ -4,6 +4,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import datetime
 from typing import Optional
 
 from models import GithubHit
@@ -17,23 +18,91 @@ _TRIGGERS = re.compile(
     re.IGNORECASE,
 )
 _PR_RE = re.compile(r"#(\d+)")
+# A pasted link names its repo exactly: https://github.com/owner/repo/pull/42 (or /issues/42).
+_URL_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/(pull|issues)/(\d+)", re.IGNORECASE)
+
+
+def linked_refs(text: str) -> list[tuple[str, str, int]]:
+    """(kind, repo, number) for each GitHub PR / issue link in the text, de-duplicated."""
+    out: list[tuple[str, str, int]] = []
+    for repo, path, num in _URL_RE.findall(text):
+        ref = ("pr" if path.lower() == "pull" else "issue", repo, int(num))
+        if all((r[1].lower(), r[2]) != (repo.lower(), ref[2]) for r in out):
+            out.append(ref)
+    return out[:MAX_NUMBERS]
 
 
 def is_relevant(text: str) -> bool:
-    return bool(_TRIGGERS.search(text))
+    return bool(_TRIGGERS.search(text) or _URL_RE.search(text))
 
 
 def fetch(text: str, repos: list[str], enabled: bool) -> str:
+    """Facts for the draft: who, what state, who reviews. Linked repos first, then #N
+    looked up in the account's repos. Lets the brain answer instead of promising to look."""
     if not enabled or not is_relevant(text):
         return ""
     refs: list[str] = []
-    for num in _PR_RE.findall(text):
-        for repo in repos[:5]:
-            out = _gh(["pr", "view", num, "--repo", repo, "--json", "title,body,state", "-q", ".title"])
-            if out:
-                refs.append(f"{repo} • PR #{num} : {out}")
+    seen: set[tuple[str, int]] = set()
+    for kind, repo, num in linked_refs(text):
+        line = describe(kind, repo, num)
+        if line:
+            refs.append(line)
+            seen.add((repo.lower(), num))
+    for num in mentioned_numbers(text):
+        if any(n == num for _, n in seen):
+            continue
+        for repo in repos[:MAX_LOOKUP_REPOS]:
+            line = describe("pr", repo, num)
+            if line:
+                refs.append(line)
                 break
     return "\n".join(refs)
+
+
+_PR_FIELDS = "number,title,state,isDraft,author,assignees,reviewRequests,latestReviews,mergedAt,url"
+_ISSUE_FIELDS = "number,title,state,author,assignees,url"
+_STATES = {"OPEN": "ouverte", "MERGED": "mergée", "CLOSED": "fermée"}
+_REVIEWS = {"APPROVED": "approuvée", "CHANGES_REQUESTED": "changements demandés", "COMMENTED": "commentée",
+            "DISMISSED": "avis retiré"}
+
+
+def describe(kind: str, repo: str, num: int) -> str:
+    """One line of facts on a PR or an issue, or "" when gh cannot read it."""
+    sub = "pr" if kind == "pr" else "issue"
+    data = _json(_gh([sub, "view", str(num), "--repo", repo, "--json", _PR_FIELDS if sub == "pr" else _ISSUE_FIELDS],
+                     timeout=CALL_TIMEOUT))
+    if not isinstance(data, dict) or not data.get("url"):
+        return ""
+    state = _STATES.get(str(data.get("state", "")).upper(), str(data.get("state", "")).lower())
+    if sub == "pr" and data.get("isDraft") and state == "ouverte":
+        state = "brouillon"
+    if data.get("mergedAt"):
+        state += f" le {_local(data['mergedAt'])}"
+    facts = [f"état : {state}", f"auteur : {_login(data.get('author')) or 'inconnu'}",
+             f"assignés : {', '.join(filter(None, map(_login, data.get('assignees') or []))) or 'aucun'}"]
+    if sub == "pr":
+        asked = ", ".join(filter(None, map(_login, data.get("reviewRequests") or [])))
+        reviews = ", ".join(f"{_login(r.get('author'))} ({_REVIEWS.get(r.get('state', ''), str(r.get('state', '')).lower())})"
+                            for r in data.get("latestReviews") or [] if isinstance(r, dict) and _login(r.get("author")))
+        facts.append(f"revue demandée à : {asked or 'personne'}")
+        if reviews:
+            facts.append(f"avis : {reviews}")
+    label = "PR" if sub == "pr" else "Issue"
+    return f"{repo} • {label} #{num} « {str(data.get('title', '')).strip()} » — {' ; '.join(facts)} ({data['url']})"
+
+
+def _login(who) -> str:
+    """A user ({login}) or a team ({name} / {slug}) as gh returns them."""
+    if not isinstance(who, dict):
+        return ""
+    return str(who.get("login") or who.get("name") or who.get("slug") or "")
+
+
+def _local(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone().strftime("%d/%m à %H:%M")
+    except ValueError:
+        return str(iso)
 
 
 REPOS_TTL = 600.0
@@ -96,8 +165,10 @@ def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: 
     """Read-only lookup: literal #N first, then PR / issue / commit search per query.
     A #N is looked up first in repos named in the transcript; failing that, if it exists
     in several repos, at most AMBIGUOUS_HITS are kept and flagged as ambiguous.
+    Links (github.com/owner/repo/pull/N) are looked up first, in the repo they name.
     Capped at MAX_HITS, de-duplicated, bounded by DEADLINE overall."""
-    if not repos:
+    links = linked_refs(transcript)
+    if not repos and not links:
         return []
     deadline = time.monotonic() + DEADLINE
     hits: list[GithubHit] = []
@@ -116,9 +187,17 @@ def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: 
     def full() -> bool:
         return len(hits) >= MAX_HITS or time.monotonic() > deadline
 
+    for _kind, repo, num in links:
+        if full():
+            return hits
+        add(_lookup(repo, num, why=f"#{num} lié dans la conversation"))
+    linked = {num for _, _, num in links}
+
     named = named_repos(repos, transcript)
     others = [r for r in repos if r not in named]
     for num in numbers:
+        if num in linked:
+            continue
         found: Optional[GithubHit] = None
         for repo in named[:MAX_LOOKUP_REPOS]:
             if full():
@@ -165,8 +244,8 @@ def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: 
     return hits
 
 
-def _lookup(repo: str, num: int) -> Optional[GithubHit]:
-    why = f"#{num} cité dans la conversation"
+def _lookup(repo: str, num: int, why: str = "") -> Optional[GithubHit]:
+    why = why or f"#{num} cité dans la conversation"
     for kind, sub in (("pr", "pr"), ("issue", "issue")):
         data = _json(_gh([sub, "view", str(num), "--repo", repo, "--json", "number,title,state,url"], timeout=CALL_TIMEOUT))
         if isinstance(data, dict) and data.get("url"):

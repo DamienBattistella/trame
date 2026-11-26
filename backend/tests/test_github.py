@@ -411,3 +411,72 @@ def test_status_parsed_even_when_check_mark_is_mis_decoded():
     text = ("github.com\n  âœ“ Logged in to github.com account DamienBattistella (keyring)\n"
             "  - Active account: true\n  - Token scopes: 'gist', 'read:org', 'repo'\n")
     assert ghauth.parse_auth_status(text) == (True, "DamienBattistella", ["gist", "read:org", "repo"])
+
+
+HUGO = "QUi est assigné https://github.com/Dedalus-ERP-PAS/alliage/pull/4812"
+
+
+class DetailGh:
+    """Stub of `gh pr|issue view N --repo R --json ...` returning full PR facts."""
+
+    def __init__(self, repo="Dedalus-ERP-PAS/alliage"):
+        self.repo = repo
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, timeout=20):
+        self.calls.append(list(args))
+        if args[0] == "pr" and args[1] == "view" and args[4] == self.repo:
+            return json.dumps({
+                "number": int(args[2]), "title": "fix(core): cache Environnement", "state": "MERGED",
+                "isDraft": False, "author": {"login": "HugoLannes"}, "assignees": [],
+                "reviewRequests": [{"__typename": "Team", "name": "Foundation"}],
+                "latestReviews": [{"author": {"login": "alliage-factory"}, "state": "APPROVED"}],
+                "mergedAt": "2026-11-26T12:10:40Z", "url": f"https://github.com/{self.repo}/pull/{args[2]}",
+            })
+        return ""
+
+
+def test_pasted_pr_link_is_relevant_and_parsed():
+    assert gh.is_relevant(HUGO)
+    assert gh.linked_refs(HUGO) == [("pr", "Dedalus-ERP-PAS/alliage", 4812)]
+    assert gh.linked_refs("https://github.com/a/b/issues/7 et github.com/A/B/issues/7") == [("issue", "a/b", 7)]
+
+
+def test_fetch_link_gives_assignees_reviewers_and_state(monkeypatch):
+    stub = DetailGh()
+    monkeypatch.setattr(gh, "_gh", stub)
+    out = gh.fetch(HUGO, ["acme/autre"], True)
+    assert "Dedalus-ERP-PAS/alliage • PR #4812" in out
+    assert "assignés : aucun" in out
+    assert "auteur : HugoLannes" in out
+    assert "revue demandée à : Foundation" in out
+    assert "alliage-factory (approuvée)" in out
+    assert "état : mergée le 26/11" in out
+    # The linked repo is read directly, never guessed among the account's repos.
+    assert [c[4] for c in stub.calls] == ["Dedalus-ERP-PAS/alliage"]
+
+
+def test_fetch_link_and_same_hash_number_read_once(monkeypatch):
+    stub = DetailGh()
+    monkeypatch.setattr(gh, "_gh", stub)
+    out = gh.fetch(HUGO + " (#4812)", ["acme/autre"], True)
+    assert out.count("#4812") == 1
+    assert len(stub.calls) == 1
+
+
+def test_fetch_hash_number_still_searches_account_repos(monkeypatch):
+    stub = DetailGh("acme/portail")
+    monkeypatch.setattr(gh, "_gh", stub)
+    out = gh.fetch("la PR #12 est bloquée", ["acme/interop", "acme/portail"], True)
+    assert out.startswith("acme/portail • PR #12")
+
+
+def test_fetch_unreadable_link_gives_nothing(monkeypatch):
+    monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: "")
+    assert gh.fetch(HUGO, [], True) == ""
+
+
+def test_search_looks_up_link_even_without_account_repos(monkeypatch):
+    monkeypatch.setattr(gh, "_gh", ViewGh(["Dedalus-ERP-PAS/alliage"]))
+    hits = gh.search([], [], [], True, HUGO)
+    assert [(h.repo, h.number, h.why) for h in hits] == [("Dedalus-ERP-PAS/alliage", 4812, "#4812 lié dans la conversation")]
