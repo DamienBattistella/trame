@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { BookOpenText, Check, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -174,7 +174,12 @@ export function DiscussionView({
 }) {
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [text, setText] = useState(draft?.proposal ?? "");
+  // La réponse proposée n'entre pas d'office dans la zone de saisie : elle s'y montre
+  // en texte fantôme tant que la zone est vide, et Tab (ou le badge) l'y fait entrer.
+  const [text, setText] = useState("");
+  const [ghost, setGhost] = useState(draft?.proposal ?? "");
+  // Échap masque la proposition ; la moindre frappe la rend au prochain champ vide.
+  const [ghostHidden, setGhostHidden] = useState(false);
   const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss" | "correct">("idle");
   // Correction proposée, à accepter ou rejeter ; puis de quoi l'annuler tant que le texte n'a pas bougé.
   const [review, setReview] = useState<{ before: string; after: string } | null>(null);
@@ -199,7 +204,11 @@ export function DiscussionView({
   const [chosen, setChosen] = useState<string[]>([]);
   const [mentioning, setMentioning] = useState<{ at: number; query: string; index: number } | null>(null);
   const [entourage, setEntourage] = useState<string[]>([]);
-  const base = useRef(draft?.proposal ?? "");
+  // `base` : la proposition acceptée telle quelle dans la zone (vide sinon) ;
+  // `seen` : la dernière proposition du moteur déjà prise en compte.
+  const base = useRef("");
+  const seen = useRef(draft?.proposal ?? "");
+  const ghostId = useId();
   const controls = useAnimationControls();
   const scroller = useRef<StickToBottomContext>(null);
   const foundRef = useRef<HTMLDivElement>(null);
@@ -256,8 +265,11 @@ export function DiscussionView({
   useEffect(() => {
     setMessages(null);
     setFiles([]);
-    setText(draft?.proposal ?? "");
-    base.current = draft?.proposal ?? "";
+    setText("");
+    setGhost(draft?.proposal ?? "");
+    setGhostHidden(false);
+    base.current = "";
+    seen.current = draft?.proposal ?? "";
     setFresher(null);
     setReview(null);
     setUndo(null);
@@ -290,14 +302,42 @@ export function DiscussionView({
     return () => io.disconnect();
   }, [edge, messages === null, c.threadId]);
 
-  // Nouveau message pendant la lecture : la proposition est mise à jour sans écraser ton texte.
+  // Toute nouvelle proposition remplace le texte fantôme. Elle remplace aussi une
+  // proposition déjà acceptée et pas retouchée ; jamais un texte que tu as écrit,
+  // à qui elle est seulement offerte (« Utiliser »).
+  const offer = (next: string) => {
+    setGhost(next);
+    setGhostHidden(false);
+    if (!text) return;
+    if (text.trim() === base.current.trim()) {
+      setText(next);
+      base.current = next;
+    } else if (next) setFresher(next);
+  };
+
+  // Nouveau message pendant la lecture : la proposition suit, sans écraser ton texte.
   useEffect(() => {
     const next = draft?.proposal ?? "";
-    if (next === base.current) return;
-    if (text.trim() === base.current.trim()) setText(next);
-    else if (next) setFresher(next);
-    base.current = next;
+    if (next === seen.current) return;
+    seen.current = next;
+    offer(next);
   }, [draft?.proposal]);
+
+  const showGhost = !text && !!ghost && !ghostHidden;
+  // Tab ou le badge : la proposition devient ton message, curseur à la fin.
+  const acceptGhost = () => {
+    if (!showGhost) return;
+    setText(ghost);
+    base.current = ghost;
+    setFresher(null);
+    setReview(null);
+    requestAnimationFrame(() => {
+      const box = composer.current;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(ghost.length, ghost.length);
+    });
+  };
 
   const fail = (title: string, error: string) => {
     controls.start(shake);
@@ -393,6 +433,7 @@ export function DiscussionView({
     const shownText = [body, ...files.map((f) => `Pièce jointe : ${f.name}`)].filter(Boolean).join("\n");
     setMessages((m) => [...(m ?? []), { sender: "Toi", text: shownText, at: "à l'instant", mine: true, replyTo: target }]);
     setText("");
+    setGhost("");
     setFiles([]);
     setReplyTo(null);
     setChosen([]);
@@ -426,6 +467,7 @@ export function DiscussionView({
     setBusy("idle");
     if (!res.ok) return fail("Impossible d'ignorer la réponse proposée", res.error);
     setText("");
+    setGhost("");
     base.current = "";
   };
 
@@ -434,7 +476,7 @@ export function DiscussionView({
     const res = await trame.suggestInThread(c.threadId, replyTo);
     setBusy("idle");
     if (!res.ok) return fail("Proposition impossible", res.error);
-    setText(res.text);
+    offer(res.text);
   };
 
   const verify = async () => {
@@ -496,7 +538,17 @@ export function DiscussionView({
     scroller.current?.stopScroll();
     foundRef.current?.scrollIntoView({ block: "center" });
   }, [found, foundIndex, messages]);
-  const edited = draft && text.trim() !== draft.proposal.trim();
+  const edited = !!text && text.trim() !== base.current.trim();
+  const status = !text
+    ? ghost
+      ? ghostHidden
+        ? "Réponse proposée · masquée"
+        : "Réponse proposée · Tab pour l'utiliser"
+      : "Réponse proposée · ignorée"
+    : edited
+      ? "Ta réponse · modifiée"
+      : "Réponse proposée · modifiable";
+  const showFresher = !!fresher && !!text && fresher.trim() !== text.trim();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -681,20 +733,24 @@ export function DiscussionView({
         }}
       >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-          {draft && (
+          {(draft || showFresher) && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={cn("size-1.5 rounded-full", edited ? "bg-link" : "bg-warning")} />
-              {edited ? "Ta réponse · modifiée" : "Réponse proposée · modifiable"}
-              {draft.usedGithub && (
+              {draft && (
+                <>
+                  <span className={cn("size-1.5 rounded-full", edited ? "bg-link" : "bg-warning")} />
+                  {status}
+                </>
+              )}
+              {draft?.usedGithub && (
                 <span className="ml-2 flex min-w-0 items-center gap-1 truncate">
                   <GithubLogo className="size-3.5 shrink-0" /> {draft.usedGithub}
                 </span>
               )}
               <AnimatePresence initial={false}>
-                {fresher && fresher.trim() !== text.trim() && (
+                {showFresher && (
                   <motion.span key="fresher" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="ml-auto flex items-center gap-1">
                     Nouvelle proposition
-                    <Button size="sm" variant="ghost" className="h-6 rounded-full px-2 text-link" onClick={() => { setText(fresher); setFresher(null); }}>
+                    <Button size="sm" variant="ghost" className="h-6 rounded-full px-2 text-link" onClick={() => { setText(fresher!); base.current = fresher!; setFresher(null); }}>
                       Utiliser
                     </Button>
                   </motion.span>
@@ -812,13 +868,18 @@ export function DiscussionView({
                 </motion.ul>
               )}
             </AnimatePresence>
+            {/* Zone de saisie et texte fantôme dans la même case de grille : la zone
+                grandit à la hauteur de la proposition, sur plusieurs lignes si besoin. */}
+            <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
             <Textarea
               ref={composer}
               aria-label={replyTo ? `Réponse au message de ${replyTo.sender}` : `Message à ${c.displayName}`}
-              placeholder={replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
+              placeholder={showGhost ? undefined : replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
+              aria-describedby={showGhost ? ghostId : undefined}
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
+                setGhostHidden(false);
                 // Le texte a changé : la correction affichée ne lui correspond plus.
                 setReview(null);
                 followMention(e.target.value, e.target.selectionStart);
@@ -830,9 +891,16 @@ export function DiscussionView({
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                   e.preventDefault();
                   send();
+                } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && showGhost) {
+                  // Sans proposition, ou zone non vide, Tab garde son rôle : passer au contrôle suivant.
+                  e.preventDefault();
+                  acceptGhost();
                 } else if (e.key === "Escape" && replyTo) {
                   e.preventDefault();
                   setReplyTo(null);
+                } else if (e.key === "Escape" && showGhost) {
+                  e.preventDefault();
+                  setGhostHidden(true);
                 }
               }}
               disabled={busy === "send" || busy === "correct"}
@@ -843,6 +911,32 @@ export function DiscussionView({
                 dragging && "border-dashed border-primary"
               )}
             />
+            {showGhost && (
+              <div
+                id={ghostId}
+                data-testid="ghost-proposal"
+                // Mêmes bordure, marges et corps que la zone : le fantôme est à la place du texte.
+                className="pointer-events-none z-10 max-h-48 overflow-hidden border border-transparent px-3 py-2 text-base break-words whitespace-pre-wrap text-muted-foreground md:text-sm"
+              >
+                <span className="sr-only">Réponse proposée, Tab pour l'utiliser : </span>
+                {ghost}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-hidden
+                  title="Utiliser la réponse proposée (Tab)"
+                  // mousedown : garder le focus dans la zone de saisie.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    acceptGhost();
+                  }}
+                  className="pointer-events-auto ml-1.5 inline-flex -translate-y-px cursor-pointer items-center gap-1 rounded border bg-background/80 px-1.5 align-middle font-sans text-[11px] leading-4 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                >
+                  <span>⇥</span> Tab
+                </button>
+              </div>
+            )}
+            </div>
           </div>
           {dragging && <p className="text-center text-xs text-primary">Dépose ici pour joindre · {limits && limitsText(limits)}</p>}
           {files.length > 0 && (
