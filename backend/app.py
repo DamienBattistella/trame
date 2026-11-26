@@ -169,6 +169,24 @@ class ReportAnswerBody(BaseModel):
     text: str = Field(max_length=4000)
 
 
+class PublishPlanBody(BaseModel):
+    report_id: str = Field(max_length=100)
+
+
+class PublishBody(BaseModel):
+    report_id: str = Field(max_length=100)
+    repo: str = Field(max_length=200)
+    path: Optional[str] = Field(default=None, max_length=400)
+    draft: Optional[bool] = None
+
+
+class ReportStateBody(BaseModel):
+    meeting_id: str = Field(default="", max_length=300)
+    title: str = Field(default="", max_length=300)
+    date: Optional[str] = Field(default=None, max_length=10)
+    path: Optional[str] = Field(default=None, max_length=600)
+
+
 class FollowUpSendBody(BaseModel):
     text: Optional[str] = Field(default=None, max_length=8000)
 
@@ -690,6 +708,25 @@ def create_app(
     def github_login_cancel():
         gh_auth.cancel()
         return {"ok": True}
+
+    @app.post("/api/github/publish/plan")
+    def github_publish_plan(body: PublishPlanBody):
+        """What publishing this report would do: target repo (guessed or to pick), branch,
+        file path, whether it is already there, and why publishing may be blocked. No write."""
+        return {"ok": True, "plan": watcher.github_publish_plan(body.report_id, gh_auth.status())}
+
+    @app.post("/api/github/publish")
+    def github_publish(body: PublishBody):
+        """Open a draft pull request adding the report's .md to the chosen repo. Reached only
+        from the explicit button, after the user confirmed the repo, branch, path and preview."""
+        return {"ok": True, **watcher.github_publish(body.report_id, body.repo, body.path, body.draft, gh_auth.status())}
+
+    @app.post("/api/github/report-state")
+    def github_report_state(body: ReportStateBody):
+        """Is this meeting's report already on its linked repo (file or open PR)? For the
+        meetings list, so the user does not re-run the skill for nothing."""
+        return {"ok": True, "state": watcher.github_report_state(body.meeting_id, body.title, body.date, body.path,
+                                                                 gh_auth.status())}
 
     @app.post("/api/soul")
     def post_soul(body: SoulBody):

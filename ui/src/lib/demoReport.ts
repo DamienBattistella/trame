@@ -102,6 +102,7 @@ export function demoSession(m: Meeting, dir: string): ReportSession {
     report: "",
     error: "",
     savedPath: "",
+    published: null,
     runId: "",
     pendingPrompt: "",
     startedAt: new Date().toTimeString().slice(0, 8),

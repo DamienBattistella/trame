@@ -148,7 +148,9 @@ def test_settings_get(make_client):
         "onboarded": False,
         "brain": "claude",
         "models": {"claude_model": "haiku", "claude_effort": "", "copilot_model": "gpt-6-luna", "copilot_effort": "low"},
-        "github": {"enabled": True, "all_repos": True},
+        "github": {"enabled": True, "all_repos": True,
+                   "write": {"enabled": False, "all_repos": False, "repos_allowlist": [],
+                             "path_template": "docs/comptes-rendus/{date}-{slug}.md", "draft": True}},
         "safety": {
             "auto_pause_on_screen_share": True,
             "selftest_gate": True,
@@ -178,7 +180,8 @@ def test_settings_put_partial_hot_swap_and_persist(make_client, fresh_home):
     s = r.json()["settings"]
     assert s["brain"] == "copilot" and s["safety"]["countdown_seconds"] == 12
     assert s["safety"]["auto_pause_on_screen_share"] is True
-    assert s["github"] == {"enabled": True, "all_repos": False}
+    assert s["github"]["enabled"] is True and s["github"]["all_repos"] is False
+    assert s["github"]["write"]["enabled"] is False
     assert watcher.brain is not old_brain and isinstance(watcher.brain, FakeBrain) and watcher.brain.name == "copilot"
     assert watcher.state.brain == "copilot"
     assert watcher.cfg["reply"]["auto_send_countdown_seconds"] == 12
