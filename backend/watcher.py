@@ -502,6 +502,22 @@ class Watcher:
         self._persist_watchlist()
         return count
 
+    def refresh_conversations(self) -> int:
+        """Read the conversation list again from Teams (asked from Réglages › Conversations)."""
+        read = getattr(self.driver, "list_all_conversations", self.driver.list_conversations)
+        try:
+            discovered = read()
+        except Exception as e:
+            raise ActionError(502, f"Teams n'a pas rendu la liste des conversations : {e}")
+        if not discovered:
+            raise ActionError(409, "Teams n'a rendu aucune conversation. La liste est gardée telle quelle.")
+        with self._lock:
+            self.state.watchlist = self._merge(discovered)
+            count = len(self.state.watchlist)
+        self._persist_watchlist()
+        self.log("info", f"Conversations actualisées : {count}")
+        return count
+
     def _persist_watchlist(self) -> None:
         with self._lock:
             cfg = dict(self.cfg)

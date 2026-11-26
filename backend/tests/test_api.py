@@ -433,3 +433,24 @@ def test_copilot_defaults_to_gpt_6_luna_low():
     assert c.args[c.args.index("--model") + 1] == "gpt-6-luna"
     assert c.args[c.args.index("--reasoning-effort") + 1] == "low"
     assert c.args.index("--reasoning-effort") < c.args.index("-p") and c.timeout == 45.0
+
+
+def test_refresh_conversations_adds_new_ones_and_keeps_choices(make_client):
+    from models import Surface, WatchEntity
+    client, watcher, driver = make_client()
+    first = watcher.state.watchlist[0]
+    first.watch, first.mode = True, "auto"
+    before = len(watcher.state.watchlist)
+    driver._convs.append(WatchEntity(thread_id="name:Nouvelle", display_name="Nouvelle", surface=Surface.dm))
+    r = client.post("/api/conversations/refresh")
+    assert r.status_code == 200 and r.json()["count"] == before + 1
+    by = {w.thread_id: w for w in watcher.state.watchlist}
+    assert "name:Nouvelle" in by and by[first.thread_id].watch and by[first.thread_id].mode == "auto"
+
+
+def test_refresh_conversations_keeps_the_list_when_teams_gives_nothing(make_client):
+    client, watcher, driver = make_client()
+    before = list(watcher.state.watchlist)
+    driver._convs = []
+    assert client.post("/api/conversations/refresh").status_code == 409
+    assert watcher.state.watchlist == before

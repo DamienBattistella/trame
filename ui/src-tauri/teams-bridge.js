@@ -7,6 +7,18 @@
   const norm = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const rail = () => document.querySelector('[role="tree"]');
   const items = () => Array.from(rail()?.querySelectorAll('[role="treeitem"]') || []);
+  const railItems = () =>
+    items().map((el) => ({
+      label: label(el),
+      aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
+      id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
+    }));
+  const railScroller = () => {
+    for (let el = rail(); el && el !== document.body; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+    }
+    return null;
+  };
   const titleName = () => {
     const p = document.title.split("|").map((x) => x.trim());
     return p.length >= 3 ? p.slice(1, -1).join(" | ").replace(/\s*\((you|vous|moi)\)\s*$/i, "") : null;
@@ -156,12 +168,26 @@
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     title: () => document.title,
-    list: () =>
-      items().map((el) => ({
-        label: label(el),
-        aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
-        id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
-      })),
+    // deep : Teams ne dessine que le début de la liste. On la fait défiler jusqu'en bas
+    // pour charger la suite, en cumulant ce qui passe, puis on revient où elle était.
+    list: async ({ deep } = {}) => {
+      const box = deep ? railScroller() : null;
+      if (!box) return railItems();
+      const seen = new Map();
+      const add = () => railItems().forEach((it) => seen.has(it.id || it.label) || seen.set(it.id || it.label, it));
+      const top = box.scrollTop;
+      const end = Date.now() + 12000;
+      add();
+      for (let still = 0; still < 3 && Date.now() < end && !late(); ) {
+        const before = `${seen.size}/${box.scrollHeight}/${box.scrollTop}`;
+        box.scrollTop += Math.max(200, box.clientHeight * 0.8);
+        await sleep(300);
+        add();
+        still = before === `${seen.size}/${box.scrollHeight}/${box.scrollTop}` ? still + 1 : 0;
+      }
+      box.scrollTop = top;
+      return Array.from(seen.values());
+    },
     open: async ({ name }) => {
       if (isOpen(name)) return { ok: true, title: document.title };
       const item = findItem(name);

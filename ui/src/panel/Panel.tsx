@@ -158,6 +158,12 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
       <ConversationList
         items={trame.state.watchlist}
         onBulk={(ids, watch) => trame.setWatchMany(ids, watch).then(report("Mise à jour groupée impossible"))}
+        onRefresh={() =>
+          trame.refreshConversations().then((res) => {
+            if (!res.ok) toast.error("Actualisation impossible", { description: res.error });
+            else toast.success(`${res.count} conversation${res.count > 1 ? "s" : ""} dans Teams`);
+          })
+        }
         className="h-[52vh]"
         renderRow={(c) => (
           <div className="group flex min-h-14 items-center gap-3 px-4 py-2">

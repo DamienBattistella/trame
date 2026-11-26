@@ -128,3 +128,20 @@ def test_teams_web_labels_give_clean_names_stable_ids_and_new_messages():
     new = w.diff([("name:Romain CUREAU", rail[0]["label"])], {})
     assert len(new) == 1 and (new[0].sender, new[0].text) == ("Romain CUREAU", "tu as vu ma PR ?")
     assert w.diff([("name:Romain CUREAU", "Romain CUREAU 10:42 Vous : oui")], {}) == []
+
+
+def test_deep_list_asks_the_page_for_everything_and_drops_duplicates():
+    d = WebBridgeDriver()
+    calls = []
+
+    def rpc(op, **kw):
+        calls.append((op, kw))
+        return [{"label": "Romain CUREAU 25/11 ok", "aria": "", "id": ""},
+                {"label": "Hugo Lannes 24/11 vu", "aria": "", "id": ""},
+                {"label": "Romain CUREAU 25/11 ok !", "aria": "", "id": ""}]
+
+    d._rpc = rpc
+    assert [c.display_name for c in d.list_all_conversations()] == ["Romain CUREAU", "Hugo Lannes"]
+    assert calls == [("list", {"timeout": 20, "deep": True})]
+    d.list_conversations()
+    assert calls[-1] == ("list", {})
