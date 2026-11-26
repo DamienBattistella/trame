@@ -29,6 +29,7 @@ from brain.base import Brain
 from brain.claude import ClaudeBrain
 from brain.copilot import CopilotBrain
 from drivers.base import TeamsDriver
+from github import context as ghctx
 from github.auth import GithubAuth
 from brain.auth import ClaudeAuth
 
@@ -432,6 +433,14 @@ def create_app(
     @app.get("/api/github/status")
     def github_status():
         return {"ok": True, "github": gh_auth.status().model_dump()}
+
+    @app.get("/api/github/link")
+    def github_link(kind: str, repo: str, number: int):
+        """Title and state of a PR / issue linked in a message; null when GitHub is off or unreadable."""
+        if not watcher.get_settings().github.enabled:
+            return {"ok": True, "link": None}
+        hit = ghctx.link_info(kind, repo, number)
+        return {"ok": True, "link": hit.model_dump() if hit else None}
 
     @app.post("/api/github/login")
     def github_login():

@@ -1,23 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { History, Loader2, MessageSquareText, Search } from "lucide-react";
 import { Trame } from "@/api";
+import { MessageText } from "@/components/MessageText";
 import { fold } from "@/lib/textSearch";
 import { cn } from "@/lib/utils";
 import { MessageHit, SearchScope } from "@/types";
 
 const DEBOUNCE_MS = 250;
 
-/** Texte avec la plage [début, fin) surlignée. */
+/** Extrait avec la plage [début, fin) surlignée ; liens raccourcis, pas cliquables (la ligne entière l'est). */
 export function Highlight({ text, range }: { text: string; range: [number, number] | null }) {
-  if (!range) return <>{text}</>;
-  const [s, e] = range;
-  return (
-    <>
-      {text.slice(0, s)}
-      <mark className="rounded-sm bg-warning/30 px-0.5 text-foreground">{text.slice(s, e)}</mark>
-      {text.slice(e)}
-    </>
-  );
+  return <MessageText text={text} range={range} interactive={false} />;
 }
 
 function since(iso: string) {
