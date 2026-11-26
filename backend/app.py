@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import config as cfgmod
+import journal as journalmod
 import soul_template as soultpl
 from mcp_server import make_router as make_mcp_router
 import settings as settingsmod
@@ -449,9 +450,21 @@ def create_app(
         watcher.teams_ready(bool(status.get("ready")))
         return {"ok": True, "status": {"enabled": True, **status}}
 
+    @app.get("/api/logs")
+    def logs(q: str = "", levels: str = "", since: str = "", before: str = "", limit: int = 100):
+        """Activité kept across restarts, newest first, filtered and paged (`before` = `next`)."""
+        res = watcher.journal.query(q, journalmod.parse_levels(levels), journalmod.local_iso(since),
+                                    journalmod.local_iso(before), max(1, min(500, limit)))
+        return {"ok": True, **res, "items": [i.model_dump() for i in res["items"]]}
+
     @app.get("/api/logs/export")
-    def logs_export():
-        return {"ok": True, "filename": f"trame-journaux-{datetime.now():%Y%m%d-%H%M%S}.txt", "text": watcher.export_logs()}
+    def logs_export(q: str = "", levels: str = "", since: str = ""):
+        stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+        since_iso = journalmod.local_iso(since)
+        if q.strip() or set(journalmod.parse_levels(levels)) != set(journalmod.LEVELS) or since_iso:
+            return {"ok": True, "filename": f"trame-activite-{stamp}.txt",
+                    "text": watcher.export_activity(q, journalmod.parse_levels(levels), since_iso)}
+        return {"ok": True, "filename": f"trame-journaux-{stamp}.txt", "text": watcher.export_logs()}
 
     @app.post("/api/diagnostics/teams")
     def diagnostics(body: DiagnosticBody):

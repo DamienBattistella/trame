@@ -69,6 +69,7 @@ def test_status_logs_and_telemetry_tools(make_client):
     assert status["teams"]["driver"] and "followed" in status
     logs = tool("get_logs", level="warn")
     assert logs and all(l["level"] == "warn" for l in logs) and not any("40k" in l["text"] for l in logs)
+    assert [l["level"] for l in tool("get_logs", query="ALICE")] == ["warn"] and tool("get_logs", query="zzz") == []
     full = tool("get_logs", full=True)
     assert full["text"].startswith("# Trame : journaux")
     assert "records" in tool("get_telemetry", limit=5)

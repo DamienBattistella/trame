@@ -17,6 +17,8 @@ ui/src-tauri/icons/*
 
 # backend runtime
 backend/logs/
+/journal.jsonl
+/journal.tmp
 
 # generated preview (regenerable)
 ui/gallery.html

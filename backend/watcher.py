@@ -13,6 +13,7 @@ import safety
 import people as peoplemod
 import presence as presencemod
 import search as searchmod
+import journal as journalmod
 import telemetry
 from drivers import rail_label
 import settings as settingsmod
@@ -66,6 +67,7 @@ class Watcher:
         # thread id -> (read at, messages, how many were asked, start of the conversation reached)
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
         self.archive = searchmod.MessageArchive()
+        self.journal = journalmod.Journal(cfgmod.HOME / "journal.jsonl")
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
@@ -1000,6 +1002,7 @@ class Watcher:
             self.state.drafts = []
             self.state.notices = []
             self.state.logs = []
+            self.journal.clear()
             self.state.paused = False
             self.state.onboarded = False
             self.state.brain = cfg.get("brain", {}).get("provider", "claude")
@@ -1147,6 +1150,22 @@ class Watcher:
         out += ["", "## OpenTelemetry (otel.jsonl, fin)"] + ([l.rstrip("\n") for l in otel] or ["(désactivé ou vide)"])
         return "\n".join(out) + "\n"
 
+    def export_activity(self, q: str, levels: list[str], since: Optional[str]) -> str:
+        """The Activité lines the panel's search and filters keep, as text (Copier /
+        Exporter on a filtered view). Message text quoted « … » stays masked unless allowed."""
+        res = self.journal.query(q, levels, since, limit=self.journal.max_entries)
+        crit = [f"recherche « {q.strip()} »" if q.strip() else "",
+                "niveaux : " + ", ".join(levels) if set(levels) != set(journalmod.LEVELS) else "",
+                f"depuis le {datetime.fromisoformat(since):%d/%m/%Y %H:%M}" if since else ""]
+        out = ["# Trame : activité filtrée",
+               f"Exporté le {datetime.now():%d/%m/%Y %H:%M:%S} · {res['total']} ligne(s) · " + (" · ".join(c for c in crit if c)),
+               ""]
+        out += [f"{datetime.fromisoformat(l.ts):%d/%m/%Y %H:%M:%S}  {l.level:<5}  {telemetry.redact(l.text)}"
+                for l in res["items"]] or ["(aucune ligne)"]
+        return "\n".join(out) + "\n"
+
     def log(self, level, text: str) -> None:
         telemetry.event(level, text)
-        self.state.logs = [LogItem(at=datetime.now().strftime("%H:%M:%S"), level=level, text=text), *self.state.logs][:200]
+        item = journalmod.now_item(level, text)
+        self.journal.append(item)
+        self.state.logs = [item, *self.state.logs][:200]
