@@ -1,6 +1,7 @@
 from __future__ import annotations
 import copy
 import re
+import secrets
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -44,6 +45,11 @@ class TelemetrySettings(BaseModel):
         return v
 
 
+class McpSettings(BaseModel):
+    enabled: bool = False
+    token: str = ""
+
+
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
@@ -51,6 +57,7 @@ class Settings(BaseModel):
     safety: SafetySettings
     brief: BriefSettings
     telemetry: TelemetrySettings = TelemetrySettings()
+    mcp: McpSettings = McpSettings()
 
 
 class _Patch(BaseModel):
@@ -80,6 +87,11 @@ class TelemetryPatch(_Patch):
     include_content: Optional[bool] = None
 
 
+class McpPatch(_Patch):
+    enabled: Optional[bool] = None
+    regenerate_token: Optional[bool] = None
+
+
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
@@ -87,6 +99,7 @@ class SettingsPatch(_Patch):
     safety: Optional[SafetyPatch] = None
     brief: Optional[BriefPatch] = None
     telemetry: Optional[TelemetryPatch] = None
+    mcp: Optional[McpPatch] = None
 
 
 def _int(value, default: int, lo: int, hi: int) -> int:
@@ -120,6 +133,7 @@ def from_config(cfg: dict) -> Settings:
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
         telemetry=_telemetry(cfg.get("telemetry", {})),
+        mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or "")),
     )
 
 
@@ -140,7 +154,11 @@ def _merge(base: dict, patch: dict) -> dict:
 
 def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     """Deep-merge a partial settings patch and map it back onto the config.json keys."""
-    merged = Settings.model_validate(_merge(from_config(cfg).model_dump(), patch.model_dump(exclude_unset=True, exclude_none=True)))
+    raw = patch.model_dump(exclude_unset=True, exclude_none=True)
+    regenerate = bool(raw.get("mcp", {}).pop("regenerate_token", False))
+    merged = Settings.model_validate(_merge(from_config(cfg).model_dump(), raw))
+    if merged.mcp.enabled and (regenerate or not merged.mcp.token):
+        merged.mcp.token = secrets.token_urlsafe(24)
     out = copy.deepcopy(cfg)
     out["onboarded"] = merged.onboarded
     out.setdefault("brain", {})["provider"] = merged.brain
@@ -156,4 +174,5 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     out["telemetry"] = merged.telemetry.model_dump()
+    out["mcp"] = merged.mcp.model_dump()
     return out, merged

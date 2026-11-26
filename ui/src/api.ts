@@ -106,6 +106,7 @@ function mapSettings(s: any): Settings {
       endpoint: String(s?.telemetry?.endpoint ?? ""),
       includeContent: Boolean(s?.telemetry?.include_content),
     },
+    mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? "") },
   };
 }
 function mapBrief(b: any): Brief {
@@ -197,6 +198,12 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.telemetry.includeContent !== undefined) t.include_content = p.telemetry.includeContent;
     out.telemetry = t;
   }
+  if (p.mcp) {
+    const m: Record<string, unknown> = {};
+    if (p.mcp.enabled !== undefined) m.enabled = p.mcp.enabled;
+    if (p.mcp.regenerateToken) m.regenerate_token = true;
+    out.mcp = m;
+  }
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -208,6 +215,10 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
     telemetry: { ...s.telemetry, ...p.telemetry },
+    mcp: {
+      enabled: p.mcp?.enabled ?? s.mcp.enabled,
+      token: p.mcp?.enabled && !s.mcp.token ? "demo-jeton-local" : s.mcp.token,
+    },
   };
 }
 
@@ -242,6 +253,7 @@ let localSettings: Settings = {
   },
   brief: { enabled: true, lastMessages: 30 },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
+  mcp: { enabled: false, token: "" },
 };
 const localBriefs = new Map<string, Brief>();
 

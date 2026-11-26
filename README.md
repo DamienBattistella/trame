@@ -75,6 +75,8 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 - **Connexion GitHub intégrée** : « Se connecter à GitHub » dans le wizard ou les Réglages affiche le code à usage unique ; la connexion passe par `gh`, et Trame signale les organisations qui exigent le SSO.
 - **Contexte GitHub** (lecture seule) : quand un message parle d'une PR ou d'une issue, Trame consulte tes dépôts pour répondre juste. Il n'écrit jamais sur GitHub.
 - **Mise à jour automatique** : au lancement, Trame vérifie la dernière version publiée sur GitHub, la télécharge, l'installe et redémarre. Les mises à jour sont signées ; une mise à jour non signée ou corrompue est refusée.
+- **Serveur MCP local** (facultatif) : Claude Code, Copilot ou Jarvis lisent tes discussions et te proposent des réponses via `http://127.0.0.1:8731/mcp` (jeton). Aucun outil n'envoie : une réponse proposée attend ton clic dans « À relire ».
+- **Journaux pour le débogage** : traces et journaux OpenTelemetry (OTLP/HTTP ou fichier local), export manuel en un clic (copier ou fichier), texte des messages masqué par défaut.
 - **Application de bureau discrète** : icône dans la barre des tâches, démarrage avec Windows, fermer la fenêtre la réduit, instance unique, taille et position mémorisées.
 
 ## Sécurité

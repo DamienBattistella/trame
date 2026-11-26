@@ -356,6 +356,19 @@ class Watcher:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
 
+    def propose_external_reply(self, thread_id: str, text: str) -> Draft:
+        """A reply prepared by an outside assistant (MCP): it waits in « À relire »,
+        never sent without the user's click."""
+        entity = self._conversation(thread_id)
+        body = text.strip()
+        if not body:
+            raise ActionError(422, "La réponse proposée est vide.")
+        msg = IncomingMessage(thread_id=thread_id, sender=entity.display_name, received_at=datetime.now().strftime("%H:%M"),
+                              text="Réponse préparée par un assistant externe (MCP).", surface=entity.surface)
+        self._queue_draft(msg, body[:4000], "draft", None)
+        self.log("draft", f"Réponse proposée via MCP pour {entity.display_name}")
+        return next(d for d in self.state.drafts if d.thread_id == thread_id)
+
     def show_in_teams(self, thread_id: str) -> None:
         """Open the conversation in Teams for the user (Trame types nothing)."""
         name = next((w.display_name for w in self.state.watchlist if w.thread_id == thread_id), thread_id)

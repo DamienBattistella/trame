@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import config as cfgmod
 import soul_template as soultpl
+from mcp_server import make_router as make_mcp_router
 from settings import SettingsPatch
 from watcher import ActionError, Watcher
 from brain.base import Brain
@@ -346,6 +347,8 @@ def create_app(
     def reset(body: ResetBody):
         watcher.factory_reset()
         return {"ok": True}
+
+    app.include_router(make_mcp_router(watcher))
 
     @app.get("/api/logs/export")
     def logs_export():

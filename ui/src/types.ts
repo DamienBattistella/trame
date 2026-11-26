@@ -48,6 +48,7 @@ export interface Settings {
   };
   brief: { enabled: boolean; lastMessages: number };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
+  mcp: { enabled: boolean; token: string };
 }
 
 export interface SettingsPatch {
@@ -57,6 +58,7 @@ export interface SettingsPatch {
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;
   telemetry?: Partial<Settings["telemetry"]>;
+  mcp?: { enabled?: boolean; regenerateToken?: boolean };
 }
 
 export type GithubKind = "pr" | "issue" | "commit";

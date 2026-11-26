@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -25,6 +25,7 @@ import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
+import { McpSettings } from "@/components/McpSettings";
 import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
@@ -246,7 +247,7 @@ function Logs({ logs, trame }: { logs: LogItem[]; trame: Trame }) {
   );
 }
 
-type Section = "brain" | "github" | "safety" | "brief" | "telemetry";
+type Section = "brain" | "github" | "safety" | "brief" | "telemetry" | "mcp";
 type SaveState = "idle" | "saving" | "saved";
 
 const COUNTDOWNS = [3, 5, 10];
@@ -280,21 +281,22 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "telemetry" | "advanced";
+type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "telemetry" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", telemetry: "idle" });
-  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, telemetry: 0 });
+  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", telemetry: "idle", mcp: "idle" });
+  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, telemetry: 0, mcp: 0 });
   const timers = useRef<Partial<Record<Section, ReturnType<typeof setTimeout>>>>({});
   const brainCtl = useAnimationControls();
   const githubCtl = useAnimationControls();
   const safetyCtl = useAnimationControls();
   const briefCtl = useAnimationControls();
   const telemetryCtl = useAnimationControls();
-  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, telemetry: telemetryCtl };
+  const mcpCtl = useAnimationControls();
+  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, telemetry: telemetryCtl, mcp: mcpCtl };
 
   const load = async () => {
     setLoadError(null);
@@ -519,6 +521,18 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             value={settings.telemetry}
             onChange={(telemetry) => update("telemetry", { telemetry: { ...settings.telemetry, ...telemetry } })}
           />
+        </motion.div>
+      ),
+    },
+    {
+      id: "mcp",
+      label: "MCP",
+      icon: Plug,
+      desc: "Laisser Claude Code, Copilot ou Jarvis lire tes discussions et te proposer des réponses.",
+      state: save.mcp,
+      body: (
+        <motion.div animate={mcpCtl}>
+          <McpSettings value={settings.mcp} onChange={(mcp) => update("mcp", { mcp })} />
         </motion.div>
       ),
     },
