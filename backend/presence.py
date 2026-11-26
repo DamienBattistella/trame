@@ -6,6 +6,7 @@ rather than a wrong dot."""
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 
 Presence = Literal["available", "busy", "in_call", "in_meeting", "presenting", "dnd", "brb", "away", "ooo", "offline"]
@@ -93,6 +94,39 @@ Duration = Literal["30m", "1h", "2h", "today", "week"]
 DURATIONS: tuple[str, ...] = ("30m", "1h", "2h", "today", "week")
 DURATION_LABELS: dict[str, str] = {"30m": "30 minutes", "1h": "1 heure", "2h": "2 heures", "today": "aujourd'hui",
                                    "week": "cette semaine"}
+
+# « Personnalisé » in Teams: until a local date and time. Teams lists the times by half
+# hour only; Trame keeps it to a few weeks ahead.
+UNTIL_MAX_DAYS = 30
+_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+           "novembre", "décembre")
+
+
+def parse_until(value: str, now: datetime) -> datetime:
+    """The local end of a custom status, "AAAA-MM-JJTHH:MM", checked: on a half hour (as
+    Teams offers), in the future, at most UNTIL_MAX_DAYS ahead. ValueError says why not."""
+    try:
+        at = datetime.strptime(str(value or "").strip(), "%Y-%m-%dT%H:%M")
+    except ValueError:
+        raise ValueError("Heure de fin illisible (attendu AAAA-MM-JJTHH:MM).") from None
+    if at.minute not in (0, 30):
+        raise ValueError("Teams ne propose que des heures rondes ou des demi-heures.")
+    if at <= now:
+        raise ValueError("Cette heure de fin est déjà passée.")
+    if at > now + timedelta(days=UNTIL_MAX_DAYS):
+        raise ValueError(f"Au plus {UNTIL_MAX_DAYS} jours à l'avance.")
+    return at
+
+
+def until_label(at: datetime, now: datetime) -> str:
+    """« 14 h 30 » today, « demain 9 h », else « jeudi 3 décembre 14 h 30 »."""
+    hour = f"{at.hour} h {at.minute:02d}" if at.minute else f"{at.hour} h"
+    if at.date() == now.date():
+        return hour
+    if at.date() == (now + timedelta(days=1)).date():
+        return f"demain {hour}"
+    return f"{_DAYS[at.weekday()]} {at.day} {_MONTHS[at.month - 1]} {hour}"
 
 # Teams limits the status message to 280 characters.
 MESSAGE_MAX = 280

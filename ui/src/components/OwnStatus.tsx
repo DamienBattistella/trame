@@ -8,6 +8,7 @@ import { PRESENCE, PresenceBadge } from "@/components/kit";
 import type { Trame } from "@/api";
 import type { StatusChoice, StatusDuration } from "@/types";
 import { cn } from "@/lib/utils";
+import { dayBounds, defaultUntil, halfHours, untilLabel, untilValue } from "@/lib/statusUntil";
 
 /** Ce que Teams propose dans son menu de statut, dans le même ordre. */
 const CHOICES: { value: Exclude<StatusChoice, "reset">; label: string }[] = [
@@ -28,6 +29,11 @@ const DURATIONS: { value: StatusDuration | ""; label: string; phrase: string }[]
   { value: "today", label: "Jusqu'à ce soir", phrase: "jusqu'à ce soir" },
   { value: "week", label: "Jusqu'à la fin de la semaine", phrase: "jusqu'à la fin de la semaine" },
 ];
+/** « Personnalisé » de Teams : jusqu'à un jour et une heure choisis. */
+const CUSTOM = "custom";
+type DurationChoice = StatusDuration | "" | typeof CUSTOM;
+const fieldClass =
+  "h-7 rounded-md border bg-background px-1.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring";
 
 /**
  * En-tête : son propre statut Teams (la pastille), et au clic de quoi le changer sans
@@ -40,9 +46,28 @@ export function OwnStatus({ trame }: { trame: Trame }) {
   const [busy, setBusy] = useState<StatusChoice | "message" | "suggest" | null>(null);
   const [message, setMessage] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
-  const [duration, setDuration] = useState<StatusDuration | "">("");
+  const [duration, setDuration] = useState<DurationChoice>("");
+  const [until, setUntil] = useState(() => defaultUntil(new Date()));
 
   const label = presence ? PRESENCE[presence].label : "Statut inconnu";
+  const now = new Date();
+  const bounds = dayBounds(now);
+  const times = halfHours(until.day, now);
+  const customValue = duration === CUSTOM ? untilValue(until.day, until.time, now) : null;
+  // Personnalisé sans heure valable : les statuts attendent un choix possible.
+  const customMissing = duration === CUSTOM && !customValue;
+
+  const pickDuration = (value: DurationChoice) => {
+    // À chaque ouverture de « Personnalisé », une proposition à jour (la prochaine demi-heure).
+    if (value === CUSTOM && duration !== CUSTOM) setUntil(defaultUntil(new Date()));
+    setDuration(value);
+  };
+  const pickDay = (day: string) => {
+    if (!day) return;
+    const left = halfHours(day, new Date());
+    // L'heure déjà choisie reste si elle existe ce jour-là ; sinon la première possible.
+    setUntil((u) => ({ day, time: left.includes(u.time) ? u.time : left[0] ?? u.time }));
+  };
 
   const onOpenChange = async (next: boolean) => {
     setOpen(next);
@@ -56,13 +81,20 @@ export function OwnStatus({ trame }: { trame: Trame }) {
   };
 
   const choose = async (choice: StatusChoice) => {
+    const custom = choice !== "reset" && duration === CUSTOM;
+    const end = custom ? untilValue(until.day, until.time, new Date()) : null;
+    if (custom && !end) return toast.error("Heure de fin impossible", { description: "Choisis un moment à venir, dans les 30 jours." });
     setBusy(choice);
-    const until = choice !== "reset" && duration ? duration : null;
-    const res = await trame.setMyStatus(choice, until);
+    const forTeams = choice !== "reset" && duration && duration !== CUSTOM ? duration : null;
+    const res = await trame.setMyStatus(choice, forTeams, end);
     setBusy(null);
     if (!res.ok) return toast.error("Statut non changé", { description: res.error });
     setOpen(false);
-    const forHow = until ? ` ${DURATIONS.find((d) => d.value === until)!.phrase}` : "";
+    const forHow = end
+      ? ` jusqu'à ${untilLabel(until.day, until.time, new Date())}`
+      : forTeams
+        ? ` ${DURATIONS.find((d) => d.value === forTeams)!.phrase}`
+        : "";
     toast.success(choice === "reset" ? "Statut réinitialisé" : `Statut : ${PRESENCE[choice].label}${forHow}`);
   };
 
@@ -110,23 +142,55 @@ export function OwnStatus({ trame }: { trame: Trame }) {
             aria-label="Durée du statut"
             value={duration}
             disabled={working}
-            onChange={(e) => setDuration(e.target.value as StatusDuration | "")}
-            className="h-7 flex-1 rounded-md border bg-background px-1.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onChange={(e) => pickDuration(e.target.value as DurationChoice)}
+            className={cn(fieldClass, "flex-1")}
           >
             {DURATIONS.map((d) => (
               <option key={d.value} value={d.value}>
                 {d.label}
               </option>
             ))}
+            <option value={CUSTOM}>Jusqu'à une date et une heure…</option>
           </select>
         </label>
+        {duration === CUSTOM ? (
+          // Comme dans Teams : un jour (aujourd'hui à 30 jours) et une heure par demi-heure.
+          <div className="mb-1 flex items-center gap-1.5 pl-[3.25rem] pr-2 text-xs text-muted-foreground">
+            jusqu'au
+            <input
+              type="date"
+              aria-label="Jour de fin du statut"
+              value={until.day}
+              min={bounds.min}
+              max={bounds.max}
+              disabled={working}
+              onChange={(e) => pickDay(e.target.value)}
+              className={cn(fieldClass, "min-w-0 flex-1")}
+            />
+            à
+            <select
+              aria-label="Heure de fin du statut"
+              value={times.includes(until.time) ? until.time : ""}
+              disabled={working || !times.length}
+              onChange={(e) => setUntil((u) => ({ ...u, time: e.target.value }))}
+              className={cn(fieldClass, "w-[4.5rem]")}
+            >
+              {times.includes(until.time) ? null : <option value="">--:--</option>}
+              {times.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <div role="menu" aria-label="Choisir son statut">
           {CHOICES.map((c) => (
             <button
               key={c.value}
               role="menuitemradio"
               aria-checked={presence === c.value}
-              disabled={working}
+              disabled={working || customMissing}
               onClick={() => choose(c.value)}
               className={cn(
                 "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:opacity-60",

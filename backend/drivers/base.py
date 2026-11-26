@@ -3,7 +3,9 @@ from abc import ABC, abstractmethod
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Optional, Sequence
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional, Sequence
+import meeting as meetingmod
 from models import IncomingMessage, MessageRef, WatchEntity
 
 if TYPE_CHECKING:
@@ -204,6 +206,31 @@ class TeamsDriver(ABC):
         return {"typing": live, "typing_text": typing[1] if live else None,
                 "seen": seen[1] if seen is not None and now - seen[0] <= self.TYPING_TTL else None}
 
+    # --- meeting chats: the link to join the meeting in Teams ---
+    MEETING_LIVE_TTL = 300.0
+    """« En cours » read longer ago than this is dropped: the meeting may have ended
+    since. The link itself does not change and is kept."""
+
+    def _note_meeting(self, thread_id: str, raw: Any) -> None:
+        """Record the meeting of thread_id as its page showed it when it was read:
+        {"url", "live"}, or nothing (not a meeting chat). The link is kept only when it
+        is a Teams meeting link (meeting.join_url)."""
+        cache = self.__dict__.setdefault("_meeting_cache", {})
+        url = meetingmod.join_url(raw.get("url")) if isinstance(raw, dict) else None
+        if url:
+            cache[thread_id] = (time.monotonic(), url, raw.get("live") is True)
+        else:
+            cache.pop(thread_id, None)
+
+    def meeting(self, thread_id: str) -> Optional[dict]:
+        """The meeting of a meeting chat, as last read: {"url": join link, "live": in
+        progress}. None when thread_id was not read yet or is not a meeting chat."""
+        hit = self.__dict__.get("_meeting_cache", {}).get(thread_id)
+        if hit is None:
+            return None
+        at, url, live = hit
+        return {"url": url, "live": live and time.monotonic() - at <= self.MEETING_LIVE_TTL}
+
     # --- the user's own status (Disponible, Ne pas déranger…) ---
     can_set_status: bool = False
     """True when the driver can read and change the user's own Teams status."""
@@ -215,9 +242,11 @@ class TeamsDriver(ABC):
         Raises with the reason when the driver cannot tell."""
         raise NotSupported(self.status_unsupported)
 
-    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
         """Pick choice (presence.CHOICES) in Teams' status menu, for duration
-        (presence.DURATIONS: Teams puts the status back afterwards) or until changed.
+        (presence.DURATIONS: Teams puts the status back afterwards), until a local date
+        and time (« Personnalisé », checked by presence.parse_until), or until changed.
         Returns the status Teams shows afterwards, checked against the choice by the
         caller. Raises with the reason when the menu could not be used; menus are closed
         in any case."""

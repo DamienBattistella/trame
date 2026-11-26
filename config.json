@@ -52,6 +52,10 @@
     "enabled": true,
     "last_messages": 30
   },
+  "follow_ups": {
+    "enabled": true,
+    "delay_hours": 24
+  },
   "safety": {
     "global_pause": false,
     "auto_pause_on_screen_share": true,
