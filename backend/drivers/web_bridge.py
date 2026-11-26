@@ -26,6 +26,17 @@ FILE_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.(li
 IMAGE_DATA = re.compile(r"^data:image/(jpeg|png);base64,[A-Za-z0-9+/]+=*$")
 MAX_FILES, MAX_IMAGES, MAX_IMAGE_CHARS = 10, 8, 1_500_000
 
+# Appel API authentifié depuis la page (webfetch) : les seuls hôtes autorisés, ceux que le
+# client Teams interroge déjà. La page applique la même liste ; on la redouble côté moteur
+# pour refuser tout de suite un hôte tiers (défense en profondeur).
+API_HOSTS = re.compile(r"^([a-z0-9-]+\.)*(teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|"
+                       r"msg\.teams\.microsoft\.com|asyncgw\.teams\.microsoft\.com|presence\.teams\.microsoft\.com|"
+                       r"substrate\.office\.com|graph\.microsoft\.com|outlook\.office365\.com)$", re.IGNORECASE)
+# En-têtes d'authentification : le moteur ne les transmet jamais à la page (l'auth reste
+# dans la page). On les retire des en-têtes métier avant l'envoi, en plus du filtre de la page.
+AUTH_HEADER = re.compile(r"^(authorization|authentication|cookie|x-skypetoken|x-ms-\S*token|.*[-_]?token|.*bearer.*)$",
+                         re.IGNORECASE)
+
 
 def _files(raw: Any) -> list[FileRef]:
     out = []
@@ -180,7 +191,7 @@ class WebBridgeDriver(TeamsDriver):
                 self._pending.pop(cid, None)
 
     # Opérations sans geste dans Teams : leur échec ne dit rien des repères.
-    _QUIET_OPS = frozenset({"ping", "title", "probe", "diagnose"})
+    _QUIET_OPS = frozenset({"ping", "title", "probe", "diagnose", "webfetch"})
 
     def _page_failed(self) -> None:
         hook = self.on_page_failure
@@ -541,6 +552,44 @@ class WebBridgeDriver(TeamsDriver):
             except Exception:
                 pass
             time.sleep(self.POLL_SECONDS)
+
+    # --- Appels aux API internes de Teams, faits DANS la page ---------------
+    # L'« appel API » n'est pas émis par le moteur : c'est une commande envoyée à la page,
+    # qui exécute le fetch avec sa propre session authentifiée et ne renvoie que le corps
+    # métier parsé. Le jeton ne quitte jamais la page : le moteur ne reçoit aucun en-tête
+    # d'auth, n'en transmet aucun, et refuse tout hôte hors des services Teams.
+    class ApiError(RuntimeError):
+        def __init__(self, message: str, status: Optional[int] = None) -> None:
+            super().__init__(message)
+            self.status = status
+
+    def page_fetch(self, url: str, method: str = "GET", body: Any = None,
+                   headers: Optional[dict] = None, json: bool = True, timeout: float = 20.0) -> dict:
+        """Un appel authentifié exécuté dans la page. Renvoie {status, contentType, json|text}.
+        Lève ApiError si l'hôte est refusé, si le réseau échoue, ou sur une réponse non 2xx :
+        l'appelant peut alors retomber sur le chemin DOM."""
+        if not str(url or "").lower().startswith("https://"):
+            raise self.ApiError("https requis")
+        host = str(url)[len("https://"):].split("/")[0].split("?")[0]
+        if not API_HOSTS.match(host):
+            raise self.ApiError(f"hôte non autorisé : {host or '(vide)'}")
+        clean = {k: v for k, v in (headers or {}).items() if not AUTH_HEADER.match(str(k))} or None
+        res = self._rpc("webfetch", url=url, method=method, body=body, headers=clean, json=bool(json), timeout=timeout)
+        if not isinstance(res, dict):
+            raise self.ApiError("réponse illisible de la page")
+        status = res.get("status")
+        if not res.get("ok"):
+            raise self.ApiError(res.get("error") or f"appel API refusé (HTTP {status})", status=status)
+        # Jamais d'en-tête de réponse : seul le corps métier et son type remontent.
+        return {"status": status, "contentType": res.get("contentType"),
+                "json": res.get("json"), "text": res.get("text")}
+
+    def api_capture(self) -> dict:
+        """Résumé en lecture seule des API internes repérées (structure uniquement : ni
+        jeton, ni paramètre de requête, ni contenu de message). Sert à la découverte."""
+        res = self._rpc("diagnose", timeout=6)
+        cap = res.get("api_capture") if isinstance(res, dict) else None
+        return cap if isinstance(cap, dict) else {"count": 0, "byService": {}, "endpoints": []}
 
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         report: dict = {"driver": "web_bridge", **self.status()}
