@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
-import { ArrowDown, ArrowUp, BellRing, ChevronRight, History, Inbox as InboxIcon, Loader2, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BellRing, ChevronRight, History, Inbox as InboxIcon, Loader2, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -554,13 +554,21 @@ function SidebarItem({ c, draft, followUp, active, onClick }: { c: WatchEntity; 
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
+  const markers = rowMarkers(c, draft, followUp);
+  const descId = useId();
+  // Au clavier, la ligne ouvre l'infobulle de ses repères, comme le survol.
+  const [keyboard, setKeyboard] = useState(false);
   return (
+    <>
     <button
       ref={ref}
       type="button"
       data-conv={c.threadId}
       onClick={onClick}
+      onFocus={(e) => setKeyboard(e.currentTarget.matches(":focus-visible"))}
+      onBlur={() => setKeyboard(false)}
       aria-current={active ? "true" : undefined}
+      aria-describedby={markers.length ? descId : undefined}
       className={cn(
         "relative flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors",
         active ? "text-foreground" : "hover:bg-accent/60"
@@ -579,17 +587,62 @@ function SidebarItem({ c, draft, followUp, active, onClick }: { c: WatchEntity; 
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             <MessageText text={preview} interactive={false} />
           </span>
-          {c.watch && c.mode === "auto" && <Timer className="size-3 shrink-0 text-warning" aria-label="Envoi auto" />}
-          {draft ? (
-            <span className="size-2 shrink-0 rounded-full bg-warning" aria-label="Réponse à relire" />
-          ) : followUp ? (
-            <BellRing className="size-3 shrink-0 text-warning" aria-label="Relance proposée" />
-          ) : c.unread ? (
-            <span className="size-2 shrink-0 rounded-full bg-link" aria-label="Non lu" />
-          ) : null}
+          {markers.length > 0 && <RowMarkers markers={markers} forceOpen={keyboard} />}
         </span>
       </span>
     </button>
+    {markers.length > 0 && (
+      <span id={descId} hidden>
+        {markers.map((m) => m.tip).join(". ")}
+      </span>
+    )}
+    </>
+  );
+}
+
+type Marker = { id: "auto" | "draft" | "followUp" | "unread"; tip: string };
+
+/**
+ * Repères d'une ligne, dans un ordre fixe : le mode Auto (un réglage, en neutre), puis au plus
+ * un état qui attend quelque chose de toi (orange : réponse à relire, relance) ou non lu (bleu).
+ */
+function rowMarkers(c: WatchEntity, draft: DraftItem | null, followUp: string | null): Marker[] {
+  const out: Marker[] = [];
+  if (c.watch && c.mode === "auto") out.push({ id: "auto", tip: "Mode Auto : Trame répond seul après le compte à rebours" });
+  if (draft) out.push({ id: "draft", tip: "Réponse à relire : ouvre la conversation pour l'envoyer ou la modifier" });
+  else if (followUp) out.push({ id: "followUp", tip: "Relance proposée : ta question est restée sans réponse" });
+  else if (c.unread) out.push({ id: "unread", tip: "Non lu" });
+  return out;
+}
+
+function RowMarkers({ markers, forceOpen }: { markers: Marker[]; forceOpen: boolean }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <Tooltip open={forceOpen || hover} onOpenChange={setHover}>
+      <TooltipTrigger asChild>
+        <span aria-hidden className="flex shrink-0 items-center gap-1.5">
+          {markers.map((m) =>
+            m.id === "auto" ? (
+              <span key={m.id} className="flex h-4 items-center gap-0.5 rounded-full border px-1.5 text-[10px] font-medium leading-none text-muted-foreground">
+                <Timer className="size-2.5" />
+                Auto
+              </span>
+            ) : m.id === "draft" ? (
+              <PenLine key={m.id} className="size-3.5 text-warning" />
+            ) : m.id === "followUp" ? (
+              <BellRing key={m.id} className="size-3.5 text-warning" />
+            ) : (
+              <span key={m.id} className="size-2 rounded-full bg-link" />
+            )
+          )}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="flex max-w-64 flex-col items-start gap-0.5">
+        {markers.map((m) => (
+          <span key={m.id}>{m.tip}</span>
+        ))}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
