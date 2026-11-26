@@ -139,7 +139,20 @@ npm run dev                              # http://localhost:5173
 npm run tauri dev                        # application de bureau (Windows, Rust requis)
 ```
 
-Sans moteur, l'interface fonctionne avec des données d'exemple. Le build de l'installeur Windows tourne dans GitHub Actions (`build.yml`) : chaque tag `v*` publie une Release avec l'installeur ; voir `ui/src-tauri/README.md`.
+Sans moteur, l'interface (dans un navigateur) fonctionne avec des données d'exemple.
+
+### Versions et releases
+
+Les releases sont automatiques et suivent le [versionnage sémantique](https://semver.org/lang/fr/). Après chaque CI verte sur `main`, `build.yml` déduit la version suivante des messages de commit ([Conventional Commits](https://www.conventionalcommits.org/fr/)) depuis le dernier tag, construit l'installeur Windows et publie une Release GitHub avec le manifeste de mise à jour automatique :
+
+| Commit | Incrément |
+|---|---|
+| `feat: …` | mineur (0.**2**.0) |
+| `fix: …`, `perf: …`, `refactor: …`, ou tout message libre | correctif (0.1.**2**) |
+| `feat!: …` ou `BREAKING CHANGE:` dans le corps | majeur (mineur tant que la version est en 0.x) |
+| uniquement `docs:`, `chore:`, `ci:`, `test:`, `style:`, `build:` | pas de release |
+
+Une release peut aussi être forcée depuis l'onglet **Actions** › *Release (Windows)* › *Run workflow*, en choisissant l'incrément.
 
 ## État du projet
 

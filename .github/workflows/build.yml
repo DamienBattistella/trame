@@ -1,19 +1,62 @@
-name: Build desktop (Windows)
+name: Release (Windows)
 
+# Release automatique en versionnage sémantique : après chaque CI verte sur main, la
+# version suivante est déduite des commits (Conventional Commits), puis l'installeur
+# Windows est construit et publié en Release GitHub avec le manifeste de mise à jour.
 on:
-  push:
-    tags: ["v*"]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Incrément (auto = déduit des commits)"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  tauri:
-    name: Tauri build
-    runs-on: windows-latest
+  version:
+    name: Next version
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.next.outputs.release }}
+      version: ${{ steps.next.outputs.version }}
+      sha: ${{ steps.next.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Compute next semantic version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: bash .github/scripts/next-version.sh
+
+  tauri:
+    name: Tauri build
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -80,11 +123,10 @@ jobs:
         run: npm run tauri icon src-tauri/icons/source.png
         working-directory: ui
 
-      - name: Version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Set app version
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".TrimStart("v")
+          $v = $env:VERSION
           $path = "src-tauri/tauri.conf.json"
           (Get-Content $path -Raw) -replace '"version":\s*"[^"]+"', ('"version": "' + $v + '"') | Set-Content $path -Encoding utf8NoBOM
         working-directory: ui
@@ -107,13 +149,12 @@ jobs:
         working-directory: ui
 
       - name: Updater manifest (latest.json)
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           $sig = "$($setup.FullName).sig"
           if (-not (Test-Path $sig)) { Write-Host "::warning::Pas de signature : latest.json non publié."; exit 0 }
-          $v = "${{ github.ref_name }}".TrimStart("v")
+          $v = $env:VERSION
           $name = $setup.Name -replace ' ', '.'
           $manifest = [ordered]@{
             version = $v
@@ -122,7 +163,7 @@ jobs:
             platforms = @{
               "windows-x86_64" = @{
                 signature = (Get-Content $sig -Raw).Trim()
-                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$name"
+                url = "https://github.com/${{ github.repository }}/releases/download/$($env:TAG)/$name"
               }
             }
           }
@@ -139,10 +180,12 @@ jobs:
           if-no-files-found: warn
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: Trame ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ needs.version.outputs.sha }}
+          name: Trame ${{ env.TAG }}
+          make_latest: true
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
