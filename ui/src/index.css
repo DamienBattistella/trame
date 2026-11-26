@@ -118,6 +118,18 @@
     border-color: var(--border);
     outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
   }
+  /* Barres de défilement fines aux couleurs du thème (WebView2 affiche sinon la barre
+     système claire, même en sombre). */
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 45%, transparent) transparent;
+  }
   body {
     background-color: var(--background);
     color: var(--foreground);

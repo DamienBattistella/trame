@@ -23,8 +23,8 @@ fn show_main(app: &AppHandle) {
 
 /// The backend is a PyInstaller --onefile exe: a bootloader plus the real Python
 /// process. Killing the bootloader alone would leave the engine running (and acting
-/// on Teams), so the whole process tree goes. The engine also exits on its own when
-/// our end of its stdin closes, which covers a crash of this process.
+/// on Teams), so the whole process tree goes. The engine also watches this process
+/// (TRAME_PARENT_PID) and exits on its own if it crashes.
 fn stop_backend(app: &AppHandle) {
     let child = app.state::<Backend>().0.lock().ok().and_then(|mut c| c.take());
     if let Some(child) = child {
@@ -75,6 +75,44 @@ async fn update_on_launch(app: AppHandle) {
     app.restart();
 }
 
+/// Start the Python engine (sidecar). A missing or quarantined engine must not take
+/// the window and tray down: the UI then shows that the engine does not start.
+fn spawn_backend(app: &AppHandle) {
+    let spawned = app
+        .shell()
+        .sidecar("trame-backend")
+        .map(|cmd| cmd.env("TRAME_PARENT_PID", std::process::id().to_string()))
+        .and_then(|cmd| cmd.spawn());
+    match spawned {
+        Ok((mut rx, child)) => {
+            *app.state::<Backend>().0.lock().unwrap() = Some(child);
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        CommandEvent::Stderr(line) => {
+                            eprintln!("[backend] {}", String::from_utf8_lossy(&line))
+                        }
+                        CommandEvent::Terminated(status) => {
+                            eprintln!("[backend] arrêté : {:?}", status.code);
+                            let _ = handle.emit("backend-exited", status.code);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        }
+        Err(e) => eprintln!("[backend] lancement impossible : {e}"),
+    }
+}
+
+/// "Réessayer" on the engine-down screen: stop whatever is left and start again.
+#[tauri::command]
+fn restart_backend(app: AppHandle) {
+    stop_backend(&app);
+    spawn_backend(&app);
+}
+
 fn quit(app: &AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
     stop_backend(app);
@@ -92,35 +130,9 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![restart_backend])
         .setup(|app| {
-            // A missing or quarantined engine must not take the window and tray down:
-            // the UI then shows the engine as unreachable.
-            let spawned = app
-                .shell()
-                .sidecar("trame-backend")
-                .map(|cmd| cmd.env("TRAME_EXIT_WITH_PARENT", "1"))
-                .and_then(|cmd| cmd.spawn());
-            match spawned {
-                Ok((mut rx, child)) => {
-                    *app.state::<Backend>().0.lock().unwrap() = Some(child);
-                    let handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        while let Some(event) = rx.recv().await {
-                            match event {
-                                CommandEvent::Stderr(line) => {
-                                    eprintln!("[backend] {}", String::from_utf8_lossy(&line))
-                                }
-                                CommandEvent::Terminated(status) => {
-                                    eprintln!("[backend] arrêté : {:?}", status.code);
-                                    let _ = handle.emit("backend-exited", status.code);
-                                }
-                                _ => {}
-                            }
-                        }
-                    });
-                }
-                Err(e) => eprintln!("[backend] lancement impossible : {e}"),
-            }
+            spawn_backend(app.handle());
 
             let show = MenuItem::with_id(app, "show", "Ouvrir Trame", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause / reprise", true, None::<&str>)?;

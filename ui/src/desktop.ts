@@ -9,6 +9,16 @@ function tauri(): TauriGlobal | null {
 
 export const isDesktop = () => tauri() !== null;
 
+/** Relance le moteur embarqué (application de bureau uniquement). */
+export async function restartBackend(): Promise<boolean> {
+  try {
+    await tauri()?.core?.invoke("restart_backend");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function autostartEnabled(): Promise<boolean> {
   try {
     return Boolean(await tauri()?.core?.invoke("plugin:autostart|is_enabled"));

@@ -155,10 +155,19 @@ export function GithubConnect({ trame, className }: { trame: Trame; className?: 
             {view === "unavailable" && (
               <Row>
                 <GithubMark />
-                <span className="flex-1 text-sm text-muted-foreground">Vérification impossible</span>
-                <Button size="sm" variant="ghost" className="rounded-full" onClick={check}>
-                  Réessayer
-                </Button>
+                {trame.connected ? (
+                  <>
+                    <span className="flex-1 text-sm font-medium">GitHub</span>
+                    <ConnectButton busy={busy} onClick={start} label="Se connecter" />
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm text-muted-foreground">Moteur injoignable</span>
+                    <Button size="sm" variant="ghost" className="rounded-full" onClick={check}>
+                      Réessayer
+                    </Button>
+                  </>
+                )}
               </Row>
             )}
 

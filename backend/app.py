@@ -27,8 +27,14 @@ from github.auth import GithubAuth
 def make_driver() -> TeamsDriver:
     # Real UIA driver on Windows; mock elsewhere so the API runs anywhere.
     if os.name == "nt" and os.environ.get("TRAME_DRIVER", "uia") != "mock":
-        from drivers.windows_uia import WindowsUIADriver
-        return WindowsUIADriver()
+        try:
+            from drivers.windows_uia import WindowsUIADriver
+            return WindowsUIADriver()
+        except Exception as e:
+            import sys
+            from drivers.unavailable import UnavailableDriver
+            print(f"[trame] pilote Teams indisponible : {e!r}", file=sys.stderr)
+            return UnavailableDriver(repr(e))
     from drivers.mock import MockTeamsDriver
     return MockTeamsDriver(interval=float(os.environ.get("TRAME_MOCK_INTERVAL", "15")))
 

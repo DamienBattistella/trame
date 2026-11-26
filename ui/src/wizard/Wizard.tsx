@@ -35,7 +35,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const [brain, setBrain] = useState<BrainId>(trame.state.brain);
   const [probe, setProbe] = useState<"idle" | "running" | "ok" | "fail">("idle");
   const [probeDone, setProbeDone] = useState(0);
-  const source = connected ? trame.state.watchlist : mockConversations;
+  const source = connected || !demoMode ? trame.state.watchlist : mockConversations;
   const [convs, setConvs] = useState<WatchEntity[]>(source);
   const touched = useRef(false);
   const [countdown, setCountdown] = useState(5);
@@ -256,6 +256,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       sub: "Trame ne lit que celles que tu choisis.",
       body: (
         <ConversationList
+          className="h-[clamp(6rem,calc(100dvh-30rem),26rem)]"
           items={convs}
           onBulk={setWatchMany}
           renderRow={(c) => (
@@ -285,6 +286,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             <ModeCard mode="auto" count={autoCount} total={watched.length} countdown={countdown} onAll={() => setModeAll("auto")} />
           </div>
           <ConversationList
+            className="h-[clamp(6rem,calc(100dvh-39rem),22rem)]"
+            fewClassName="max-h-[clamp(6rem,calc(100dvh-39rem),22rem)]"
             items={watched}
             filters={false}
             footer={
@@ -435,7 +438,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             animate="center"
             exit="exit"
             transition={{ duration: 0.22, ease: "easeOut" }}
-            className="flex max-h-full w-full max-w-md flex-col items-center gap-6 overflow-y-auto py-8 text-center"
+            className="flex max-h-full w-full max-w-md flex-col items-center gap-6 overflow-y-auto pt-12 pb-4 text-center"
           >
             <div className="flex flex-col gap-2">
               <h1 className="text-3xl font-semibold tracking-tight text-balance">{s.title}</h1>
@@ -446,7 +449,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
         </AnimatePresence>
       </div>
 
-      <div className="flex flex-col items-center gap-4 px-6 pb-8">
+      <div className="flex shrink-0 flex-col items-center gap-4 px-6 pt-4 pb-8">
         <motion.div
           key={canContinue ? "on" : "off"}
           initial={canContinue && step === 2 ? { scale: 0.94 } : false}

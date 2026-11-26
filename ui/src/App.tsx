@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
 import { toast } from "sonner";
-import { onDesktopEvent, onTrayTogglePause, setAutostart } from "@/desktop";
+import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
 
 // Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
@@ -80,6 +80,16 @@ export default function App() {
   }, []);
   // Démarrage avec Windows activé au premier onboarding seulement, jamais en relançant le wizard.
   const firstRun = useRef(true);
+
+  // Application installée dont le moteur ne répond toujours pas après 15 s : on le dit
+  // franchement au lieu de dérouler un wizard qui ne peut rien faire.
+  const [engineLate, setEngineLate] = useState(false);
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const t = setTimeout(() => setEngineLate(true), 15000);
+    return () => clearTimeout(t);
+  }, []);
+  const engineDown = engineLate && !trame.everConnected;
 
   const mountedAt = useRef(Date.now());
   const [booting, setBooting] = useState(true);
@@ -188,6 +198,8 @@ export default function App() {
           <AnimatePresence mode="wait">
             {booting ? (
               <Splash key="splash" connected={trame.connected} />
+            ) : engineDown ? (
+              <EngineDown key="down" />
             ) : (
               <motion.div key="app" className="h-full" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
                 <Suspense fallback={null}>
@@ -235,6 +247,34 @@ function ConnectionBadge({ connected, demo }: { connected: boolean; demo: boolea
             : "Moteur injoignable : reconnexion en cours"}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function EngineDown() {
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    setRetrying(true);
+    await restartBackend();
+    // Le moteur met quelques secondes à démarrer ; la connexion fermera cet écran.
+    setTimeout(() => setRetrying(false), 12000);
+  };
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center"
+    >
+      <Logo size={56} />
+      <h1 className="text-2xl font-semibold tracking-tight">Le moteur de Trame ne démarre pas</h1>
+      <p className="max-w-md text-balance text-muted-foreground">
+        Sans lui, Trame ne peut ni lire Teams ni préparer de réponse. Le détail de l'erreur est dans le fichier
+        <span className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">%APPDATA%\Trame\backend.log</span>.
+      </p>
+      <Button className="mt-2 h-11 rounded-full px-8" disabled={retrying} onClick={retry}>
+        {retrying ? <><Loader2 className="size-4 animate-spin" /> Redémarrage…</> : "Relancer le moteur"}
+      </Button>
+    </motion.div>
   );
 }
 

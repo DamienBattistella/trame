@@ -165,7 +165,12 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
   };
 }
 
+/** État initial : exemple dans un navigateur sans moteur, vide dans l'application
+ *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
+  if (isDesktop()) {
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [] };
+  }
   return {
     paused: false,
     screenSharing: false,

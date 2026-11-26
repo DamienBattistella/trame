@@ -29,6 +29,7 @@ export function ConversationList({
   onBulk,
   filters = true,
   className = "h-[40vh]",
+  fewClassName,
   footer,
 }: {
   items: WatchEntity[];
@@ -36,6 +37,8 @@ export function ConversationList({
   onBulk?: (ids: string[], watch: boolean) => void;
   filters?: boolean;
   className?: string;
+  /** Hauteur maximale quand la liste est courte (pas de recherche ni de filtres). */
+  fewClassName?: string;
   footer?: React.ReactNode;
 }) {
   const few = items.length <= FEW;
@@ -67,6 +70,33 @@ export function ConversationList({
 
   const allVisibleWatched = visible.length > 0 && visible.every((c) => c.watch);
   const watchedTotal = items.filter((c) => c.watch).length;
+
+  const rows = (
+          <div className="divide-y divide-border">
+            {visible.map((c) => (
+              <div key={c.threadId} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]">
+                {renderRow(c)}
+              </div>
+            ))}
+            {visible.length === 0 && (
+              <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
+                Aucune conversation ne correspond{query ? ` à « ${query} »` : ""}.
+                {(query || filter !== "all") && (
+                  <button
+                    type="button"
+                    className="font-medium text-link hover:underline"
+                    onClick={() => {
+                      setQuery("");
+                      setFilter("all");
+                    }}
+                  >
+                    Tout afficher
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+  );
 
   return (
     <div className="flex w-full flex-col gap-3 text-left">
@@ -119,32 +149,11 @@ export function ConversationList({
       )}
 
       <GroupList>
-        <ScrollArea className={cn("[&_[data-radix-scroll-area-viewport]>div]:!block", !few && className)}>
-          <div className="divide-y divide-border">
-            {visible.map((c) => (
-              <div key={c.threadId} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]">
-                {renderRow(c)}
-              </div>
-            ))}
-            {visible.length === 0 && (
-              <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
-                Aucune conversation ne correspond{query ? ` à « ${query} »` : ""}.
-                {(query || filter !== "all") && (
-                  <button
-                    type="button"
-                    className="font-medium text-link hover:underline"
-                    onClick={() => {
-                      setQuery("");
-                      setFilter("all");
-                    }}
-                  >
-                    Tout afficher
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+        {few && fewClassName ? (
+          <div className={cn("overflow-y-auto", fewClassName)}>{rows}</div>
+        ) : (
+          <ScrollArea className={cn("[&_[data-radix-scroll-area-viewport]>div]:!block", !few && className)}>{rows}</ScrollArea>
+        )}
       </GroupList>
 
       <div className="flex items-center justify-between px-1 text-xs text-muted-foreground">

@@ -169,3 +169,25 @@ def test_history_never_switches_during_screen_share(make_client):
     _client, watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
     assert watcher._summary(DM_DRAFT, 15) == ""
     assert driver.opened == [] and DM_DRAFT not in watcher._history
+
+
+def test_engine_starts_when_teams_driver_cannot_load(monkeypatch, make_client):
+    import builtins
+    import app as appmod
+    from drivers.unavailable import UnavailableDriver
+    real_import = builtins.__import__
+
+    def no_uia(name, *args, **kwargs):
+        if name == "drivers.windows_uia":
+            raise ImportError("No module named 'uiautomation'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.delenv("TRAME_DRIVER", raising=False)
+    monkeypatch.setattr(appmod.os, "name", "nt")
+    monkeypatch.setattr(builtins, "__import__", no_uia)
+    driver = appmod.make_driver()
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    assert isinstance(driver, UnavailableDriver)
+    client, watcher, _ = make_client(driver=driver)
+    assert client.get("/api/state").status_code == 200 and watcher.state.selftest_ok is False
+    assert driver.type_focused("19:x@thread.v2", "hello", True, True).ok is False

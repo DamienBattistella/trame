@@ -3,26 +3,56 @@ import os
 import sys
 import threading
 
-import uvicorn
+
+def _log_to_file() -> None:
+    """Packaged app: no console, so engine errors go to %APPDATA%\\Trame\\backend.log.
+    Runs before the app import, which already builds the Teams driver."""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import config as cfgmod
+        cfgmod.HOME.mkdir(parents=True, exist_ok=True)
+        log = open(cfgmod.HOME / "backend.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+    except Exception:
+        pass
+
+
+_log_to_file()
+
+import uvicorn  # noqa: E402
 
 # Import the app object statically (not as an "app:app" string) so PyInstaller's
 # dependency analysis bundles app.py and its whole import graph into the sidecar.
-from app import app
+from app import app  # noqa: E402
 
 
-def _exit_with_parent() -> None:
-    """The desktop shell keeps our stdin open. When it quits or crashes, stdin hits
-    EOF and the engine stops at once — a PyInstaller --onefile child would otherwise
-    survive its parent and keep acting on Teams with no window to pause it."""
-    try:
-        while sys.stdin.buffer.read(4096):
+def _exit_with_parent(pid: int) -> None:
+    """Stop the engine as soon as the desktop app exits or crashes: a PyInstaller
+    --onefile child would otherwise survive it and keep acting on Teams with no
+    window left to pause it."""
+    if os.name == "nt":
+        import ctypes
+        SYNCHRONIZE, INFINITE = 0x00100000, 0xFFFFFFFF
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            return
+        kernel32.WaitForSingleObject(handle, INFINITE)
+        os._exit(0)
+    import time
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            os._exit(0)
+        except PermissionError:
             pass
-    except Exception:
-        pass
-    os._exit(0)
+        time.sleep(2)
 
 
 if __name__ == "__main__":
-    if os.environ.get("TRAME_EXIT_WITH_PARENT") == "1" and sys.stdin is not None:
-        threading.Thread(target=_exit_with_parent, daemon=True).start()
+    parent = os.environ.get("TRAME_PARENT_PID", "")
+    if parent.isdigit():
+        threading.Thread(target=_exit_with_parent, args=(int(parent),), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=8731, reload=False)

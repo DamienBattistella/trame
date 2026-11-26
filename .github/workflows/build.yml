@@ -31,11 +31,31 @@ jobs:
             --hidden-import uvicorn.protocols.http.auto `
             --hidden-import uvicorn.protocols.websockets.auto `
             --hidden-import uvicorn.lifespan.on `
+            --collect-all uiautomation `
+            --collect-submodules comtypes `
             --add-data "..\config.json;." `
             --add-data "..\SOUL.md;." `
             run.py
           New-Item -ItemType Directory -Force -Path ..\ui\src-tauri\binaries | Out-Null
           Copy-Item dist\trame-backend.exe ..\ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe
+
+      # Le moteur compilé doit démarrer et répondre, avec le vrai pilote Windows
+      # (sans Teams sur le runner : auto-test en échec, mais API debout).
+      - name: Smoke test packaged engine
+        shell: pwsh
+        run: |
+          $env:TRAME_HOME = Join-Path $env:RUNNER_TEMP "trame-smoke"
+          $env:TRAME_BRAIN = "mock"
+          $p = Start-Process -FilePath backend\dist\trame-backend.exe -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            try { $r = Invoke-RestMethod http://127.0.0.1:8731/api/state; $ok = $true } catch {}
+          }
+          Get-Content (Join-Path $env:TRAME_HOME "backend.log") -ErrorAction SilentlyContinue | Select-Object -Last 40
+          taskkill /T /F /PID $p.Id | Out-Null
+          if (-not $ok) { Write-Error "Le moteur empaqueté ne répond pas sur 127.0.0.1:8731"; exit 1 }
+          Write-Host "Moteur OK, auto-test Teams : $($r.selftest_ok)"
 
       - name: Setup Node
         uses: actions/setup-node@v4
