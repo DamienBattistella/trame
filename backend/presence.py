@@ -87,6 +87,13 @@ def brain_hint(name: str, presence: Optional[str]) -> str:
 Choice = Literal["available", "busy", "dnd", "brb", "away", "offline", "reset"]
 CHOICES: tuple[str, ...] = ("available", "busy", "dnd", "brb", "away", "offline", "reset")
 
+# « Rétablir le statut après » in Teams, in the order of its list. None: no duration
+# (the status stays until changed, as with the plain menu).
+Duration = Literal["30m", "1h", "2h", "today", "week"]
+DURATIONS: tuple[str, ...] = ("30m", "1h", "2h", "today", "week")
+DURATION_LABELS: dict[str, str] = {"30m": "30 minutes", "1h": "1 heure", "2h": "2 heures", "today": "aujourd'hui",
+                                   "week": "cette semaine"}
+
 # Teams limits the status message to 280 characters.
 MESSAGE_MAX = 280
 

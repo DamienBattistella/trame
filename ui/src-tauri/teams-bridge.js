@@ -994,6 +994,31 @@
     offline: "me_control_presence_availability_appear_offline",
     reset: "set-availability-reset-status",
   };
+  // Panneau « Durée » du menu de statut : deux listes (statut, « Rétablir le statut
+  // après ») dans l'ordre du menu de Teams, « Terminé » et « Précédent ». Les libellés,
+  // sans accents ni casse, confirment chaque choix (français et anglais).
+  const DURATION_ENTRY = '[data-tid="set-availability-duration"]';
+  const AVAIL_STATUS = "set-availability-choose-availability-dropdown";
+  const AVAIL_AFTER = "set-availability-clear-availability-after-dropdown";
+  const AVAIL_DONE = '[data-tid="me-control-set-availability-update-availability-button"]';
+  const AVAIL_BACK = '[data-tid="me-control-set-availability-back-button"]';
+  const STATUS_ORDER = ["available", "busy", "dnd", "brb", "away", "offline"];
+  const STATUS_WORDS = {
+    available: /^(disponible|available)/,
+    busy: /^(occupe|busy)/,
+    dnd: /^(ne pas deranger|do not disturb)/,
+    brb: /^(de retour bientot|be right back)/,
+    away: /^(apparaitre absent|appear away|absent|away)/,
+    offline: /^(apparaitre hors ligne|appear offline|hors ligne|offline)/,
+  };
+  const DURATION_ORDER = ["30m", "1h", "2h", "today", "week"];
+  const DURATION_WORDS = {
+    "30m": /^30 min/,
+    "1h": /^1 (heure|hour)/,
+    "2h": /^2 (heures|hours)/,
+    today: /^(aujourd'hui|aujourd’hui|today)/,
+    week: /^(cette semaine|this week)/,
+  };
   const NOTE = '[data-tid="me-control-status-note-container"]';
   const NOTE_EDIT =
     '[data-tid="me-control-menu-status-message-edit-button"], [data-tid="me-control-set-status-message-button"], [data-tid="me-control-menu-set-status-message"]';
@@ -1439,6 +1464,64 @@
     },
     // Un statut du menu de Teams. Rien n'est saisi : deux clics (« Modifier l'état », le
     // choix), puis on attend que le bouton du profil change ; le moteur compare.
+    // Un statut pour une durée : « Modifier l'état », « Durée », puis dans ce panneau la
+    // liste « Statut » et la liste « Rétablir le statut après », chacune vérifiée par son
+    // libellé avant « Terminé ». Au moindre doute, « Précédent » : rien n'est changé.
+    setstatusfor: async ({ choice, duration }) => {
+      const index = STATUS_ORDER.indexOf(choice);
+      const d = DURATION_ORDER.indexOf(duration);
+      if (index < 0 || d < 0) return { ok: false, error: "statut ou durée inconnus" };
+      if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
+      const before = myLabels().join("|");
+      const back = async (error) => {
+        firstVisible(AVAIL_BACK)?.click();
+        await sleep(300);
+        return { ok: false, error };
+      };
+      // Choisit l'option n° i d'une liste du panneau, si son libellé est bien celui attendu.
+      const pick = async (combo, i, expected) => {
+        const options = () => Array.from(document.querySelectorAll('[role="option"]')).filter(visible);
+        // Teams redessine le panneau après un choix : on attend que la liste précédente
+        // soit refermée et que celle-ci soit là.
+        await waitFor(() => !options().length && visible(document.getElementById(combo)), 3000);
+        const box = document.getElementById(combo);
+        if (!box || !visible(box)) return `liste « ${combo} » introuvable`;
+        box.click();
+        if (!(await waitFor(() => options().length > i, 2000))) return "choix absents de la liste de Teams";
+        const opt = options()[i];
+        if (!expected.test(norm(label(opt)))) {
+          box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+          return `choix inattendu « ${label(opt)} »`;
+        }
+        opt.click();
+        if (!(await waitFor(() => expected.test(norm(label(document.getElementById(combo)))), 2000))) return "choix non pris en compte par Teams";
+        return null;
+      };
+      try {
+        if (!(await openMeMenu())) return { ok: false, error: "menu du profil non ouvert" };
+        const durationEntry = () => firstVisible(DURATION_ENTRY);
+        if (!durationEntry()) {
+          const sub = firstVisible(STATUS_ENTRY);
+          if (!sub) return { ok: false, error: "entrée « Modifier l'état » introuvable dans le menu du profil" };
+          sub.click();
+          if (!(await waitFor(durationEntry, 3000))) return { ok: false, error: "entrée « Durée » absente du menu de Teams" };
+        }
+        durationEntry().click();
+        if (!(await waitFor(() => firstVisible(AVAIL_DONE), 3000))) return { ok: false, error: "panneau « Durée » non ouvert" };
+        const why = (await pick(AVAIL_STATUS, index, STATUS_WORDS[choice])) || (await pick(AVAIL_AFTER, d, DURATION_WORDS[duration]));
+        if (why) return back(why);
+        if (late()) return back("commande expirée");
+        const done = firstVisible(AVAIL_DONE);
+        if (!done || done.disabled || done.getAttribute("aria-disabled") === "true") return back("bouton « Terminé » inactif");
+        done.click();
+        await waitFor(() => !firstVisible(AVAIL_DONE), 4000);
+        await waitFor(() => myLabels().join("|") !== before, 4000);
+        await sleep(300);
+      } finally {
+        await closeMeMenu();
+      }
+      return { ok: true, labels: myLabels() };
+    },
     setstatus: async ({ choice }) => {
       const tid = STATUS_TIDS[choice];
       if (!tid) return { ok: false, error: `statut inconnu : ${choice}` };

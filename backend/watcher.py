@@ -217,19 +217,23 @@ class Watcher:
             self.state.my_presence = got.get("presence")
         return {"presence": got.get("presence"), "message": got.get("message") or ""}
 
-    def set_my_status(self, choice: str) -> dict:
+    def set_my_status(self, choice: str, duration: Optional[str] = None) -> dict:
         """Pick a status in Teams' menu, then check Teams shows it: never a false
-        success. « reset » lets Teams decide again; whatever it then shows is reported."""
+        success. « reset » lets Teams decide again; whatever it then shows is reported.
+        duration: Teams puts the status back afterwards (« Rétablir le statut après »)."""
         self._require_own_status()
         if choice not in presencemod.CHOICES:
             raise ActionError(422, f"Statut inconnu : {choice}.")
+        if duration is not None and (duration not in presencemod.DURATIONS or choice == "reset"):
+            raise ActionError(422, "Durée impossible pour ce statut.")
         wanted = presencemod.LABELS.get(choice, "Réinitialiser")
         with self._ui_lock:
             if self._screen_share_guarded():
                 self.state.screen_sharing = True
                 raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
             try:
-                shown = self.driver.set_my_status(choice)
+                shown = (self.driver.set_my_status(choice, duration) if duration
+                         else self.driver.set_my_status(choice))
             except Exception as e:
                 self.log("warn", f"Statut « {wanted} » non appliqué : {e}")
                 raise ActionError(502, f"Statut non changé : {e}")
@@ -239,8 +243,9 @@ class Watcher:
             seen = presencemod.LABELS.get(shown or "", "aucun statut lisible")
             self.log("warn", f"Statut « {wanted} » demandé, Teams affiche « {seen} »")
             raise ActionError(409, f"Teams affiche « {seen} » au lieu de « {wanted} ». Vérifie dans Teams.")
-        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}")
-        return {"presence": shown}
+        until = f" pour {presencemod.DURATION_LABELS[duration]}" if duration else ""
+        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}{until}")
+        return {"presence": shown, **({"duration": duration} if duration else {})}
 
     def suggest_status_message(self, previous: str = "") -> dict:
         """A status message proposed by the brain, in the user's voice, different each time.

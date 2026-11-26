@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PRESENCE, PresenceBadge } from "@/components/kit";
 import type { Trame } from "@/api";
-import type { StatusChoice } from "@/types";
+import type { StatusChoice, StatusDuration } from "@/types";
 import { cn } from "@/lib/utils";
 
 /** Ce que Teams propose dans son menu de statut, dans le même ordre. */
@@ -19,6 +19,15 @@ const CHOICES: { value: Exclude<StatusChoice, "reset">; label: string }[] = [
   { value: "offline", label: "Apparaître hors ligne" },
 ];
 const MESSAGE_MAX = 280;
+/** « Rétablir le statut après » de Teams : libellé de la liste, et fin de phrase pour la notification. */
+const DURATIONS: { value: StatusDuration | ""; label: string; phrase: string }[] = [
+  { value: "", label: "Jusqu'à ce que je le change", phrase: "" },
+  { value: "30m", label: "Pendant 30 minutes", phrase: "pendant 30 minutes" },
+  { value: "1h", label: "Pendant 1 heure", phrase: "pendant 1 heure" },
+  { value: "2h", label: "Pendant 2 heures", phrase: "pendant 2 heures" },
+  { value: "today", label: "Jusqu'à ce soir", phrase: "jusqu'à ce soir" },
+  { value: "week", label: "Jusqu'à la fin de la semaine", phrase: "jusqu'à la fin de la semaine" },
+];
 
 /**
  * En-tête : son propre statut Teams (la pastille), et au clic de quoi le changer sans
@@ -31,6 +40,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
   const [busy, setBusy] = useState<StatusChoice | "message" | "suggest" | null>(null);
   const [message, setMessage] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
+  const [duration, setDuration] = useState<StatusDuration | "">("");
 
   const label = presence ? PRESENCE[presence].label : "Statut inconnu";
 
@@ -47,11 +57,13 @@ export function OwnStatus({ trame }: { trame: Trame }) {
 
   const choose = async (choice: StatusChoice) => {
     setBusy(choice);
-    const res = await trame.setMyStatus(choice);
+    const until = choice !== "reset" && duration ? duration : null;
+    const res = await trame.setMyStatus(choice, until);
     setBusy(null);
     if (!res.ok) return toast.error("Statut non changé", { description: res.error });
     setOpen(false);
-    toast.success(choice === "reset" ? "Statut réinitialisé" : `Statut : ${PRESENCE[choice].label}`);
+    const forHow = until ? ` ${DURATIONS.find((d) => d.value === until)!.phrase}` : "";
+    toast.success(choice === "reset" ? "Statut réinitialisé" : `Statut : ${PRESENCE[choice].label}${forHow}`);
   };
 
   const saveMessage = async (text: string) => {
@@ -91,6 +103,23 @@ export function OwnStatus({ trame }: { trame: Trame }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-1.5">
         <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">Ton statut dans Teams</div>
+        {/* Durée : Teams remet le statut d'avant à la fin (« Rétablir le statut après »). */}
+        <label className="mb-1 flex items-center gap-2 px-2 text-xs text-muted-foreground">
+          Durée
+          <select
+            aria-label="Durée du statut"
+            value={duration}
+            disabled={working}
+            onChange={(e) => setDuration(e.target.value as StatusDuration | "")}
+            className="h-7 flex-1 rounded-md border bg-background px-1.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            {DURATIONS.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div role="menu" aria-label="Choisir son statut">
           {CHOICES.map((c) => (
             <button

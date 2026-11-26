@@ -181,6 +181,8 @@ class SearchBody(BaseModel):
 
 class StatusBody(BaseModel):
     presence: presencemod.Choice
+    # « Rétablir le statut après » : 30 min, 1 h, 2 h, aujourd'hui, cette semaine ; absent : jusqu'à changement.
+    duration: Optional[presencemod.Duration] = None
 
 
 class StatusMessageBody(BaseModel):
@@ -370,7 +372,7 @@ def create_app(
 
     @app.post("/api/me/status")
     def post_my_status(body: StatusBody):
-        return {"ok": True, **watcher.set_my_status(body.presence)}
+        return {"ok": True, **watcher.set_my_status(body.presence, body.duration)}
 
     @app.post("/api/me/status-message/suggest")
     def suggest_status_message(body: Optional[StatusMessageBody] = None):
