@@ -1,14 +1,13 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Circle, Hash, RefreshCw, Search, User, Users, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GroupList, Segment, spring } from "@/components/kit";
 import { cn } from "@/lib/utils";
-import { Surface, WatchEntity } from "@/types";
+import { ConversationSort as Sort, Surface, WatchEntity } from "@/types";
 
 type Filter = "all" | Surface | "watched" | "unread";
-type Sort = "watched" | "recent" | "alpha";
 
 const FILTERS: { id: Filter; label: string; icon?: React.ElementType }[] = [
   { id: "all", label: "Tous" },
@@ -49,8 +48,13 @@ export function ConversationList({
   className = "h-[40vh]",
   fewClassName,
   footer,
+  sort: sortProp,
+  onSortChange,
 }: {
   items: WatchEntity[];
+  /** Tri imposé (enregistré ailleurs) ; sans lui, « Suivies d'abord » le temps de l'écran. */
+  sort?: Sort;
+  onSortChange?: (sort: Sort) => void;
   renderRow: (c: WatchEntity) => React.ReactNode;
   onBulk?: (ids: string[], watch: boolean) => void;
   /** Relit la liste dans Teams. */
@@ -66,14 +70,19 @@ export function ConversationList({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const hasRecency = items.some((c) => typeof c.rank === "number");
-  const [sort, setSort] = useState<Sort>("recent");
-  // « Suivies d'abord » : l'ordre est figé au moment du choix, pour qu'une ligne
-  // ne saute pas sous le doigt quand on la coche ou la décoche.
+  const [ownSort, setOwnSort] = useState<Sort>("watched");
+  const sort = sortProp ?? ownSort;
+  // « Suivies d'abord » : l'ordre est figé quand ce tri s'applique (au choix, ou dès que
+  // la liste arrive), pour qu'une ligne ne saute pas sous le doigt quand on la coche.
   const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const loaded = items.length > 0;
+  useEffect(() => {
+    if (sort === "watched") setPinned(new Set(items.filter((c) => c.watch).map((c) => c.threadId)));
+  }, [sort, loaded]);
   const [refreshing, setRefreshing] = useState(false);
   const chooseSort = (s: Sort) => {
-    if (s === "watched") setPinned(new Set(items.filter((c) => c.watch).map((c) => c.threadId)));
-    setSort(s);
+    setOwnSort(s);
+    onSortChange?.(s);
   };
   const refresh = async () => {
     if (!onRefresh || refreshing) return;

@@ -97,7 +97,11 @@ export interface Settings {
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
+  /** Préférences d'interface, gardées dans config.json : une mise à jour ne les perd pas. */
+  ui: { conversationSort: ConversationSort };
 }
+
+export type ConversationSort = "watched" | "recent" | "alpha";
 
 export interface SettingsPatch {
   onboarded?: boolean;
@@ -110,6 +114,7 @@ export interface SettingsPatch {
   telemetry?: Partial<Settings["telemetry"]>;
   mcp?: { enabled?: boolean; regenerateToken?: boolean; allowSend?: boolean };
   teamsWeb?: { enabled?: boolean };
+  ui?: Partial<Settings["ui"]>;
 }
 
 export type GithubKind = "pr" | "issue" | "commit";

@@ -185,7 +185,7 @@
     ["rail_id", "page", '[role="tree"] [role="treeitem"] [id*="19:"]'],
     ["me", "page", '[data-tid="me-control-avatar-trigger"]'],
     ["me_presence", "page", '[data-tid="me-control-avatar-presence"]'],
-    ["new_chat", "page", '[data-tid="chat-list-new-chat-button"], [data-tid="new-chat-button"], button[aria-label^="New chat"], button[aria-label^="Nouvelle conversation"]'],
+    ["new_chat", "page", '[data-testid="simple-collab-left-rail-header-new-message-button"], [data-tid="chat-list-new-chat-button"], [data-tid="new-chat-button"], button[aria-label^="Nouveau message"], button[aria-label^="New message"], button[aria-label^="New chat"], button[aria-label^="Nouvelle conversation"]'],
     ["search_input", "page", '#ms-searchux-input, [data-tid="AUTOSUGGEST_INPUT"]'],
     ["chat_app", "page", '[data-tid="app-bar-wrapper"] [data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"], [data-tid="app-bar-wrapper"] [aria-label="Conversation"], [data-tid="app-bar-wrapper"] [aria-label="Chat"]'],
     ["title", "chat", ''],
@@ -193,7 +193,7 @@
     ["editor_model", "chat", ''],
     ["send", "chat", '[data-tid="sendMessageCommands-send"], [data-tid="newMessageCommands-send"], button[aria-label^="Send"], button[aria-label^="Envoyer"]'],
     ["attach", "chat", '[data-tid="sendMessageCommands-FilePicker"], [data-tid="newMessageCommands-FilePicker"]'],
-    ["main_pane", "chat", '[role="main"]'],
+    ["main_pane", "chat", '[data-tid="message-pane-layout"], [role="main"]'],
     ["messages", "thread", '[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]'],
     ["message_body", "thread", '[data-tid="chat-pane-message"]'],
     ["message_id", "thread", '[id^="content-"]'],
@@ -216,7 +216,8 @@
     ["read_entry", "menu", '[data-tid="change-read-status-menu-item"]'],
     ["mention_list", "menu", '[data-tid="AutocompletePopup-Mentions"]'],
     ["delete_entry", "menu", '[data-tid="message-actions-delete"]'],
-    ["people_picker", "menu", '[data-tid="people-picker-input"], input[aria-label^="To"], input[aria-label^="À"], input[role="combobox"]'],
+    ["people_picker", "menu", '[data-tid="chat-with"] input[role="combobox"], #people-picker-input, [data-tid="people-picker-search"], [data-tid="people-picker-input"]'],
+    ["people_list", "menu", '[data-tid="people-picker-list"] [role="option"]'],
     ["search_tab", "menu", '[data-tid="messages-tab"]'],
     ["attach_menu", "menu", ''],
     ["discard_confirm", "menu", '[data-tid="messagedraft-discard-confirm"]'],
@@ -256,6 +257,8 @@
   const TYPING_ROW = '[data-testid="typing-indicator"]';
   const TYPING_TEXT = /\b(est|sont) en train d.\s?[eé]crire|\b(is|are) typing\b/i;
   const paneTyping = () => {
+    // Le fil et la zone de saisie de la conversation ouverte (message-pane-layout depuis
+    // que Teams web n'a plus de [role="main"]).
     const main = document.querySelector(LM.main_pane);
     if (!main) return "";
     const walk = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
@@ -1491,23 +1494,39 @@
       const button = Array.from(document.querySelectorAll(NEW_CHAT)).find(visible);
       if (!button) return { ok: false, title: document.title, error: "bouton « Nouvelle conversation » introuvable dans Teams" };
       button.click();
-      const field = () => Array.from(document.querySelectorAll(TO_FIELD)).find(visible);
+      // Jamais le champ de recherche du haut, qui est lui aussi une liste déroulante.
+      const field = () => Array.from(document.querySelectorAll(TO_FIELD)).find((el) => visible(el) && !el.matches(SEARCH_INPUT));
       if (!seen("people_picker", await waitFor(() => field(), 4000))) return { ok: false, title: document.title, error: "champ « À » introuvable" };
       const input = field();
       const cancel = () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
       input.focus();
-      // Champ React : la valeur passe par le setter natif, sinon Teams ne la voit pas.
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, name);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // Teams ne propose des personnes que sur une vraie frappe (comme pour les mentions) :
+      // l'application tape le nom. Sans elle, le setter natif du champ React, en repli.
+      try {
+        await typeTrusted(name);
+      } catch {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, name);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (!(await waitFor(() => norm(input.value) === norm(name), 2000))) {
+        cancel();
+        return { ok: false, title: document.title, error: "nom non saisi dans le champ « À »" };
+      }
       const n = norm(name);
+      // Les suggestions de CE champ (sa liste, aria-controls), jamais celles de la recherche.
+      const options = () => {
+        const own = document.getElementById(input.getAttribute("aria-controls") || "");
+        return own ? Array.from(own.querySelectorAll('[role="option"]')) : Array.from(document.querySelectorAll(LM.people_list));
+      };
       const matches = () =>
-        Array.from(document.querySelectorAll('[role="listbox"] [role="option"]'))
+        options()
           .filter(visible)
           .filter((o) => {
             const l = norm(label(o));
             return l === n || l.startsWith(n + " ");
           });
-      await waitFor(() => matches().length > 0, 6000);
+      seen("people_list", await waitFor(() => options().some(visible), 6000));
+      await waitFor(() => matches().length > 0, 2000);
       const found = matches();
       if (found.length !== 1) {
         cancel();

@@ -92,6 +92,14 @@ class TeamsWebSettings(BaseModel):
     enabled: bool = True
 
 
+ConversationSort = Literal["watched", "recent", "alpha"]
+
+
+class UiSettings(BaseModel):
+    """Interface preferences, kept in config.json (in %APPDATA%) so updates keep them."""
+    conversation_sort: ConversationSort = "watched"
+
+
 class Settings(BaseModel):
     onboarded: bool
     brain: BrainName
@@ -103,6 +111,7 @@ class Settings(BaseModel):
     telemetry: TelemetrySettings = TelemetrySettings()
     mcp: McpSettings = McpSettings()
     teams_web: TeamsWebSettings = TeamsWebSettings()
+    ui: UiSettings = UiSettings()
 
 
 class _Patch(BaseModel):
@@ -160,6 +169,10 @@ class TeamsWebPatch(_Patch):
     enabled: Optional[bool] = None
 
 
+class UiPatch(_Patch):
+    conversation_sort: Optional[ConversationSort] = None
+
+
 class SettingsPatch(_Patch):
     onboarded: Optional[bool] = None
     brain: Optional[BrainName] = None
@@ -171,6 +184,7 @@ class SettingsPatch(_Patch):
     telemetry: Optional[TelemetryPatch] = None
     mcp: Optional[McpPatch] = None
     teams_web: Optional[TeamsWebPatch] = None
+    ui: Optional[UiPatch] = None
 
 
 def _int(value, default: int, lo: int, hi: int) -> int:
@@ -223,7 +237,13 @@ def from_config(cfg: dict) -> Settings:
         teams_web=TeamsWebSettings(enabled=True),
         mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or ""),
                         allow_send=bool(cfg.get("mcp", {}).get("allow_send", False))),
+        ui=_ui(cfg.get("ui", {})),
     )
+
+
+def _ui(u: dict) -> UiSettings:
+    sort = u.get("conversation_sort") if isinstance(u, dict) else None
+    return UiSettings(conversation_sort=sort) if sort in ("watched", "recent", "alpha") else UiSettings()
 
 
 def _telemetry(t: dict) -> TelemetrySettings:
@@ -272,4 +292,6 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     out["telemetry"] = merged.telemetry.model_dump()
     out["mcp"] = merged.mcp.model_dump()
     out["teams_web"] = merged.teams_web.model_dump()
+    ui = out.get("ui")
+    out["ui"] = {**(ui if isinstance(ui, dict) else {}), **merged.ui.model_dump()}
     return out, merged

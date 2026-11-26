@@ -7,6 +7,7 @@ import {
   FactCheck,
   DraftItem,
   Effort,
+  ConversationSort,
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
@@ -72,6 +73,8 @@ export interface TrameState {
   myPresence: Presence | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
+  /** threadId -> compteur : change quand un message arrive ou que Trame en envoie un. */
+  threadUpdates: Record<string, number>;
   /** Dernier contrôle des repères de la page Teams ; null tant qu'il n'a pas tourné. */
   teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
@@ -231,6 +234,7 @@ function mapState(s: any): TrameState {
     },
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
+    threadUpdates: s.thread_updates ?? {},
     teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
   };
@@ -277,8 +281,10 @@ function mapSettings(s: any): Settings {
     },
     mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? ""), allowSend: Boolean(s?.mcp?.allow_send) },
     teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
+    ui: { conversationSort: toSort(s?.ui?.conversation_sort) },
   };
 }
+const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
 function mapCheck(c: any): FactCheck {
   return {
     threadId: c.thread_id,
@@ -483,6 +489,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     out.mcp = m;
   }
   if (p.teamsWeb?.enabled !== undefined) out.teams_web = { enabled: p.teamsWeb.enabled };
+  if (p.ui?.conversationSort !== undefined) out.ui = { conversation_sort: p.ui.conversationSort };
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -497,6 +504,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     followUps: { ...s.followUps, ...p.followUps },
     telemetry: { ...s.telemetry, ...p.telemetry },
     teamsWeb: { enabled: p.teamsWeb?.enabled ?? s.teamsWeb.enabled },
+    ui: { ...s.ui, ...p.ui },
     mcp: {
       enabled: p.mcp?.enabled ?? s.mcp.enabled,
       token: p.mcp?.enabled && !s.mcp.token ? "demo-jeton-local" : s.mcp.token,
@@ -509,7 +517,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], teamsCheck: null, followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, teamsCheck: null, followUps: [] };
   }
   return {
     paused: false,
@@ -524,6 +532,7 @@ function mockState(): TrameState {
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
     outbox: [],
+    threadUpdates: {},
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
   };
@@ -547,6 +556,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
+  ui: { conversationSort: "watched" },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -652,6 +662,12 @@ export function useTrame() {
   stateRef.current = state;
   // Copie des réglages du brief, utile aux points d'entrée hors de l'onglet Réglages.
   const [briefPrefs, setBriefPrefs] = useState<BriefPrefs>(prefsOf(localSettings));
+  // Tri de la liste des conversations, enregistré dans config.json.
+  const [conversationSort, setConversationSortState] = useState<ConversationSort>(localSettings.ui.conversationSort);
+  const applyPrefs = (s: Settings) => {
+    setBriefPrefs(prefsOf(s));
+    setConversationSortState(s.ui.conversationSort);
+  };
   // Dernier état connu de la connexion GitHub (null tant qu'il n'a pas été vérifié).
   const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
@@ -893,13 +909,13 @@ export function useTrame() {
   const getSettings = async (): Promise<Result<{ settings: Settings }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
-      setBriefPrefs(prefsOf(localSettings));
+      applyPrefs(localSettings);
       return { ok: true, settings: localSettings };
     }
     const res = await request<{ settings: unknown }>("GET", "/api/settings");
     if (!res.ok) return res;
     const settings = mapSettings(res.settings);
-    setBriefPrefs(prefsOf(settings));
+    applyPrefs(settings);
     return { ok: true, settings };
   };
   useEffect(() => {
@@ -911,15 +927,20 @@ export function useTrame() {
     if (!connectedRef.current) {
       await wait(350);
       localSettings = mergeSettings(localSettings, patch);
-      setBriefPrefs(prefsOf(localSettings));
+      applyPrefs(localSettings);
       return { ok: true, settings: localSettings };
     }
     const res = await request<{ settings: unknown }>("PUT", "/api/settings", settingsPatchToWire(patch));
     if (!res.ok) return res;
     const settings = mapSettings(res.settings);
     setState((s) => ({ ...s, brain: settings.brain, onboarded: settings.onboarded }));
-    setBriefPrefs(prefsOf(settings));
+    applyPrefs(settings);
     return { ok: true, settings };
+  };
+  /** Optimiste : le tri change tout de suite, puis est enregistré pour les prochains lancements. */
+  const setConversationSort = (sort: ConversationSort) => {
+    setConversationSortState(sort);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { conversationSort: sort } });
   };
 
   /** Relit la liste des conversations dans Teams ; l'état arrive ensuite par le flux habituel. */
@@ -1285,12 +1306,21 @@ export function useTrame() {
       },
     };
   };
-  /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis). */
-  const suggestInThread = async (threadId: string, target?: MessageRef | null): Promise<Result<{ text: string }>> => {
+  /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis ;
+   *  `mine` : un de tes messages, à relancer ou compléter). N'envoie jamais rien. */
+  const suggestInThread = async (
+    threadId: string,
+    target?: MessageRef | null,
+    opts: { mine?: boolean } = {}
+  ): Promise<Result<{ text: string }>> => {
     if (!connectedRef.current) {
-      const text = target
-        ? `Bien vu pour « ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} » : je m'en occupe et je te dis.`
-        : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const quoted = target ? `« ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} »` : "";
+      const text = target && opts.mine
+        ? `Petite relance sur ${quoted} : tu as pu regarder ? Je peux t'en dire plus si besoin.`
+        : target
+          ? `Bien vu pour ${quoted} : je m'en occupe et je te dis.`
+          : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
       const who = conversationName(threadId) ?? "ton interlocuteur";
       return demoReflect(
         {
@@ -1298,7 +1328,9 @@ export function useTrame() {
           threadId,
           conversation: conversationName(threadId),
           before: ["Lecture du fil (15 derniers messages au plus)", "Contexte rassemblé : fil (3 messages), entourage (1 fiche), GitHub (non utilisé pour une proposition)"],
-          thinking: target
+          thinking: target && opts.mine
+            ? `Le message choisi est le tien, pas celui de ${who} : je ne me réponds pas, je propose une relance courte qui rappelle le point et laisse la porte ouverte. Ton direct, tutoiement comme dans le fil.`
+            : target
             ? `${who} attend une réponse à un message précis, pas au dernier du fil. Je le cite et je réponds sur ce point seulement. Ton direct, tutoiement comme dans le fil, une phrase et un engagement.`
             : `${who} demande une relecture de la PR #214 avant ce soir. Le fil montre que c'est attendu aujourd'hui : je m'engage sur un créneau précis plutôt qu'un « je regarde ». Ton direct, tutoiement, une phrase.`,
           after: `Réponse reçue et nettoyée (${text.length} caractères)`,
@@ -1624,6 +1656,8 @@ export function useTrame() {
     getSettings,
     updateSettings,
     briefPrefs,
+    conversationSort,
+    setConversationSort,
     getBrief,
     generateBrief,
     githubStatus,

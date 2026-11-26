@@ -514,9 +514,9 @@ class Watcher:
     MAX_NOTICES = 20
 
     def _on_message(self, msg: IncomingMessage) -> None:
-        # Followed or not, an open discussion view rereads the conversation on the
-        # notice: its cached copy lacks this message.
-        self._thread_cache.pop(msg.thread_id, None)
+        # Followed or not, an open discussion view rereads the conversation: its cached
+        # copy lacks this message (one of the user's own, typed in Teams, included).
+        self._touch(msg.thread_id)
         self._track(msg.thread_id, [msg])
         self._notice(msg)
         self._process(msg)
@@ -587,10 +587,20 @@ class Watcher:
             gh_thread.join()
         gh_ctx = gh_result[0]
 
+        # The reply Trame drafts by itself shows in the reflection panel too, like the
+        # reply-box actions: what was gathered, the model's reasoning, the proposal.
         try:
-            with telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
-                                github=bool(gh_ctx)):
+            with self._reflect("reply", msg.thread_id), \
+                    telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
+                                   github=bool(gh_ctx)):
+                reflection.step(f"Message reçu de {msg.sender} ({len(msg.text)} caractères), "
+                                f"mode {'auto' if entity.mode == 'auto' and not force_draft else 'brouillon'}")
+                reflection.step(f"Contexte : fil ({summary.count(chr(10)) + 1 if summary else 0} ligne(s))"
+                                f"{', GitHub' if gh_ctx else ''}")
+                self._brain_call("rédiger la réponse")
                 proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary, entity))
+                reflection.step(f"Réponse reçue ({len(proposal)} caractères)")
+                reflection.result(proposal)
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -724,8 +734,19 @@ class Watcher:
                     self.log("warn", f"Saisie refusée : {focus.reason}")
             if focus.ok and send and text.strip():
                 self._remember_sent(thread_id, text)
+            if focus.ok and send:
+                self._touch(thread_id)
         self._warn_if_not_restored(focus)
         return focus.ok
+
+    def _touch(self, thread_id: str) -> None:
+        """The conversation changed (message received, or sent by Trame): its cached
+        history is stale, and the open discussion view rereads it."""
+        self._thread_cache.pop(thread_id, None)
+        self._history.pop(thread_id, None)
+        with self._lock:
+            self.state.thread_updates = {**self.state.thread_updates,
+                                         thread_id: self.state.thread_updates.get(thread_id, 0) + 1}
 
     def _warn_if_not_restored(self, focus: Focus) -> None:
         if focus.restored is False:
@@ -1385,13 +1406,6 @@ class Watcher:
         self._history.pop(thread_id, None)
         self.log("info", f"Message supprimé dans « {entity.display_name} » : {excerpt}")
 
-    def _locate(self, msgs: list[IncomingMessage], target: MessageRef) -> Optional[int]:
-        for i in range(len(msgs) - 1, -1, -1):
-            m = msgs[i]
-            if (not target.id or m.id == target.id) and same_message(target, m.sender, m.text):
-                return i
-        return None
-
     @contextmanager
     def _reflect(self, action: str, thread_id: Optional[str] = None) -> Iterator[reflection.Run]:
         """Follow a reply-box action in the reflection panel. An action the user
@@ -1426,27 +1440,13 @@ class Watcher:
     def _suggest_reply(self, thread_id: str, last_n: int, target: Optional[MessageRef]) -> str:
         entity = self._conversation(thread_id)
         reflection.step(f"Lecture du fil ({last_n} derniers messages au plus)")
+        if target is not None:
+            raw = [m for m in self._read_history_focused(thread_id, entity.display_name, last_n, "Proposition")[0]
+                   if m.text or m.files or m.images]
+            reflection.check_cancelled()
+            return self._suggest_for(entity, raw, target)
         msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
         reflection.check_cancelled()
-        if target is not None:
-            idx = self._locate(msgs, target)
-            if idx is None:
-                # Older than the read window: answer it with the recent thread as context.
-                last = IncomingMessage(thread_id=thread_id, sender=target.sender or entity.display_name, text=target.text,
-                                       received_at=target.at, surface=entity.surface, id=target.id)
-                before = msgs
-            else:
-                last, before = msgs[idx], msgs[:idx]
-            summary = "\n".join(f"{m.sender}: {m.text}" for m in before)
-            summary += f"\n(La réponse cite et répond précisément au message suivant de {last.sender}, pas au dernier du fil.)"
-            people = self._people_context(last, summary)
-            reflection.step(_gathered(len(before), people))
-            self._brain_call(f"réponse au message cité de {last.sender}")
-            try:
-                reply = self.brain.draft(self.soul, summary.strip(), last.text, "", people)
-            except Exception as e:
-                raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
-            return reply.strip()
         theirs = [m for m in msgs if not self._is_mine(m.sender)]
         if not theirs:
             raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
@@ -1455,6 +1455,47 @@ class Watcher:
         people = self._people_context(last, summary, entity)
         reflection.step(_gathered(len(msgs), people))
         self._brain_call(f"réponse au dernier message de {last.sender}")
+        try:
+            reply = self.brain.draft(self.soul, summary, last.text, "", people)
+        except Exception as e:
+            raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
+        return reply.strip()
+
+    def _suggest_for(self, entity: WatchEntity, raw: list[IncomingMessage], target: MessageRef) -> str:
+        """Proposal centred on one message of the thread (« Proposer une réponse à ce
+        message »): its text, author and attachments, the thread around it as context.
+        On one of the user's own messages, a follow-up or a complement, never a reply to
+        themself. Only returns the text: nothing is queued, nothing is sent."""
+        msgs = [self._as_text(m) for m in raw]
+        idx = next((i for i in range(len(raw) - 1, -1, -1)
+                    if (not target.id or raw[i].id == target.id)
+                    and (same_message(target, raw[i].sender, raw[i].text) or same_message(target, msgs[i].sender, msgs[i].text))),
+                   None)
+        if idx is None:
+            # Older than the read window: answer it with the recent thread as context.
+            reflection.step("Message ciblé hors des derniers messages lus : le fil récent sert de contexte")
+            last = IncomingMessage(thread_id=entity.thread_id, sender=target.sender or entity.display_name, text=target.text,
+                                   received_at=target.at, surface=entity.surface, id=target.id)
+            before, after = msgs, []
+        else:
+            last, before, after = msgs[idx], msgs[:idx], msgs[idx + 1:]
+            joined = [f.name for f in raw[idx].files] + (["image"] * len(raw[idx].images))
+            if joined:
+                reflection.step(f"Pièces jointes du message ciblé : {', '.join(joined)} (nommées, non lues)")
+        mine = self._is_mine(last.sender)
+        lines = [f"{m.sender}: {m.text}" for m in before]
+        if after:
+            lines.append("(Messages arrivés après le message ciblé, pour contexte seulement :)")
+            lines += [f"{m.sender}: {m.text}" for m in after]
+        if mine:
+            lines.append("(Le message ciblé ci-dessous est le tien : propose une relance ou un complément à ce message, "
+                         "dans la suite du fil, sans te répondre à toi-même.)")
+        else:
+            lines.append(f"(La réponse cite et répond précisément au message suivant de {last.sender}, pas au dernier du fil.)")
+        summary = "\n".join(lines).strip()
+        people = self._people_context(last, summary, None if mine else entity)
+        reflection.step(_gathered(len(before) + len(after), people))
+        self._brain_call(f"{'relance de ton message' if mine else f'réponse au message cité de {last.sender}'}")
         try:
             reply = self.brain.draft(self.soul, summary, last.text, "", people)
         except Exception as e:
