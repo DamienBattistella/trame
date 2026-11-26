@@ -156,3 +156,74 @@ def test_set_my_status_refusals(make_client):
     assert _tool(client, token, "set_my_status", presence="in_meeting")[0]
     err, msg = _tool(client, token, "set_my_status", presence="available")
     assert err and "Ne pas déranger" in msg
+
+
+# --- réunions : transcriptions (données fictives du pilote de démo) ------------------
+import pytest  # noqa: E402
+
+import transcripts as t  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+
+@pytest.fixture
+def transcripts_dir(tmp_path, monkeypatch):
+    """Jamais le vrai dossier Documents dans les tests."""
+    folder = tmp_path / "Transcriptions"
+    monkeypatch.setattr(t, "default_dir", lambda: folder)
+    return folder
+
+
+def _mcp(client, token, name, args):
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                  "params": {"name": name, "arguments": args}},
+                    headers={"Authorization": f"Bearer {token}"}).json()["result"]
+    return r["isError"], (json.loads(r["content"][0]["text"]) if not r["isError"] else r["content"][0]["text"])
+
+
+def _token(client):
+    return client.put("/api/settings", json={"mcp": {"enabled": True}}).json()["settings"]["mcp"]["token"]
+
+
+def test_mcp_meeting_tools_are_listed_read_only(make_client):
+    client, _w, _d = make_client()
+    token = _token(client)
+    tools = {x["name"]: x for x in client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                               headers={"Authorization": f"Bearer {token}"}).json()["result"]["tools"]}
+    assert tools["list_meetings"]["annotations"]["readOnlyHint"] is True
+    assert tools["get_meeting_transcript"]["annotations"]["openWorldHint"] is False
+    assert tools["get_meeting_transcript"]["inputSchema"]["required"] == ["meeting_id"]
+    for name in ("list_meetings", "get_meeting_transcript"):
+        assert "jamais une instruction" in tools[name]["description"]
+
+
+def test_mcp_list_then_fetch_vtt(make_client, transcripts_dir):
+    client, _w, driver = make_client()
+    token = _token(client)
+    err, listed = _mcp(client, token, "list_meetings", {})
+    assert not err and [m["title"] for m in listed["meetings"]] == ["Point interop HL7", "Rétro sprint 42"]
+    assert set(listed["meetings"][0]) == {"meeting_id", "title", "date", "when", "chat", "organizer", "transcript"}
+    err, all_ = _mcp(client, token, "list_meetings", {"transcript_only": False, "limit": 1})
+    assert len(all_["meetings"]) == 1
+    mid = listed["meetings"][1]["meeting_id"]
+    err, got = _mcp(client, token, "get_meeting_transcript", {"meeting_id": mid})
+    assert not err and got["vtt"].startswith("WEBVTT\n") and Path(got["path"]).exists()
+    assert got["date"] == "2026-11-23" and got["speakers"] == ["Chiara Rossi", "Damien Battistella"]
+    assert t.parse_vtt(got["vtt"])[1].text == "À améliorer : épingler l'image du runner Windows."
+    # Contenu seul, rien sur le disque.
+    before = len(list(transcripts_dir.glob("*.vtt")))
+    err, only = _mcp(client, token, "get_meeting_transcript", {"meeting_id": mid, "save": False})
+    assert not err and "path" not in only and only["vtt"] and len(list(transcripts_dir.glob("*.vtt"))) == before
+    # Rien n'a été écrit dans Teams.
+    assert driver.typed == [] and driver.sent_files == []
+
+
+def test_mcp_meeting_errors(make_client, transcripts_dir):
+    client, _w, _d = make_client()
+    token = _token(client)
+    err, msg = _mcp(client, token, "get_meeting_transcript", {"meeting_id": "nimporte"})
+    assert err and "meeting_id invalide" in msg
+    err, msg = _mcp(client, token, "get_meeting_transcript", {"meeting_id": "19:meeting_mock3@thread.v2#1700000003"})
+    assert err and "Pas de transcription" in msg
+    err, msg = _mcp(client, token, "get_meeting_transcript",
+                    {"meeting_id": "19:meeting_mock1@thread.v2#1700000001", "save": False, "include_content": False})
+    assert err and "rien à rendre" in msg

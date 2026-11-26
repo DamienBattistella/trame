@@ -158,8 +158,34 @@ _OLDER: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+_RECAPS = [
+    {"thread_id": "19:meeting_mock1@thread.v2", "chat": "Point interop HL7", "mid": "1700000001",
+     "title": "Point interop HL7", "when": "mardi 24 novembre 2026 10:00 - 10:30", "transcript": True},
+    {"thread_id": "19:meeting_mock2@thread.v2", "chat": "Rétro sprint 42", "mid": "1700000002",
+     "title": "Rétro sprint 42", "when": "lundi 23 novembre 2026 16:00 - 17:00", "transcript": True},
+    {"thread_id": "19:meeting_mock3@thread.v2", "chat": "Café d'équipe", "mid": "1700000003",
+     "title": "Café d'équipe", "when": "vendredi 20 novembre 2026 09:00 - 09:15", "transcript": False},
+]
+# Transcription fictive, telle que l'iframe de Teams la relit (une suite du même orateur
+# n'a ni nom ni horodatage).
+_RECAP_TRANSCRIPTS = {
+    "1700000001": [
+        {"speaker": "Sofia Marino", "time": "0:03", "text": "Bonjour à tous, on fait le point sur le connecteur HL7."},
+        {"speaker": "", "time": "", "text": "Les tests OBX passent depuis ce matin."},
+        {"speaker": "Lucas Bernard", "time": "0:12", "text": "J'ai encore un doute sur le typage d'OBX-2 : on garde ST ?"},
+        {"speaker": "Damien Battistella", "time": "0:21", "text": "Non, on suit la table 0125, et on crée une issue pour les écarts."},
+        {"speaker": "Sofia Marino", "time": "0:35", "text": "Très bien, recette jeudi après la fusion de la PR #214."},
+    ],
+    "1700000002": [
+        {"speaker": "Chiara Rossi", "time": "0:05", "text": "Ce qui a bien marché : la CI est restée verte toute la semaine."},
+        {"speaker": "Damien Battistella", "time": "1:10", "text": "À améliorer : épingler l'image du runner Windows."},
+    ],
+}
+
+
 class MockTeamsDriver(TeamsDriver):
     PRESENCE_STEP = 120.0
+    supports_transcripts = True
     can_start_chat = True
     can_search_people = True
     can_search_messages = True
@@ -215,6 +241,18 @@ class MockTeamsDriver(TeamsDriver):
         results = {key: key not in self.missing_landmarks for key in teams_check.LANDMARKS}
         return {"ready": True, "results": results,
                 "marks": {key: {"ok": False, "at": now} for key in self.missing_landmarks}}
+
+    def list_meetings(self, limit: Optional[int] = None) -> list[dict]:
+        return [dict(m) for m in _RECAPS]
+
+    def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
+        meeting = next((m for m in _RECAPS if m["thread_id"] == thread_id and m["mid"] == mid), None)
+        if meeting is None:
+            return {"ok": False, "reason": "not_found", "error": "réunion inconnue"}
+        if not meeting["transcript"]:
+            return {"ok": False, "reason": "none", **meeting}
+        return {"ok": True, "complete": True, "recap_when": meeting["when"], "owner": "sofia_marino_exemple_fr", **meeting,
+                "entries": [dict(e) for e in _RECAP_TRANSCRIPTS[mid]]}
 
     def list_conversations(self) -> list[WatchEntity]:
         seen = self.presence()

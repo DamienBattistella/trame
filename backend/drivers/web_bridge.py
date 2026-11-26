@@ -246,6 +246,28 @@ class WebBridgeDriver(TeamsDriver):
                            f" ({(res or {}).get('error') or 'titre affiché : ' + (shown or 'aucun')})")
         return False
 
+    # Réunions terminées : cartes « récapitulatif » de la conversation de réunion, et
+    # transcription relue dans l'iframe SharePoint de l'onglet « Transcript ».
+    supports_transcripts = True
+    TRANSCRIPT_TIMEOUT = 150.0
+
+    def _meeting_recaps_active(self) -> list[dict]:
+        res = self._rpc("recaps", timeout=10) or {}
+        return [r for r in res.get("recaps") or [] if isinstance(r, dict)]
+
+    def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
+        # The chat is opened by its name: a restarted engine learns it from the list first.
+        if thread_id not in self._names:
+            try:
+                self._items()
+            except Exception as e:
+                return {"ok": False, "reason": "not_found", "error": str(e)}
+        return super().meeting_transcript(thread_id, mid, probe)
+
+    def _meeting_transcript_active(self, mid: str, probe: bool = False) -> dict:
+        res = self._rpc("transcript", timeout=self.TRANSCRIPT_TIMEOUT, mid=str(mid), probe=bool(probe))
+        return res if isinstance(res, dict) else {"ok": False, "reason": "error", "error": "réponse illisible"}
+
     # Teams web: « Nouvelle conversation », the person picked in the « À » field. Teams'
     # people search is not offered on its own: only the name the user chose is resolved.
     can_start_chat = True

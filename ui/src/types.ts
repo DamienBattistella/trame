@@ -356,3 +356,32 @@ export interface ReflectionRun {
   reasoning: boolean;
   rev: number;
 }
+
+/** Une réunion Teams terminée (carte « récapitulatif » d'une conversation de réunion). */
+export interface Meeting {
+  /** Conversation de réunion + carte : ce que le moteur demande pour la transcription. */
+  meetingId: string;
+  threadId: string;
+  mid: string;
+  title: string;
+  /** Créneau tel que Teams l'écrit (« mardi 24 novembre 2026 11:00 - 11:45 »). */
+  when: string;
+  /** Date ISO, si le créneau a pu être lu. */
+  date: string | null;
+  chat: string;
+  /** Connu une fois la transcription relue (propriétaire de l'enregistrement). */
+  organizer: string;
+  transcript: boolean;
+}
+
+/** Une transcription enregistrée en .vtt sur le poste. */
+export interface SavedTranscript {
+  path: string;
+  name: string;
+  directory: string;
+  cues: number;
+  speakers: string[];
+  /** Faux si la liste n'a pas pu être relue jusqu'au bout. */
+  complete: boolean;
+  organizer: string;
+}

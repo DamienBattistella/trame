@@ -286,6 +286,64 @@ class TeamsDriver(ABC):
         Raises with the reason when the search could not run."""
         raise RuntimeError(self.search_messages_unsupported)
 
+    # --- meeting transcripts (read only) ---
+    supports_transcripts: bool = False
+    """True when the driver can read the transcript of a finished Teams meeting."""
+    transcripts_unsupported = "ce pilote Teams ne sait pas lire les transcriptions de réunion"
+    MAX_MEETING_CHATS = 12
+
+    def _meeting_recaps_active(self) -> list[dict]:
+        """Recap cards of the open meeting chat: dicts with mid, title, when, transcript."""
+        raise NotSupported(self.transcripts_unsupported)
+
+    def _meeting_transcript_active(self, mid: str, probe: bool = False) -> dict:
+        """Entries of one recap's transcript in the open chat: {ok, entries, ...} or
+        {ok: False, reason: none|denied|not_found|frame|timeout|empty|error, error}."""
+        raise NotSupported(self.transcripts_unsupported)
+
+    def list_meetings(self, limit: Optional[int] = None) -> list[dict]:
+        """Finished meetings of the recent meeting chats, newest chat first: one dict per
+        recap card (thread_id, chat, mid, title, when, transcript). Opens each meeting
+        chat in turn, reads, then puts back the conversation the user was on."""
+        if not self.supports_transcripts:
+            raise NotSupported(self.transcripts_unsupported)
+        chats = [c for c in self.list_conversations() if "meeting_" in c.thread_id][: limit or self.MAX_MEETING_CHATS]
+        previous = self._current()
+        out: list[dict] = []
+        try:
+            for chat in chats:
+                try:
+                    if not self.open_thread(chat.thread_id):
+                        continue
+                    recaps = self._meeting_recaps_active()
+                except NotSupported:
+                    raise
+                except Exception as e:
+                    self.last_error = str(e)
+                    continue
+                for r in recaps:
+                    if isinstance(r, dict) and r.get("mid"):
+                        out.append({"thread_id": chat.thread_id, "chat": chat.display_name, "mid": str(r["mid"]),
+                                    "title": str(r.get("title") or chat.display_name), "when": str(r.get("when") or ""),
+                                    "transcript": bool(r.get("transcript"))})
+        finally:
+            if previous is not None and self._current() != previous:
+                try:
+                    self.open_thread(previous)
+                except Exception:
+                    pass
+        return out
+
+    def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
+        """The transcript entries of one finished meeting (see _meeting_transcript_active),
+        read in its chat, the user's conversation put back afterwards."""
+        if not self.supports_transcripts:
+            raise NotSupported(self.transcripts_unsupported)
+        with self.focused(thread_id, restore=True) as focus:
+            if not focus.ok:
+                return {"ok": False, "reason": "not_found", "error": focus.reason}
+            return self._meeting_transcript_active(mid, probe)
+
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         """Calibration report (structure only, no message text)."""
         return {"driver": type(self).__name__}
