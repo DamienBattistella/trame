@@ -68,9 +68,10 @@ export function DiscussionView({
   const [text, setText] = useState(draft?.proposal ?? "");
   const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss">("idle");
   const [fresher, setFresher] = useState<string | null>(null);
-  // Fil complet : `top` quand le début de la conversation est atteint, `older` pendant
-  // qu'on remonte l'historique. `want` : combien de messages le fil affiche.
-  const [top, setTop] = useState(false);
+  // Fil complet : `edge` dit pourquoi on ne remonte plus (début de la conversation, ou
+  // limite de ce que Trame peut relire d'un coup), `older` pendant qu'on remonte.
+  // `want` : combien de messages le fil affiche.
+  const [edge, setEdge] = useState<"start" | "limit" | null>(null);
   const [older, setOlder] = useState(false);
   const want = useRef(PAGE);
   const loading = useRef(false);
@@ -86,11 +87,11 @@ export function DiscussionView({
       return;
     }
     setMessages(res.messages);
-    setTop(res.top);
+    if (res.top) setEdge("start");
   };
 
   const loadOlder = async () => {
-    if (loading.current || top || messages === null) return;
+    if (loading.current || edge || messages === null) return;
     loading.current = true;
     setOlder(true);
     want.current = Math.min(MAX, want.current + PAGE);
@@ -98,8 +99,10 @@ export function DiscussionView({
     loading.current = false;
     setOlder(false);
     if (!res.ok) return toast.error("Historique indisponible", { description: res.error });
+    // Rien de plus ancien revenu : Teams n'en charge pas davantage dans le temps imparti.
+    const gained = res.messages.length > (messages?.length ?? 0);
     setMessages(res.messages);
-    setTop(res.top || want.current >= MAX);
+    setEdge(res.top ? "start" : !gained || want.current >= MAX ? "limit" : null);
   };
 
   useEffect(() => {
@@ -107,7 +110,7 @@ export function DiscussionView({
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
-    setTop(false);
+    setEdge(null);
     want.current = PAGE;
     load();
   }, [c.threadId]);
@@ -126,11 +129,11 @@ export function DiscussionView({
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = sentinel.current;
-    if (!el || top || messages === null) return;
+    if (!el || edge || messages === null) return;
     const io = new IntersectionObserver(([e]) => e.isIntersecting && loadOlder(), { rootMargin: "120px 0px 0px 0px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [top, messages === null, c.threadId]);
+  }, [edge, messages === null, c.threadId]);
 
   // Nouveau message pendant la lecture : la proposition est mise à jour sans écraser ton texte.
   useEffect(() => {
@@ -255,8 +258,12 @@ export function DiscussionView({
               )}
               {messages !== null && (
                 <div ref={sentinel} className="flex justify-center pb-2 text-xs text-muted-foreground">
-                  {top ? (
+                  {edge === "start" ? (
                     <span>Début de la conversation</span>
+                  ) : edge === "limit" ? (
+                    <button type="button" className="rounded-full px-3 py-1 hover:bg-muted hover:text-foreground" onClick={openInTeams}>
+                      Plus ancien : ouvrir dans Teams
+                    </button>
                   ) : older ? (
                     <span className="flex items-center gap-2"><Loader2 className="size-3.5 animate-spin" /> Messages plus anciens…</span>
                   ) : (

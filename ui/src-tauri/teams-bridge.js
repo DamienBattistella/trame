@@ -233,9 +233,12 @@
             text,
             at,
           };
-        });
+        })
+        // Teams intercale des éléments vides (avatar seul) : sans texte ni identifiant,
+        // ils se ressembleraient tous et fausseraient la fusion.
+        .filter((m) => m.text);
       // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
-      // message connu est plus ancien.
+      // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
       let acc = snap();
       const merge = () => {
         const known = new Set(acc.map((m) => m.key));
@@ -243,35 +246,40 @@
         const cut = view.findIndex((m) => known.has(m.key));
         const older = (cut < 0 ? view : view.slice(0, cut)).filter((m) => !known.has(m.key));
         if (older.length) acc = [...older, ...acc];
+        return older.length > 0;
       };
-      let top = false;
       const box = (() => {
         for (let el = document.querySelector(MSGS); el && el !== document.body; el = el.parentElement) {
           if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
         }
         return null;
       })();
-      const enough = () => acc.filter((m) => m.text).length >= last;
-      if (box && !enough()) {
-        const end = Date.now() + 15000;
-        for (let still = 0; still < 4 && !enough() && Date.now() < end && !late(); ) {
-          const before = `${acc.length}/${box.scrollHeight}/${box.scrollTop}`;
+      let top = !box && acc.length < last;
+      if (box && acc.length < last) {
+        // Teams charge la suite quand on arrive en haut : on redescend un peu avant d'y
+        // remonter, pour qu'il voie un défilement même si l'on y est déjà. Trois essais
+        // sans rien de nouveau : c'est le début de la conversation. Une limite de temps
+        // atteinte, elle, ne dit rien du début (top reste faux).
+        const end = Date.now() + 20000;
+        for (let stalls = 0; acc.length < last && Date.now() < end && !late(); ) {
+          const height = box.scrollHeight;
+          box.scrollTop = Math.min(200, height);
+          await sleep(50);
           box.scrollTop = 0;
-          await sleep(400);
-          merge();
-          still = before === `${acc.length}/${box.scrollHeight}/${box.scrollTop}` ? still + 1 : 0;
+          if (await waitFor(() => merge() || box.scrollHeight !== height, 1500)) stalls = 0;
+          else if (++stalls >= 3) {
+            top = true;
+            break;
+          }
         }
-        top = box.scrollTop === 0 && !enough();
         box.scrollTop = box.scrollHeight;
-      } else if (!box) {
-        top = !enough();
       }
       // L'auteur n'est affiché qu'en tête d'une suite de messages : on le reporte.
       let sender = "";
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        if (m.text) out.push({ sender, text: m.text, at: m.at });
+        out.push({ sender, text: m.text, at: m.at });
       }
       return { messages: out.slice(-last), top };
     },

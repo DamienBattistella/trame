@@ -174,7 +174,7 @@ class WebBridgeDriver(TeamsDriver):
     def read_history(self, thread_id: str, last_n: int) -> tuple[list[IncomingMessage], bool]:
         surface = self._kinds.get(thread_id, Surface.dm)
         # Going back in the history scrolls Teams up until enough messages were seen.
-        res = self._rpc("read", last=last_n, timeout=25) or {}
+        res = self._rpc("read", last=last_n, timeout=30) or {}
         raw, top = res.get("messages") or [], bool(res.get("top"))
         msgs = [IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=(m.get("text") or "").strip(),
                                 received_at=m.get("at") or "", surface=surface)
