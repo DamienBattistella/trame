@@ -33,7 +33,26 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.icns"],
-    "externalBin": ["binaries/trame-backend"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/trame-backend"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBDREFFQ0I3NEJGRjlGNjMKUldSam4vOUx0K3phREhGTzVqZDIvanBQb24yUFdaeVdoQXFPMG5WdVNiZmloU2RrZFBkQlJycDAK",
+      "endpoints": [
+        "https://github.com/DamienBattistella/trame/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

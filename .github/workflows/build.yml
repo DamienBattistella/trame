@@ -60,8 +60,53 @@ jobs:
         run: npm run tauri icon src-tauri/icons/source.png
         working-directory: ui
 
+      - name: Version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          $path = "src-tauri/tauri.conf.json"
+          (Get-Content $path -Raw) -replace '"version":\s*"[^"]+"', ('"version": "' + $v + '"') | Set-Content $path -Encoding utf8NoBOM
+        working-directory: ui
+
+      # Mises à jour signées : sans la clé (secret absent), on construit l'installeur
+      # sans artefacts de mise à jour plutôt que d'échouer.
       - name: Tauri build
-        run: npm run tauri build
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            npm run tauri build
+          } else {
+            Write-Host "::warning::TAURI_SIGNING_PRIVATE_KEY absent : installeur sans mise à jour automatique."
+            '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content src-tauri/no-updater.json -Encoding utf8NoBOM
+            npm run tauri build -- --config src-tauri/no-updater.json
+          }
+        working-directory: ui
+
+      - name: Updater manifest (latest.json)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $sig = "$($setup.FullName).sig"
+          if (-not (Test-Path $sig)) { Write-Host "::warning::Pas de signature : latest.json non publié."; exit 0 }
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          $name = $setup.Name -replace ' ', '.'
+          $manifest = [ordered]@{
+            version = $v
+            notes = "Trame $v"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = (Get-Content $sig -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$name"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content src-tauri/target/release/bundle/latest.json -Encoding utf8
         working-directory: ui
 
       - name: Upload installer
@@ -79,7 +124,9 @@ jobs:
         with:
           name: Trame ${{ github.ref_name }}
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
             ui/src-tauri/target/release/bundle/msi/*.msi
             ui/src-tauri/target/release/bundle/nsis/*.exe
+            ui/src-tauri/target/release/bundle/nsis/*.exe.sig
+            ui/src-tauri/target/release/bundle/latest.json

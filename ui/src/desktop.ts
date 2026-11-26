@@ -29,6 +29,18 @@ export async function setAutostart(on: boolean): Promise<boolean> {
   }
 }
 
+/** Écoute un événement émis par l'application de bureau ; sans effet dans un navigateur. */
+export function onDesktopEvent<T = unknown>(name: string, cb: (payload: T) => void): () => void {
+  let unlisten: (() => void) | undefined;
+  let gone = false;
+  const ev = tauri()?.event as { listen: (n: string, f: (e: { payload: T }) => void) => Promise<() => void> } | undefined;
+  ev?.listen(name, (e) => cb(e.payload)).then((u) => (gone ? u() : (unlisten = u)));
+  return () => {
+    gone = true;
+    unlisten?.();
+  };
+}
+
 export function onTrayTogglePause(cb: () => void): () => void {
   let unlisten: (() => void) | undefined;
   tauri()?.event?.listen("tray-toggle-pause", cb).then((u) => (unlisten = u));

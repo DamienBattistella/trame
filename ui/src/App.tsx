@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
 import { toast } from "sonner";
-import { onTrayTogglePause, setAutostart } from "@/desktop";
+import { onDesktopEvent, onTrayTogglePause, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
 
 // Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
@@ -65,6 +65,19 @@ export default function App() {
   const togglePauseRef = useRef(togglePause);
   togglePauseRef.current = togglePause;
   useEffect(() => onTrayTogglePause(() => togglePauseRef.current(!pausedRef.current)), []);
+  // Mise à jour au lancement (faite par l'application de bureau) : on prévient, sans rien demander.
+  useEffect(() => {
+    const offAvailable = onDesktopEvent<string>("update-available", (version) =>
+      toast.info(`Mise à jour vers la version ${version}`, { description: "Téléchargement en cours. Trame redémarrera tout seul." })
+    );
+    const offFailed = onDesktopEvent("update-failed", () =>
+      toast.error("Mise à jour impossible", { description: "Trame continue avec la version actuelle et réessaiera au prochain lancement." })
+    );
+    return () => {
+      offAvailable();
+      offFailed();
+    };
+  }, []);
   // Démarrage avec Windows activé au premier onboarding seulement, jamais en relançant le wizard.
   const firstRun = useRef(true);
 

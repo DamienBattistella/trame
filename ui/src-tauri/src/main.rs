@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct Backend(Mutex<Option<CommandChild>>);
@@ -40,6 +41,40 @@ fn stop_backend(app: &AppHandle) {
     }
 }
 
+/// At launch: if GitHub has a newer signed release, download it, stop the engine
+/// (its exe must be replaceable and it must not act on Teams meanwhile), install it
+/// and restart. Any failure leaves the current version running. Release builds only.
+async fn update_on_launch(app: AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(updater) = app.updater() else { return };
+    let update = match updater.check().await {
+        Ok(Some(update)) => update,
+        Ok(None) => return,
+        Err(e) => {
+            eprintln!("[update] vérification impossible : {e}");
+            return;
+        }
+    };
+    let _ = app.emit("update-available", update.version.clone());
+    let bytes = match update.download(|_, _| {}, || {}).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("[update] téléchargement impossible : {e}");
+            let _ = app.emit("update-failed", ());
+            return;
+        }
+    };
+    stop_backend(&app);
+    if let Err(e) = update.install(bytes) {
+        eprintln!("[update] installation impossible : {e}");
+        let _ = app.emit("update-failed", ());
+        return;
+    }
+    app.restart();
+}
+
 fn quit(app: &AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
     stop_backend(app);
@@ -55,6 +90,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
         .setup(|app| {
             // A missing or quarantined engine must not take the window and tray down:
@@ -116,6 +152,8 @@ fn main() {
                     }
                 })
                 .build(app)?;
+
+            tauri::async_runtime::spawn(update_on_launch(app.handle().clone()));
 
             if std::env::args().any(|a| a == "--minimized") {
                 if let Some(w) = app.get_webview_window("main") {
