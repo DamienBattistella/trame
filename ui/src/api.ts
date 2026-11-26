@@ -12,6 +12,7 @@ import {
   ClaudeStatus,
   ThreadActivity,
   ThreadMessage,
+  MeetingLink,
   PeopleSearch,
   PeopleSummary,
   Person,
@@ -347,6 +348,13 @@ const DEMO_ENTOURAGE: Person[] = [
 ].map((p) => ({ aliases: [], relation: null, tone: null, note: null, ...p }));
 const DEMO_TEAMS_PEOPLE = ["Alice Martin", "Antoine Girard", "Nadia Benali", "Thomas Petit"];
 const demoStarted = new Set<string>();
+/** Démo : les conversations de réunion ont un lien de réunion, la première est en cours. */
+const demoMeeting = (threadId: string): MeetingLink | null => {
+  const m = /^19:meeting_x(\d+)@thread\.v2$/.exec(threadId);
+  if (!m) return null;
+  const url = `https://teams.microsoft.com/l/meetup-join/19%3ameeting_demo${m[1]}%40thread.v2/0`;
+  return { url, live: m[1] === "0" };
+};
 
 let demoPeople: PeopleSummary = { loaded: false, count: 0, source: null, generatedAt: null };
 let demoPeopleList: Person[] = [];
@@ -1027,11 +1035,12 @@ export function useTrame() {
     threadId: string,
     fresh = false,
     last = 30
-  ): Promise<Result<{ messages: ThreadMessage[]; top: boolean }>> => {
+  ): Promise<Result<{ messages: ThreadMessage[]; top: boolean; meeting: MeetingLink | null }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
-      if (demoStarted.has(threadId)) return { ok: true, messages: [], top: true };
+      const meeting = demoMeeting(threadId);
+      if (demoStarted.has(threadId)) return { ok: true, messages: [], top: true, meeting };
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
       const messages: ThreadMessage[] = [
@@ -1051,14 +1060,14 @@ export function useTrame() {
         { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);
-      return { ok: true, messages, top: true };
+      return { ok: true, messages, top: true, meeting };
     }
     const query = new URLSearchParams({ last: String(last), ...(fresh ? { fresh: "true" } : {}) });
-    const res = await request<{ messages: ThreadMessage[]; top?: boolean }>(
+    const res = await request<{ messages: ThreadMessage[]; top?: boolean; meeting?: MeetingLink | null }>(
       "GET",
       `/api/threads/${encodeURIComponent(threadId)}/messages?${query}`
     );
-    return res.ok ? { ...res, top: Boolean(res.top) } : res;
+    return res.ok ? { ...res, top: Boolean(res.top), meeting: res.meeting ?? null } : res;
   };
   /** Quelqu'un écrit, ton dernier message est vu : ce que montre la liste que le moteur
    *  interroge déjà (rien n'est ouvert dans Teams). Démo : rien à signaler. */

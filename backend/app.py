@@ -374,7 +374,8 @@ def create_app(
     def thread_messages(thread_id: str, last: int = 30, fresh: bool = False):
         # top: the start of the conversation was reached, there is nothing older to load.
         messages, top = watcher.thread_history(thread_id, max(5, min(500, last)), fresh)
-        return {"ok": True, "messages": messages, "top": top}
+        # meeting: a meeting chat's join link and whether it is in progress (else null).
+        return {"ok": True, "messages": messages, "top": top, "meeting": watcher.thread_meeting(thread_id)}
 
     @app.get("/api/threads/{thread_id:path}/activity")
     def thread_activity(thread_id: str):
