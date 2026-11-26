@@ -21,7 +21,7 @@ from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck, FactCheckSources,
-                    IncomingMessage, LogItem, MessageRef, Notice, Surface, WatchEntity)
+                    IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, WatchEntity)
 from drivers.base import Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
@@ -99,6 +99,14 @@ class Watcher:
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
         # lists them itself (a brand-new chat only shows up there after its first message).
         self._started: set[str] = set()
+        # File d'envoi : pièces jointes et mentions des messages en attente (hors de l'état
+        # diffusé à l'interface), et réveil du renvoi.
+        self._outbox_payload: dict[str, dict] = {}
+        self._outbox_wake = threading.Event()
+        # Un seul passage à la fois sur la file : deux passages simultanés (boucle de fond
+        # et nouvel essai demandé) enverraient le même message deux fois.
+        self._outbox_flush = threading.Lock()
+        self.outbox_auto = True  # renvoi en arrière-plan ; coupé par les tests
 
     # --- lifecycle ---
     def teams_ready(self, ready: bool) -> None:
@@ -111,6 +119,7 @@ class Watcher:
             self.log("warn", "Teams : connexion perdue, tout reste en brouillon")
             return
         self.log("info", "Teams connecté")
+        self._outbox_wake.set()
         if getattr(self.driver, "list_all_conversations", None) is None:
             self._read_conversations(self.driver.list_conversations)
             return
@@ -151,6 +160,7 @@ class Watcher:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         threading.Thread(target=self._presence_loop, daemon=True).start()
+        threading.Thread(target=self._outbox_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -558,8 +568,144 @@ class Watcher:
             raise ActionError(422, f"Mention absente du texte : @{missing[0]}.")
         return names
 
+    # --- outbox: what the user sent while Teams was not ready ---
+    OUTBOX_RETRY = 15.0          # seconds between two automatic tries
+    OUTBOX_MAX_AGE = 12 * 3600   # a message older than this is no longer sent by itself
+    # Reasons where nothing reached Teams: the page could not be reached, or the
+    # conversation could not even be opened. Anything else (text refused, compose box
+    # busy, conversation not found) needs the user: it is never retried by itself.
+    TRANSIENT = ("n'est pas prête", "n'est pas affiché", "pas de réponse à « open »", "pas de réponse à « title »",
+                 "pas de réponse à « ping »", "Partage d'écran")
+
+    def _not_ready(self, thread_id: Optional[str] = None) -> Optional[str]:
+        """Why a send cannot even be tried now, None when Teams is ready. A conversation
+        that already has a message waiting keeps its order: the new one goes behind it."""
+        if thread_id and any(x.thread_id == thread_id for x in self.state.outbox):
+            return "un message précédent de cette conversation attend encore"
+        if self._screen_share_guarded():
+            self.state.screen_sharing = True
+            return "Partage d'écran en cours"
+        relay = getattr(self.driver, "relay_connected", None)
+        # The relay of Teams intégré is down: the page cannot be reached at all.
+        if callable(relay) and not relay():
+            return "Teams n'est pas prêt (la fenêtre Teams de Trame se connecte)"
+        return None
+
+    def _transient(self) -> bool:
+        reason = getattr(self._why, "reason", None) or ""
+        return any(marker in reason for marker in self.TRANSIENT)
+
+    def _enqueue(self, thread_id: str, conversation: str, text: str, reply_to: Optional[MessageRef],
+                 mentions: Sequence[str], files: Sequence[Attachment], reason: str) -> QueuedSend:
+        item = QueuedSend(id=str(uuid.uuid4())[:8], thread_id=thread_id, conversation=conversation, text=text,
+                          files=[f.name for f in files], reply_to=reply_to,
+                          queued_at=datetime.now().strftime("%H:%M"), reason=reason)
+        with self._lock:
+            self._outbox_payload[item.id] = {"mentions": list(mentions), "files": list(files),
+                                             "since": time.monotonic()}
+            self.state.outbox = [*self.state.outbox, item]
+        self.log("info", f"Message pour {conversation} mis en file d'envoi : {reason}. Il partira dès que Teams est prêt.")
+        self._outbox_wake.set()
+        return item
+
+    def _outbox_loop(self) -> None:
+        while not self._stop.is_set():
+            self._outbox_wake.wait(self.OUTBOX_RETRY)
+            self._outbox_wake.clear()
+            if not self.outbox_auto:
+                continue
+            try:
+                self.flush_outbox()
+            except Exception as e:
+                self.log("warn", f"File d'envoi : {e}")
+
+    def flush_outbox(self) -> None:
+        """Send what waits, in order. A conversation whose earlier message is stuck waits
+        too: messages never arrive out of order. One pass at a time."""
+        if not self._outbox_flush.acquire(blocking=False):
+            return
+        try:
+            self._flush_outbox()
+        finally:
+            self._outbox_flush.release()
+
+    def _flush_outbox(self) -> None:
+        blocked: set[str] = set()
+        for item in list(self.state.outbox):
+            if item.status in ("failed", "uncertain"):
+                blocked.add(item.thread_id)
+                continue
+            if item.status != "waiting" or item.thread_id in blocked:
+                continue
+            payload = self._outbox_payload.get(item.id, {})
+            if time.monotonic() - payload.get("since", time.monotonic()) > self.OUTBOX_MAX_AGE:
+                self._outbox_update(item, status="failed", reason="en attente depuis trop longtemps : renvoie-le toi-même")
+                blocked.add(item.thread_id)
+                continue
+            why = self._not_ready()
+            if why:
+                self._outbox_update(item, reason=why)
+                return
+            self._outbox_update(item, status="sending", attempts=item.attempts + 1)
+            try:
+                ok = self._deliver(item.thread_id, item.text, send=True, restore=True, reply_to=item.reply_to,
+                                   mentions=payload.get("mentions", ()), files=payload.get("files", ()))
+            except ActionError as e:
+                # « Envoi non confirmé » : peut-être parti. Jamais renvoyé seul.
+                self._outbox_update(item, status="uncertain", reason=e.message)
+                blocked.add(item.thread_id)
+                continue
+            if ok:
+                self._outbox_drop(item.id)
+                self._history.pop(item.thread_id, None)
+                self._thread_cache.pop(item.thread_id, None)
+                self.log("sent", f"Envoyé à {item.conversation} (depuis la file d'envoi){self._joined(payload.get('files', ()))}")
+            elif self._transient():
+                self._outbox_update(item, status="waiting", reason=self._why.reason or "Teams pas prêt")
+                return
+            else:
+                self._outbox_update(item, status="failed", reason=self._why.reason or "refusé par Teams")
+                self.log("warn", f"File d'envoi : message pour {item.conversation} refusé.{self._because()}")
+                blocked.add(item.thread_id)
+
+    def _name_of(self, thread_id: str, fallback: str) -> str:
+        return next((w.display_name for w in self.state.watchlist if w.thread_id == thread_id), fallback)
+
+    def _outbox_update(self, item: QueuedSend, **changes) -> None:
+        with self._lock:
+            self.state.outbox = [x.model_copy(update=changes) if x.id == item.id else x for x in self.state.outbox]
+
+    def _outbox_drop(self, item_id: str) -> None:
+        with self._lock:
+            self.state.outbox = [x for x in self.state.outbox if x.id != item_id]
+            self._outbox_payload.pop(item_id, None)
+
+    def _outbox_item(self, item_id: str) -> QueuedSend:
+        item = next((x for x in self.state.outbox if x.id == item_id), None)
+        if item is None:
+            raise ActionError(404, "Ce message n'est plus dans la file d'envoi.")
+        return item
+
+    def cancel_queued(self, item_id: str) -> None:
+        item = self._outbox_item(item_id)
+        if item.status == "sending":
+            raise ActionError(409, "Ce message est en cours d'envoi.")
+        self._outbox_drop(item_id)
+        self.log("info", f"Message pour {item.conversation} retiré de la file d'envoi")
+
+    def retry_queued(self, item_id: str) -> None:
+        """Try again now, at the user's request: also for a refused or uncertain message,
+        which Trame never resends by itself."""
+        item = self._outbox_item(item_id)
+        if item.status == "sending":
+            raise ActionError(409, "Ce message est en cours d'envoi.")
+        with self._lock:
+            self._outbox_payload.setdefault(item_id, {})["since"] = time.monotonic()
+        self._outbox_update(item, status="waiting", reason="nouvel essai demandé")
+        self._outbox_wake.set()
+
     def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None,
-                   mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> None:
+                   mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> Optional[QueuedSend]:
         if reply_to is not None:
             self._require("reply")
         self._attach_allowed(files)
@@ -567,15 +713,25 @@ class Watcher:
             body = text.strip() if text and text.strip() else d.proposal
             names = self._mentions_in(body, mentions)
             self._attach_allowed(files, names)
-            self._typing_allowed()
-            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
-                                 files=files):
-                with self._lock:
-                    d.proposal = body
-                self.log("warn", f"Envoi à {d.from_} refusé, réponse conservée.{self._because()}")
-                raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
+            # Teams pas prêt : le message part plus tard, par la file d'envoi.
+            why = self._not_ready(d.thread_id)
+            queued = None
+            if why:
+                queued = self._enqueue(d.thread_id, self._name_of(d.thread_id, d.from_), body, reply_to, names, files, why)
+            elif not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
+                                   files=files):
+                if self._transient():
+                    queued = self._enqueue(d.thread_id, self._name_of(d.thread_id, d.from_), body, reply_to, names, files,
+                                           self._why.reason)
+                else:
+                    with self._lock:
+                        d.proposal = body
+                    self.log("warn", f"Envoi à {d.from_} refusé, réponse conservée.{self._because()}")
+                    raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
+        if queued:
+            return queued
         self._history.pop(d.thread_id, None)
         self._thread_cache.pop(d.thread_id, None)
         self.log("sent", f"Envoyé à {d.from_}{self._in_reply(reply_to)}{self._joined(files)}")
@@ -694,7 +850,7 @@ class Watcher:
                 **attachmod.limits()}
 
     def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None,
-                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> None:
+                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> Optional[QueuedSend]:
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body and not files:
@@ -703,9 +859,14 @@ class Watcher:
             self._require("reply")
         names = self._mentions_in(body, mentions)
         self._attach_allowed(files, names)
-        self._typing_allowed()
+        # Teams pas prêt : le message part plus tard, par la file d'envoi.
+        why = self._not_ready(thread_id)
+        if why:
+            return self._enqueue(thread_id, entity.display_name, body, reply_to, names, files, why)
         if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
                              files=files):
+            if self._transient():
+                return self._enqueue(thread_id, entity.display_name, body, reply_to, names, files, self._why.reason)
             self.log("warn", f"Envoi à {entity.display_name} refusé.{self._because()}")
             raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)

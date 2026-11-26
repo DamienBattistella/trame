@@ -67,6 +67,36 @@ export interface TrameState {
   capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean };
   /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
   myPresence: Presence | null;
+  /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
+  outbox: QueuedSend[];
+}
+
+/** Un message en file d'envoi. waiting : en attente ; sending : en cours ; failed :
+ *  refusé, à ton action ; uncertain : peut-être parti, à vérifier dans Teams. */
+export interface QueuedSend {
+  id: string;
+  threadId: string;
+  conversation: string;
+  text: string;
+  files: string[];
+  queuedAt: string;
+  attempts: number;
+  status: "waiting" | "sending" | "failed" | "uncertain";
+  reason: string;
+}
+
+function mapQueued(q: any): QueuedSend {
+  return {
+    id: q.id,
+    threadId: q.thread_id,
+    conversation: q.conversation,
+    text: q.text ?? "",
+    files: q.files ?? [],
+    queuedAt: q.queued_at ?? "",
+    attempts: Number(q.attempts ?? 0),
+    status: q.status ?? "waiting",
+    reason: q.reason ?? "",
+  };
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -132,6 +162,7 @@ function mapState(s: any): TrameState {
       ownStatus: Boolean(s.capabilities?.own_status),
     },
     myPresence: s.my_presence ?? null,
+    outbox: (s.outbox ?? []).map(mapQueued),
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -390,7 +421,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false }, myPresence: null };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false }, myPresence: null, outbox: [] };
   }
   return {
     paused: false,
@@ -404,6 +435,7 @@ function mockState(): TrameState {
     notices: [],
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true },
     myPresence: "available",
+    outbox: [],
   };
 }
 
@@ -694,15 +726,16 @@ export function useTrame() {
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
   /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
    *  `files` : fichiers choisis par l'utilisateur, envoyés avec le message. */
-  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result> =>
-    connectedRef.current
-      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, {
-          text,
-          reply_to: replyTo ? messageRef(replyTo) : null,
-          mentions,
-          attachments: wireFiles(files),
-        })
-      : demo(files.length ? 1500 : 700, {});
+  const sendDraft = async (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+    if (!connectedRef.current) return demo(files.length ? 1500 : 700, { queued: null });
+    const res = await request<{ queued?: any }>("POST", `/api/drafts/${encodeURIComponent(id)}/send`, {
+      text,
+      reply_to: replyTo ? messageRef(replyTo) : null,
+      mentions,
+      attachments: wireFiles(files),
+    });
+    return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
+  };
   /** Ouvre la conversation dans Teams et tape le texte, sans envoyer. */
   const composeDraft = (id: string, text: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/compose`, { text }) : demo(900, {});
@@ -1023,15 +1056,22 @@ export function useTrame() {
     return { ok: true, results: res.results.map(mapHit) };
   };
   /** Envoi à la main, avec les fichiers choisis par l'utilisateur (jamais en mode Auto). */
-  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result> => {
-    if (!connectedRef.current) return demo(files.length ? 1500 : 800, {});
-    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, {
+  /** `queued` : Teams n'était pas prêt, le message attend dans la file d'envoi et partira seul. */
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result<{ queued: QueuedSend | null }>> => {
+    if (!connectedRef.current) return demo(files.length ? 1500 : 800, { queued: null });
+    const res = await request<{ queued?: any }>("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, {
       text,
       reply_to: replyTo ? messageRef(replyTo) : null,
       mentions,
       attachments: wireFiles(files),
     });
+    return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
+  /** File d'envoi : retirer un message, ou le réessayer tout de suite. */
+  const cancelQueued = (id: string): Promise<Result> =>
+    connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/cancel`) : demo(200, {});
+  const retryQueued = (id: string): Promise<Result> =>
+    connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/retry`) : demo(200, {});
   /** Le pilote Teams sait-il joindre un fichier, et dans quelles limites. */
   const attachmentLimits = async (): Promise<Result<{ limits: AttachmentLimits }>> => {
     if (!connectedRef.current) {
@@ -1409,6 +1449,8 @@ export function useTrame() {
     showInTeams,
     markRead,
     clearCompose,
+    cancelQueued,
+    retryQueued,
     diagnoseTeams,
     teamsWebStatus,
     exportLogs,

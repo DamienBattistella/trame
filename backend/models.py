@@ -149,6 +149,26 @@ class AppState(BaseModel):
     capabilities: Capabilities = Field(default_factory=Capabilities)
     # Son propre statut Teams, tel que Teams l'affiche ; None quand il ne le dit pas.
     my_presence: Optional[Presence] = None
+    # Messages que tu as envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est.
+    outbox: list["QueuedSend"] = Field(default_factory=list)
+
+
+class QueuedSend(BaseModel):
+    """Un message envoyé par l'utilisateur alors que Teams n'était pas prêt (fenêtre de
+    Trame en reconnexion, partage d'écran…) : rien n'a atteint Teams, Trame le renvoie
+    seul dès que possible. waiting : en attente ; sending : en cours ; failed : refusé
+    pour une raison qui demande ton action (jamais renvoyé seul) ; uncertain : peut-être
+    parti, à vérifier dans Teams (jamais renvoyé seul)."""
+    id: str
+    thread_id: str
+    conversation: str
+    text: str
+    files: list[str] = Field(default_factory=list)
+    reply_to: Optional["MessageRef"] = None
+    queued_at: str
+    attempts: int = 0
+    status: Literal["waiting", "sending", "failed", "uncertain"] = "waiting"
+    reason: str = ""
 
 
 class GithubHit(BaseModel):
@@ -219,3 +239,7 @@ class FactCheck(BaseModel):
     checked_at: str
     claims: list[Claim] = Field(default_factory=list)
     sources: FactCheckSources
+
+
+AppState.model_rebuild()
+
