@@ -35,6 +35,26 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
+/** Fichiers d'un collage (Ctrl+V) : une capture d'écran, ou des fichiers copiés dans
+ *  l'Explorateur. Rien quand le presse-papiers porte aussi du texte : un copier depuis
+ *  Word ou une page web garde son texte, l'image qui l'accompagne n'est pas jointe.
+ *  Une capture s'appelle « image.png » : elle est renommée par l'heure, pour que deux
+ *  captures successives ne se confondent pas. */
+export function pastedFiles(data: DataTransfer | null, now: Date = new Date()): File[] {
+  if (!data || data.getData("text/plain").trim()) return [];
+  const files = Array.from(data.files);
+  const stamp = [now.getFullYear(), now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((n, i) => String(n).padStart(i ? 2 : 4, "0"))
+    .join("")
+    .replace(/^(\d{8})/, "$1-");
+  return files.map((f, i) => {
+    if (!f.type.startsWith("image/") || !/^image\.\w+$/i.test(f.name)) return f;
+    const ext = f.name.split(".").pop()!.toLowerCase();
+    const name = `capture-${stamp}${files.length > 1 ? `-${i + 1}` : ""}.${ext}`;
+    return new File([f], name, { type: f.type, lastModified: f.lastModified });
+  });
+}
+
 /** Ajoute aux fichiers déjà choisis ceux que les limites acceptent ; seuls ceux-là sont lus.
  *  Rend aussi la raison de chaque refus, à montrer telle quelle. */
 export async function addFiles(
