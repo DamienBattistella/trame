@@ -18,10 +18,14 @@ export function humanSize(n: number): string {
 
 const extOf = (name: string) => (name.includes(".") ? name.split(".").pop()!.toLowerCase() : "");
 
-/** Résumé des limites, affiché sous les fichiers et dans l'infobulle de « Joindre ». */
+/** Limites complètes, types compris : l'infobulle de « Joindre » et le message d'un refus.
+ *  Jamais en permanence sous la zone de saisie. */
 export function limitsText(l: AttachmentLimits): string {
-  return `${l.maxFiles} fichiers au plus, ${humanSize(l.maxFileBytes)} chacun (${humanSize(l.maxTotalBytes)} au total) · ${l.extensions.join(", ")}`;
+  return `${limitsShort(l)} (${humanSize(l.maxTotalBytes)} au total) · ${l.extensions.join(", ")}`;
 }
+
+/** Limites en quelques mots, pendant un glisser-déposer. */
+export const limitsShort = (l: AttachmentLimits) => `${l.maxFiles} fichiers au plus, ${humanSize(l.maxFileBytes)} chacun`;
 
 /** Valeur de l'attribut accept du sélecteur de fichiers. */
 export const acceptOf = (l: AttachmentLimits) => l.extensions.map((e) => `.${e}`).join(",");

@@ -231,6 +231,7 @@ Check-list UI appliquée écran par écran ; choix assumés, avec leur raison :
 - **Mouvement** : aucune boucle infinie au repos. Le point « En direct » émet une seule onde à la connexion ; le fantôme flotte et cligne quelques fois puis s'immobilise, et ne s'anime en continu que pendant un glisser-déposer. Seuls les indicateurs de chargement tournent tant qu'une action est en cours.
 - **États vides** : chacun dit pourquoi et quoi faire (« Aucune conversation suivie » → « Choisir des conversations » ; recherche sans résultat → « Tout afficher »).
 - **Données** : hors moteur, l'en-tête affiche « Données d'exemple » en clair, pas seulement dans une infobulle.
+- **Zone de saisie** : une seule carte (texte, pièces jointes, actions), le focus se lit sur la carte entière. À gauche les outils de rédaction en boutons-icônes avec infobulle (Joindre, Corriger, Vérifier) ; à droite la décision : Ignorer et Proposer en retrait, Envoyer seul en plein. Rien de permanent qui ne sert qu'à l'occasion : les limites des pièces jointes vivent dans l'infobulle du trombone, le filtre du sélecteur et le message de refus ; le rappel clavier n'apparaît que pendant la saisie et s'efface s'il manque de place.
 - **Textes** : pas de tiret cadratin, d'emoji, de flèche, de majuscules d'emphase ni de synonymes en alternance (« résumé » partout, jamais « brief » à l'écran).
 
 ## Teams intégré (expérimental, 2026-11-26)
