@@ -109,7 +109,7 @@ def title_conversation(window_name: str) -> Optional[str]:
     """Open conversation from the window title: "Chat | Romain CUREAU | Microsoft Teams"."""
     parts = [p.strip() for p in (window_name or "").split("|")]
     if len(parts) >= 3 and "teams" in parts[-1].lower():
-        name = " | ".join(parts[1:-1]).strip()
+        name = _SELF_RE.sub("", " | ".join(parts[1:-1])).strip()
         return name or None
     return None
 

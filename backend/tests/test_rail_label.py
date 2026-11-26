@@ -46,6 +46,7 @@ def test_teams_v2_calibration():
     from drivers.rail_label import is_structural, stable_id, title_conversation, same_name
     assert title_conversation("Chat | Romain CUREAU | Microsoft Teams") == "Romain CUREAU"
     assert title_conversation("Chat | Projet | FHIR | Microsoft Teams") == "Projet | FHIR"
+    assert title_conversation("Chat | Damien Battistella (You) | Microsoft Teams") == "Damien Battistella"
     assert title_conversation("Microsoft Teams") is None and title_conversation("Chat | Microsoft Teams") is None
     assert stable_id("menurmh") is None and stable_id("") is None
     assert stable_id("chat-list-item_19:abc@thread.v2") == "19:abc@thread.v2"

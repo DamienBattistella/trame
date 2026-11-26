@@ -167,6 +167,32 @@ class WindowsUIADriver(TeamsDriver):
         except Exception:
             return None
 
+    def _activate(self, win, item, front: bool = False) -> str:
+        """Open a chat-list item without the mouse: a mouse click lands on whatever
+        window is on top (often Trame itself), so it is only the last resort, after
+        bringing Teams to the front. Returns the method used (diagnostic)."""
+        for name, act in (
+            ("legacy", lambda: item.GetLegacyIAccessiblePattern().DoDefaultAction()),
+            ("invoke", lambda: item.GetInvokePattern().Invoke()),
+            ("select", lambda: item.GetSelectionItemPattern().Select()),
+        ):
+            try:
+                act()
+            except Exception:
+                continue
+            for _ in range(5):
+                time.sleep(0.15)
+                title = self._conversation_title(win)
+                if title and rail_label.same_name(title, self._display_name_of(item)):
+                    return name
+        try:
+            win.SetActive()
+            time.sleep(0.2)
+        except Exception:
+            pass
+        item.Click(simulateMove=False, waitTime=0.1)
+        return "mouse"
+
     def _conversation_title(self, win) -> Optional[str]:
         """Teams v2 exposes no selection state on the chat list (diagnostic on a real
         install), but its window title names the open conversation."""
@@ -199,7 +225,7 @@ class WindowsUIADriver(TeamsDriver):
             item = self._rail_item_for(rail, thread_id) if rail is not None else None
             if item is None:
                 return False
-            item.Click(simulateMove=False, waitTime=0.1)  # A CALER: Click vs SelectionItemPattern.Select().
+            self._activate(win, item)
             for _ in range(15):
                 if self._is_active(win, thread_id):
                     return True
@@ -224,7 +250,7 @@ class WindowsUIADriver(TeamsDriver):
             item = self._rail_item_for(rail, thread_id) if rail is not None else None
             if item is None:
                 return False
-            item.Click(simulateMove=False, waitTime=0.1)
+            self._activate(win, item, front=True)
             return True
         except Exception:
             return False
@@ -421,7 +447,7 @@ class WindowsUIADriver(TeamsDriver):
             test = {"thread_id": thread_id, "rail_item_found": item is not None}
             if item is not None:
                 try:
-                    item.Click(simulateMove=False, waitTime=0.1)
+                    test["activated_by"] = self._activate(win, item)
                     time.sleep(1.5)
                     test["signals_after_click"] = self._selection_signals(item)
                     test["selected_after_click"] = [self._display_name_of(i) for i in self._rail_items(rail) if self._is_selected(i)]
