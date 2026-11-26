@@ -388,15 +388,22 @@ export function DiscussionView({
     load().then((ok) => ok && unread && markRead());
   }, [c.threadId]);
 
-  // Fil vivant : tout message reçu dans cette conversation (suivie ou non) la fait
-  // relire, sans perdre l'historique déjà remonté.
+  // Fil vivant : la conversation se relit dès qu'elle change, sans perdre l'historique
+  // déjà remonté : message reçu (suivie ou non), mais aussi réponse envoyée par Trame
+  // lui-même (mode Auto, file d'envoi, brouillon), qui sinon n'apparaissait qu'au
+  // message reçu suivant.
+  const version = trame.state.threadUpdates[c.threadId] ?? 0;
+  const seenVersion = useRef(version);
   const lastNotice = trame.state.notices.find((n) => n.threadId === c.threadId)?.id ?? "";
   const seenNotice = useRef(lastNotice);
   useEffect(() => {
-    if (lastNotice === seenNotice.current) return;
+    if (version === seenVersion.current) return;
+    seenVersion.current = version;
+    const received = lastNotice !== seenNotice.current;
     seenNotice.current = lastNotice;
-    if (lastNotice) load().then((ok) => ok && markRead());
-  }, [lastNotice]);
+    // Lu dans Teams seulement pour un message reçu, pas pour sa propre réponse.
+    load().then((ok) => ok && received && lastNotice && markRead());
+  }, [version, lastNotice]);
 
   // Remonter en haut du fil charge les messages plus anciens.
   const sentinel = useRef<HTMLDivElement>(null);

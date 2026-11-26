@@ -20,7 +20,8 @@ import telemetry
 Kind = Literal["step", "thinking", "error"]
 Status = Literal["running", "done", "error", "cancelled"]
 
-TITLES = {"correct": "Corriger", "check": "Vérifier", "suggest": "Proposer une réponse"}
+TITLES = {"correct": "Corriger", "check": "Vérifier", "suggest": "Proposer une réponse",
+          "reply": "Réponse à un message reçu"}
 MAX_RUNS = 20
 MAX_THINKING_CHARS = 60_000
 
