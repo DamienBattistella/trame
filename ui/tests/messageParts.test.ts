@@ -76,3 +76,19 @@ test("message simple : mention gardée, adresse en clair, javascript: refusé, S
 test("sans racine : rien", () => {
   assert.deepEqual(messageParts(null), { text: "", links: [], cards: [] });
 });
+
+test("tableau Teams : transcrit en Markdown, cellules sur une ligne, barres échappées, liens gardés", () => {
+  const root = parse(
+    '<div><p>Point du jour :</p><table><tbody><tr><td><p>Sujet</p></td><td>GitHub</td></tr>' +
+      '<tr><td>Préadmission <b>externe</b></td><td><a href="https://github.com/acme/alliage/pull/4849">#4849</a></td></tr>' +
+      "<tr><td>Date | heure</td><td></td></tr></tbody></table><p>Fin.</p></div>"
+  ).childNodes[0] as MiniElement;
+  const p = messageParts(root);
+  assert.equal(p.text, "Point du jour :\n| Sujet | GitHub |\n| --- | --- |\n| Préadmission externe | #4849 |\n| Date \\| heure |  |\nFin.");
+  assert.deepEqual(p.links, [{ text: "#4849", url: "https://github.com/acme/alliage/pull/4849" }]);
+});
+
+test("tableau d'une seule colonne : texte, pas de Markdown", () => {
+  const root = parse("<div><table><tr><td>a</td></tr><tr><td>b</td></tr></table></div>").childNodes[0] as MiniElement;
+  assert.equal(messageParts(root).text, "a\nb");
+});

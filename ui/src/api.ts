@@ -1,3 +1,4 @@
+import { demoHistory } from "@/demoThread";
 import { useEffect, useRef, useState } from "react";
 import {
   Brain,
@@ -1211,6 +1212,7 @@ export function useTrame() {
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
       const messages: ThreadMessage[] = [
+        ...demoHistory(who),
         { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
         demoDeleted.has(`${threadId}/d2`)
           ? { id: "d2", sender: "Toi", text: DELETED_TEXT, at: "09:14", mine: true, reactions: [], deleted: true }
