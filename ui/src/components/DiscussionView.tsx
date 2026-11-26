@@ -13,6 +13,7 @@ import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
 import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
+import { ThreadActivity } from "@/components/ThreadActivity";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
@@ -729,6 +730,7 @@ export function DiscussionView({
                   </motion.div>
                 );
               })}
+              {messages !== null && <ThreadActivity trame={trame} conversation={c} last={shown[shown.length - 1]} />}
             </>
           )}
         </StickToBottom.Content>

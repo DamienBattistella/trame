@@ -47,6 +47,11 @@ def _images(raw: Any) -> list[ImageRef]:
     return out
 
 
+def _seen(status: Any) -> Optional[bool]:
+    """Read receipt of one of your messages: True « Vu », False « Envoyé », None unknown."""
+    return {"seen": True, "sent": False}.get(status) if isinstance(status, str) else None
+
+
 class WebBridgeDriver(TeamsDriver):
     waits_for_relay = True
     supports_reactions = True
@@ -157,6 +162,9 @@ class WebBridgeDriver(TeamsDriver):
             if label.surface == Surface.dm and not label.is_self:
                 label.presence = presencemod.first_of(it.get("presence")) or label.presence
                 self._note_presence(thread_id, label.presence)
+            self._note_activity(thread_id, typing=bool(it.get("typing") or it.get("typing_text")),
+                                typing_text=it.get("typing_text") if it.get("open") else None,
+                                seen=_seen(it.get("status")) if it.get("open") else None)
             out.append({**it, "thread_id": thread_id, "parsed": label})
             self._names[thread_id] = label.name
             self._kinds[thread_id] = label.surface
@@ -311,7 +319,7 @@ class WebBridgeDriver(TeamsDriver):
             msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=text,
                                         received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
                                         reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
-                                        files=files, images=images))
+                                        files=files, images=images, seen=_seen(m.get("status"))))
         return msgs, top
 
     @staticmethod
