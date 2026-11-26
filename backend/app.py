@@ -121,6 +121,10 @@ class WatchlistItem(BaseModel):
     mode: Optional[Literal["draft", "auto"]] = None
 
 
+class StartBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class BriefBody(BaseModel):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
@@ -238,6 +242,12 @@ def create_app(
     def refresh_conversations():
         return {"ok": True, "count": watcher.refresh_conversations()}
 
+    @app.post("/api/conversations/start")
+    def start_conversation(body: StartBody):
+        """Opens (or creates) the private chat with someone, then lists it, unfollowed."""
+        entity = watcher.start_conversation(body.name)
+        return {"ok": True, "conversation": json.loads(entity.model_dump_json())}
+
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[TextBody] = None):
         watcher.send_draft(draft_id, body.text if body else None)
@@ -343,6 +353,11 @@ def create_app(
         email only serves name matching and stays in the engine."""
         data = watcher.people.data
         return {"ok": True, "people": [p.model_dump(exclude={"email"}) for p in (data.people if data else [])]}
+
+    @app.get("/api/people/search")
+    def search_people(q: str = "", limit: int = 8):
+        """Suggestions for « Nouvelle conversation » (entourage, then Teams if the driver can)."""
+        return {"ok": True, **watcher.people_search(q[:120], limit)}
 
     @app.post("/api/people")
     def post_people(body: SoulBody):

@@ -1,5 +1,7 @@
 export type Surface = "dm" | "group" | "channel";
 export type Mode = "draft" | "auto";
+/** Présence Teams de la personne d'une conversation privée. */
+export type Presence = "available" | "busy" | "in_call" | "in_meeting" | "presenting" | "dnd" | "brb" | "away" | "ooo" | "offline";
 
 export interface WatchEntity {
   threadId: string;
@@ -13,6 +15,8 @@ export interface WatchEntity {
   /** Heure du dernier message telle que Teams l'affiche (« 04:49 », « 25/11 »). */
   lastActivity?: string | null;
   unread?: boolean;
+  /** Statut lu dans Teams (conversation privée seulement) ; absent quand Teams ne le dit pas. */
+  presence?: Presence | null;
 }
 
 export interface DraftItem {
@@ -121,6 +125,27 @@ export interface Person {
   relation: string | null;
   tone: string | null;
   note: string | null;
+}
+
+/** Une suggestion de « Nouvelle conversation » : l'entourage d'abord, puis la recherche de Teams. */
+export interface PersonSuggestion {
+  name: string;
+  role: string | null;
+  team: string | null;
+  manager: string | null;
+  source: "entourage" | "teams";
+  /** Conversation privée déjà dans la liste, s'il y en a une. */
+  threadId: string | null;
+}
+
+export interface PeopleSearch {
+  people: PersonSuggestion[];
+  /** Le pilote Teams sait démarrer une conversation. */
+  canStart: boolean;
+  /** Le pilote Teams sait chercher des personnes au-delà de l'entourage. */
+  teamsSearch: boolean;
+  /** Pourquoi le pilote ne peut pas démarrer de conversation. */
+  unsupported: string | null;
 }
 
 export interface PeopleSummary {

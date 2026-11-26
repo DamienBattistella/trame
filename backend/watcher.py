@@ -11,11 +11,12 @@ from typing import Iterator, Callable, Iterable, Optional
 import config as cfgmod
 import safety
 import people as peoplemod
+import presence as presencemod
 import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, WatchEntity
+from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, Surface, WatchEntity
 from drivers.base import Focus, SendUncertain, TeamsDriver
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
@@ -62,6 +63,9 @@ class Watcher:
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
+        # Conversations started from Trame: kept in the list even unfollowed, until Teams
+        # lists them itself (a brand-new chat only shows up there after its first message).
+        self._started: set[str] = set()
 
     # --- lifecycle ---
     def teams_ready(self, ready: bool) -> None:
@@ -113,12 +117,35 @@ class Watcher:
             self.log("warn", self.telemetry_error)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        threading.Thread(target=self._presence_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
 
     def _run(self) -> None:
         self.driver.watch(self._on_message, self._stop.is_set)
+
+    PRESENCE_REFRESH = 20.0
+
+    def _presence_loop(self) -> None:
+        """Copy the drivers' presence onto the conversations every PRESENCE_REFRESH s.
+        The drivers read it from the chat list they already poll: this never asks
+        Teams anything more."""
+        while True:
+            self.apply_presence()
+            if self._stop.wait(self.PRESENCE_REFRESH):
+                return
+
+    def apply_presence(self) -> None:
+        try:
+            seen = self.driver.presence()
+        except Exception:
+            seen = {}
+        with self._lock:
+            for w in self.state.watchlist:
+                value = seen.get(w.thread_id) if w.surface == Surface.dm and not w.is_self else None
+                if w.presence != value:
+                    w.presence = value
 
     # --- core reaction ---
     MAX_NOTICES = 20
@@ -198,7 +225,7 @@ class Watcher:
         try:
             with telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
                                 github=bool(gh_ctx)):
-                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary))
+                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary, entity))
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -437,7 +464,7 @@ class Watcher:
         last = theirs[-1]
         summary = "\n".join(f"{m.sender}: {m.text}" for m in msgs[:-1])
         try:
-            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary))
+            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary, entity))
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -465,6 +492,78 @@ class Watcher:
                 ok = False
         if not ok:
             raise ActionError(404, f"« {name} » est introuvable dans la liste de Teams. Fais-la défiler dans Teams puis réessaie.")
+
+    # --- new conversation with someone not in the list yet ---
+    def _dm_named(self, name: str) -> Optional[WatchEntity]:
+        return next((w for w in self.state.watchlist
+                     if w.surface == Surface.dm and rail_label.same_name(w.display_name, name)), None)
+
+    def people_search(self, query: str, limit: int = 8) -> dict:
+        """Suggestions for « Nouvelle conversation »: the entourage first, then the people
+        Teams finds (when the driver can search). An existing private chat is pointed at."""
+        limit = max(1, min(20, limit))
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def add(name: str, person: Optional[peoplemod.Person], source: str) -> None:
+            key = peoplemod._key(name)
+            if not key or key in seen:
+                return
+            seen.add(key)
+            dm = self._dm_named(name)
+            out.append({"name": name, "role": person.role if person else None, "team": person.team if person else None,
+                        "manager": person.manager if person else None, "source": source,
+                        "thread_id": dm.thread_id if dm else None})
+
+        for p in self.people.search(query, limit):
+            add(p.name, p, "entourage")
+        teams_error = None
+        if self.driver.can_search_people and (query or "").strip() and len(out) < limit:
+            with self._ui_lock:
+                try:
+                    names = [] if self._screen_share_guarded() else self.driver.search_people(query, limit)
+                except Exception as e:
+                    names, teams_error = [], str(e)
+            for n in names:
+                add(n, self.people.find(n), "teams")
+        return {"people": out[:limit], "can_start": bool(self.driver.can_start_chat),
+                "teams_search": bool(self.driver.can_search_people), "teams_error": teams_error,
+                "unsupported": None if self.driver.can_start_chat else self.driver.start_chat_unsupported}
+
+    def start_conversation(self, name: str) -> WatchEntity:
+        """Open (or create) the private chat with `name` in Teams and add it to the list,
+        unfollowed. Nothing is typed. Refused unless Teams shows that very name."""
+        name = " ".join((name or "").split())
+        if not name:
+            raise ActionError(422, "Choisis une personne.")
+        known = self._dm_named(name)
+        if known is not None:
+            return known
+        if not self.driver.can_start_chat:
+            raise ActionError(501, f"Nouvelle conversation impossible : {self.driver.start_chat_unsupported}. "
+                                   "Écris-lui une première fois dans Teams, la conversation apparaîtra ici.")
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : aucune conversation ouverte dans Teams.")
+            self.driver.last_error = None
+            try:
+                entity = self.driver.start_chat(name)
+            except Exception as e:
+                entity, self.driver.last_error = None, str(e)
+        if entity is None or not rail_label.same_name(entity.display_name, name):
+            reason = self.driver.last_error or (f"Teams affiche « {entity.display_name} »" if entity else None)
+            self.log("warn", f"Nouvelle conversation avec {name} refusée : {reason or 'non confirmée'}")
+            raise ActionError(409, f"Conversation avec « {name} » non ouverte : {reason or 'non confirmée dans Teams'}.")
+        with self._lock:
+            entity = next((w for w in self.state.watchlist if w.thread_id == entity.thread_id), None) or entity
+            if entity not in self.state.watchlist:
+                self.state.watchlist = [entity, *self.state.watchlist]
+            self._started.add(entity.thread_id)
+        self._persist_watchlist()
+        self._thread_cache.pop(entity.thread_id, None)
+        self.log("info", f"Conversation ouverte avec {entity.display_name}")
+        return entity
 
     def edit_draft(self, draft_id: str, text: str) -> Draft:
         body = (text or "").strip()
@@ -563,7 +662,7 @@ class Watcher:
     def _persist_watchlist(self) -> None:
         with self._lock:
             cfg = dict(self.cfg)
-            cfg["watchlist"] = [json.loads(w.model_dump_json(exclude={"rank", "last_activity", "unread", "is_self", "own_preview"}))
+            cfg["watchlist"] = [json.loads(w.model_dump_json(exclude={"rank", "last_activity", "unread", "is_self", "own_preview", "presence"}))
                                 for w in self.state.watchlist]
             self.cfg = cfg
             try:
@@ -706,10 +805,13 @@ class Watcher:
             return merged
 
     # --- entourage (who's who, exported from Orbite) ---
-    def _people_context(self, msg: IncomingMessage, summary: str) -> str:
-        """Cards of the sender, then of the other people speaking in the thread."""
+    def _people_context(self, msg: IncomingMessage, summary: str, entity: Optional[WatchEntity] = None) -> str:
+        """Cards of the sender, then of the other people speaking in the thread; plus,
+        in a 1:1 chat, a word on the sender being in a meeting (shorter reply)."""
         names = [msg.sender] + [line.split(":", 1)[0] for line in summary.splitlines() if ":" in line]
-        return self.people.context(n for n in names if n.strip())
+        cards = self.people.context(n for n in names if n.strip())
+        hint = presencemod.brain_hint(msg.sender, entity.presence) if entity and entity.surface == Surface.dm else ""
+        return "\n".join(p for p in (cards, hint) if p)
 
     def _sender_label(self, name: str) -> Optional[str]:
         p = self.people.find(name)
@@ -850,6 +952,16 @@ class Watcher:
                     prev = by_id.get(clean)
                     if prev is None or (w.watch and not prev.watch):
                         by_id[clean] = w
+        # A chat started from Trame under its name, now listed by Teams with its id.
+        moved: set[str] = set()
+        for w in self.state.watchlist:
+            if w.thread_id in self._started and w.thread_id.startswith("name:"):
+                target = by_name.get(w.thread_id[5:].casefold())
+                if target and target != w.thread_id:
+                    by_id.setdefault(target, w)
+                    moved.add(w.thread_id)
+                    self._started.discard(w.thread_id)
+                    self._started.add(target)
         found = {d.thread_id for d in discovered}
         out: list[WatchEntity] = []
         for d in discovered:
@@ -864,7 +976,9 @@ class Watcher:
         legacy |= {w.thread_id for w in self.state.watchlist
                    if not w.thread_id.startswith("name:") and rail_label.stable_id(w.thread_id) is None}
         for w in self.state.watchlist:
-            if w.thread_id not in found and w.thread_id not in legacy and w.watch:
+            if w.thread_id in moved:
+                continue
+            if w.thread_id not in found and w.thread_id not in legacy and (w.watch or w.thread_id in self._started):
                 out.append(w)
         return out
 

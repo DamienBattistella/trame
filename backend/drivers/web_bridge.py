@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable, Optional
 
+import presence as presencemod
 from drivers import rail_label
 from drivers.base import SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
@@ -115,6 +116,11 @@ class WebBridgeDriver(TeamsDriver):
             # The web label carries no kind: group and meeting chats are told by their id.
             if label.surface == Surface.dm and "@thread." in thread_id:
                 label.surface = Surface.group
+            # The web label is the visible text: presence is only on the avatar badge,
+            # which the page reads apart (labels near the avatar, filtered here).
+            if label.surface == Surface.dm and not label.is_self:
+                label.presence = presencemod.first_of(it.get("presence")) or label.presence
+                self._note_presence(thread_id, label.presence)
             out.append({**it, "thread_id": thread_id, "parsed": label})
             self._names[thread_id] = label.name
             self._kinds[thread_id] = label.surface
@@ -133,7 +139,7 @@ class WebBridgeDriver(TeamsDriver):
             own = label.preview if label.preview_sender == "You" else None
             out.append(WatchEntity(thread_id=it["thread_id"], display_name=label.name, surface=label.surface,
                                    rank=rank, last_activity=label.last_time, unread=label.unread,
-                                   is_self=label.is_self, own_preview=own))
+                                   is_self=label.is_self, own_preview=own, presence=label.presence))
         return out
 
     def is_screen_sharing(self) -> bool:
@@ -167,6 +173,37 @@ class WebBridgeDriver(TeamsDriver):
         self.last_error = (f"Teams intégré : « {name} » pas ouverte"
                            f" ({(res or {}).get('error') or 'titre affiché : ' + (shown or 'aucun')})")
         return False
+
+    # Teams web: « Nouvelle conversation », the person picked in the « À » field. Teams'
+    # people search is not offered on its own: only the name the user chose is resolved.
+    can_start_chat = True
+
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        name = " ".join((name or "").split())
+        try:
+            res = self._rpc("newchat", name=name, timeout=25) or {}
+        except Exception as e:
+            self.last_error = str(e)
+            return None
+        shown = rail_label.title_conversation(res.get("title") or "") or ""
+        if not (res.get("ok") and rail_label.same_name(shown, name)):
+            self.last_error = (f"Teams intégré : conversation avec « {name} » pas ouverte"
+                               f" ({res.get('error') or 'titre affiché : ' + (shown or 'aucun')})")
+            return None
+        # A chat that already had messages is in the list with its stable id; a brand-new
+        # one only appears there after its first message: it goes by its name until then.
+        thread_id = next((t for t, n in self._names.items()
+                          if rail_label.same_name(n, shown) and self._kinds.get(t) == Surface.dm), None)
+        if thread_id is None:
+            try:
+                thread_id = next((it["thread_id"] for it in self._items()
+                                  if rail_label.same_name(it["parsed"].name, shown) and it["parsed"].surface == Surface.dm), None)
+            except Exception:
+                thread_id = None
+        thread_id = thread_id or f"name:{shown}"
+        self._names[thread_id] = shown
+        self._kinds[thread_id] = Surface.dm
+        return WatchEntity(thread_id=thread_id, display_name=shown, surface=Surface.dm)
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         return self.read_history(thread_id, last_n)[0]

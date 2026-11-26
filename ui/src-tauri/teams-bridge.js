@@ -7,11 +7,31 @@
   const norm = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const rail = () => document.querySelector('[role="tree"]');
   const items = () => Array.from(rail()?.querySelectorAll('[role="treeitem"]') || []);
+  // Présence : Teams web ne l'écrit pas dans le texte de la ligne, seulement sur le
+  // badge de l'avatar. On remonte les libellés courts trouvés autour de l'avatar ; le
+  // moteur ne garde qu'un statut connu (« En réunion », « Available »…), sinon rien.
+  const PRESENCE_NODES = '[class*="resence" i], [data-tid*="resence" i], [class*="Avatar" i], [role="img"], svg[aria-label]';
+  const presenceOf = (el) => {
+    const out = [];
+    for (const n of el.querySelectorAll(PRESENCE_NODES)) {
+      for (const v of [n.getAttribute("aria-label"), n.getAttribute("title")]) {
+        const t = (v || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 80) continue;
+        out.push(t);
+        // « Romain CUREAU, Disponible » : le statut est la dernière partie.
+        const tail = t.split(/[,–—]/).pop().trim();
+        if (tail && tail !== t) out.push(tail);
+      }
+      if (out.length >= 8) break;
+    }
+    return out.slice(0, 8);
+  };
   const railItems = () =>
     items().map((el) => ({
       label: label(el),
       aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
       id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
+      presence: presenceOf(el),
     }));
   const railScroller = () => {
     for (let el = rail(); el && el !== document.body; el = el.parentElement) {
@@ -160,7 +180,19 @@
     }
     return null;
   };
-  const MSGS = '[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]';
+  const NEW_CHAT = [
+    '[data-tid="chat-list-new-chat-button"]',
+    '[data-tid="new-chat-button"]',
+    'button[aria-label^="New chat"]',
+    'button[aria-label^="Nouvelle conversation"]',
+  ].join(", ");
+  const TO_FIELD = [
+    '[data-tid="people-picker-input"]',
+    'input[aria-label^="To"]',
+    'input[aria-label^="À"]',
+    'input[role="combobox"]',
+  ].join(", ");
+  const MSGS ='[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]';
   const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
@@ -211,6 +243,43 @@
         title: document.title,
         error: `clic sans effet sur « ${label(item).split(" ").slice(0, 4).join(" ")} », Teams affiche « ${titleName() || document.title} »`,
       };
+    },
+    // Nouvelle conversation privée : déjà dans la liste, on l'ouvre ; sinon « Nouvelle
+    // conversation », le nom dans le champ « À », la seule personne de ce nom proposée.
+    // Réussi seulement si le titre de Teams affiche ce nom : jamais de conversation devinée.
+    newchat: async ({ name }) => {
+      if (isOpen(name)) return { ok: true, title: document.title };
+      if (findItem(name)) return ops.open({ name });
+      const button = Array.from(document.querySelectorAll(NEW_CHAT)).find(visible);
+      if (!button) return { ok: false, title: document.title, error: "bouton « Nouvelle conversation » introuvable dans Teams" };
+      button.click();
+      const field = () => Array.from(document.querySelectorAll(TO_FIELD)).find(visible);
+      if (!(await waitFor(() => field(), 4000))) return { ok: false, title: document.title, error: "champ « À » introuvable" };
+      const input = field();
+      const cancel = () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+      input.focus();
+      // Champ React : la valeur passe par le setter natif, sinon Teams ne la voit pas.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, name);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const n = norm(name);
+      const matches = () =>
+        Array.from(document.querySelectorAll('[role="listbox"] [role="option"]'))
+          .filter(visible)
+          .filter((o) => {
+            const l = norm(label(o));
+            return l === n || l.startsWith(n + " ");
+          });
+      await waitFor(() => matches().length > 0, 6000);
+      const found = matches();
+      if (found.length !== 1) {
+        cancel();
+        const error = found.length ? `${found.length} personnes nommées « ${name} » dans Teams` : `« ${name} » introuvable dans Teams`;
+        return { ok: false, title: document.title, error };
+      }
+      found[0].click();
+      if (await waitFor(() => isOpen(name), 6000)) return { ok: true, title: document.title };
+      cancel();
+      return { ok: false, title: document.title, error: `Teams affiche « ${titleName() || document.title} »` };
     },
     // Teams ne dessine que les derniers messages, et retire du DOM ceux qui sortent de
     // l'écran. Pour remonter plus loin, on fait défiler le fil vers le haut en cumulant
@@ -320,6 +389,7 @@
       rail: Boolean(rail()),
       items: items().length,
       sample: items().slice(0, 6).map((el) => label(el).split(/\s+/).slice(0, 3).join(" ")),
+      presence_sample: items().slice(0, 6).map((el) => presenceOf(el).filter((t) => t.split(" ").length <= 4)),
       editor: Boolean(editor()),
       editor_info: (() => {
         const e = editor();
@@ -329,6 +399,7 @@
       has_focus: document.hasFocus(),
       visibility: document.visibilityState,
       send_button: Boolean(sendButton()),
+      new_chat_button: Boolean(Array.from(document.querySelectorAll(NEW_CHAT)).find(visible)),
       send_ready: sendReady(),
       ckeditor: Boolean(editor() && cke(editor())),
       editor_model: (() => {

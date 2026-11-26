@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronRight, History, Inbox as InboxIcon, Loader2, Search, Timer, X } from "lucide-react";
+import { ChevronRight, History, Inbox as InboxIcon, Loader2, Search, SquarePen, Timer, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, spring } from "@/components/kit";
 import { DiscussionView } from "@/components/DiscussionView";
+import { NewConversation } from "@/components/NewConversation";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { DraftItem, WatchEntity } from "@/types";
@@ -38,6 +39,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
   const wide = useWide();
 
   // The engine lists the newest draft first: keep that one per conversation.
@@ -118,6 +120,25 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             </TooltipTrigger>
             <TooltipContent>Rattraper les non-lus</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-9 rounded-full" aria-label="Nouvelle conversation" onClick={() => setStarting(true)}>
+                <SquarePen className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Nouvelle conversation</TooltipContent>
+          </Tooltip>
+          <NewConversation
+            trame={trame}
+            open={starting}
+            onOpenChange={setStarting}
+            onOpened={(threadId) => {
+              // La conversation peut tomber dans un groupe replié (« Autres ») : on l'ouvre.
+              setQuery("");
+              setCollapsed({ review: false, unread: false, followed: false, others: false });
+              setSelected(threadId);
+            }}
+          />
         </div>
         <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
           <nav aria-label="Discussions" className="flex flex-col gap-3 px-2 pb-3">
@@ -228,7 +249,7 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
       )}
     >
       {active && <motion.span layoutId="inbox-active" transition={spring} className="absolute inset-0 rounded-xl bg-secondary" />}
-      <InitialsAvatar name={c.displayName} className="relative size-8" />
+      <InitialsAvatar name={c.displayName} presence={c.presence} className="relative size-8" />
       <span className="relative flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
           <span className={cn("min-w-0 flex-1 truncate text-sm", (c.unread || draft) && "font-semibold", !c.watch && !draft && !c.unread && "text-muted-foreground")}>

@@ -8,8 +8,10 @@ import {
   GithubStatus,
   ClaudeStatus,
   ThreadMessage,
+  PeopleSearch,
   PeopleSummary,
   Person,
+  PersonSuggestion,
   LogItem,
   Mode,
   Notice,
@@ -57,6 +59,7 @@ function mapWatch(w: any): WatchEntity {
     rank: typeof w.rank === "number" ? w.rank : null,
     lastActivity: w.last_activity ?? null,
     unread: Boolean(w.unread),
+    presence: w.presence ?? null,
   };
 }
 function mapDraft(d: any): DraftItem {
@@ -171,6 +174,32 @@ function mapPerson(p: any): Person {
     note: text(p?.note),
   };
 }
+function mapSuggestion(p: any): PersonSuggestion {
+  return {
+    name: String(p?.name ?? ""),
+    role: text(p?.role),
+    team: text(p?.team),
+    manager: text(p?.manager),
+    source: p?.source === "teams" ? "teams" : "entourage",
+    threadId: text(p?.thread_id),
+  };
+}
+const foldName = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const wordsMatch = (name: string, query: string) => {
+  const tokens = foldName(name).split(/[^a-z0-9]+/).filter(Boolean);
+  const words = foldName(query).split(/[^a-z0-9]+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => tokens.some((t) => t.startsWith(w)));
+};
+// Démo : un petit entourage et ce que la recherche de Teams trouverait en plus.
+const DEMO_ENTOURAGE: Person[] = [
+  { name: "Hugo Lannes", role: "Architecte", team: "Interop", manager: "Sofia Marino" },
+  { name: "Élodie Faure", role: "Testeuse", team: "Qualité", manager: "Sofia Marino" },
+  { name: "Lucas Bernard", role: "Développeur interop", team: "Hexagone", manager: "Sofia Marino" },
+  { name: "Sofia Marino", role: "Cheffe de projet", team: "Interop", manager: null },
+].map((p) => ({ aliases: [], relation: null, tone: null, note: null, ...p }));
+const DEMO_TEAMS_PEOPLE = ["Alice Martin", "Antoine Girard", "Nadia Benali", "Thomas Petit"];
+const demoStarted = new Set<string>();
+
 let demoPeople: PeopleSummary = { loaded: false, count: 0, source: null, generatedAt: null };
 let demoPeopleList: Person[] = [];
 
@@ -603,6 +632,69 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, list: (res.people ?? []).map(mapPerson).filter((p) => p.name) };
   };
+  /** « Nouvelle conversation » : personnes dont le nom commence par ce qui est tapé. */
+  const searchPeople = async (query: string): Promise<Result<PeopleSearch>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(150);
+      const dm = (name: string) =>
+        stateRef.current.watchlist.find((w) => w.surface === "dm" && foldName(w.displayName) === foldName(name))?.threadId ?? null;
+      const directory = demoPeopleList.length ? demoPeopleList : DEMO_ENTOURAGE;
+      const seen = new Set<string>();
+      const people: PersonSuggestion[] = [];
+      for (const p of directory.filter((p) => wordsMatch(p.name, query) || p.aliases.some((a) => wordsMatch(a, query)))) {
+        seen.add(foldName(p.name));
+        people.push({ name: p.name, role: p.role, team: p.team, manager: p.manager, source: "entourage", threadId: dm(p.name) });
+      }
+      for (const name of DEMO_TEAMS_PEOPLE.filter((n) => wordsMatch(n, query) && !seen.has(foldName(n)))) {
+        people.push({ name, role: null, team: null, manager: null, source: "teams", threadId: dm(name) });
+      }
+      return { ok: true, people: people.slice(0, 8), canStart: true, teamsSearch: true, unsupported: null };
+    }
+    const res = await request<{ people: any[]; can_start: boolean; teams_search: boolean; unsupported: string | null }>(
+      "GET",
+      `/api/people/search?q=${encodeURIComponent(query)}`
+    );
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      people: (res.people ?? []).map(mapSuggestion).filter((p) => p.name),
+      canStart: Boolean(res.can_start),
+      teamsSearch: Boolean(res.teams_search),
+      unsupported: text(res.unsupported),
+    };
+  };
+  /** Ouvre (ou crée) la conversation privée dans Teams ; elle rejoint la liste, non suivie. */
+  const startConversation = async (name: string): Promise<Result<{ conversation: WatchEntity }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(900);
+      const known = stateRef.current.watchlist.find((w) => w.surface === "dm" && foldName(w.displayName) === foldName(name));
+      if (known) return { ok: true, conversation: known };
+      const conversation: WatchEntity = {
+        threadId: `19:demo-${foldName(name).replace(/[^a-z0-9]+/g, "")}@unq.gbl.spaces`,
+        displayName: name,
+        surface: "dm",
+        watch: false,
+        mode: "draft",
+        namedPeople: [],
+        rank: 0,
+        lastActivity: new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      };
+      demoStarted.add(conversation.threadId);
+      setState((s) => ({
+        ...s,
+        watchlist: [conversation, ...s.watchlist.map((w) => (typeof w.rank === "number" ? { ...w, rank: w.rank + 1 } : w))],
+      }));
+      return { ok: true, conversation };
+    }
+    const res = await request<{ conversation: any }>("POST", "/api/conversations/start", { name });
+    if (!res.ok) return res;
+    const conversation = mapWatch(res.conversation);
+    // Visible tout de suite, sans attendre la prochaine trame du flux d'état.
+    setState((s) => (s.watchlist.some((w) => w.threadId === conversation.threadId) ? s : { ...s, watchlist: [conversation, ...s.watchlist] }));
+    return { ok: true, conversation };
+  };
   const uploadPeople = async (filename: string, content: string): Promise<Result<{ people: PeopleSummary }>> => {
     if (!/\.json$/i.test(filename)) return { ok: false, error: "Le fichier doit être un .json exporté d'Orbite." };
     if (new Blob([content]).size > 512 * 1024) return { ok: false, error: "Le fichier dépasse 512 Ko." };
@@ -676,6 +768,7 @@ export function useTrame() {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
+      if (demoStarted.has(threadId)) return { ok: true, messages: [], top: true };
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const who = conv?.displayName ?? "Quelqu'un";
       return {
@@ -936,6 +1029,8 @@ export function useTrame() {
     previewSoul,
     getPeople,
     listPeople,
+    searchPeople,
+    startConversation,
     uploadPeople,
     removePeople,
     selftest,

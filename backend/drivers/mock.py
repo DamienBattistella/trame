@@ -96,19 +96,51 @@ _HISTORY: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+# Simulated presence of the 1:1 chats, moving one step every PRESENCE_STEP seconds:
+# enough variety to see every dot, slow enough to look like a real day.
+_PRESENCE: dict[str, list[str]] = {
+    "19:aa11@thread.v2": ["available", "available", "in_meeting", "available", "busy"],
+    "19:bb22@thread.v2": ["in_meeting", "in_meeting", "available", "in_call", "away"],
+    "19:ee55@thread.v2": ["away", "brb", "available", "dnd", "offline"],
+}
+
+
+# The people Teams' own search knows in the demo, beyond the conversations above.
+_TEAMS_PEOPLE = [
+    "Sofia Marino", "Lucas Bernard", "Chiara Rossi", "Marc Lefèvre", "Alice Martin",
+    "Antoine Girard", "Camille Leroy", "Nadia Benali", "Thomas Petit", "Julie Moreau",
+]
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn").casefold()
+
+
 class MockTeamsDriver(TeamsDriver):
+    PRESENCE_STEP = 120.0
+    can_start_chat = True
+    can_search_people = True
+
     def __init__(self, interval: float = 20.0):
         self.interval = interval
         self._convs = [c.model_copy() for c in _SEED]
         self._active: Optional[str] = None
         self.typed: list[tuple[str, str, bool]] = []
         self.opened: list[str] = []
+        # Teams resolves anyone in the organization: the entourage is part of it.
+        self.allow_anyone = True
 
     def selftest(self) -> bool:
         return True
 
     def list_conversations(self) -> list[WatchEntity]:
-        return [c.model_copy() for c in self._convs]
+        seen = self.presence()
+        return [c.model_copy(update={"presence": seen.get(c.thread_id)}) for c in self._convs]
+
+    def presence(self) -> dict[str, str]:
+        step = int(time.time() // self.PRESENCE_STEP)
+        return {tid: cycle[step % len(cycle)] for tid, cycle in _PRESENCE.items()}
 
     def is_screen_sharing(self) -> bool:
         return False
@@ -130,6 +162,31 @@ class MockTeamsDriver(TeamsDriver):
 
     def active_thread(self) -> Optional[str]:
         return self._active
+
+    def search_people(self, query: str, limit: int = 8) -> list[str]:
+        words = _fold(query).split()
+        if not words:
+            return []
+        hits = [n for n in _TEAMS_PEOPLE if all(any(t.startswith(w) for t in _fold(n).split()) for w in words)]
+        return hits[:limit]
+
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        name = " ".join((name or "").split())
+        existing = next((c for c in self._convs if c.surface == Surface.dm and _fold(c.display_name) == _fold(name)), None)
+        if existing is None:
+            if not name or (_fold(name) not in {_fold(n) for n in _TEAMS_PEOPLE} and not self.allow_anyone):
+                self.last_error = f"« {name} » introuvable dans Teams"
+                return None
+            slug = "".join(c for c in _fold(name) if c.isalnum())[:24]
+            existing = WatchEntity(thread_id=f"19:new-{slug}@unq.gbl.spaces", display_name=name, surface=Surface.dm,
+                                   rank=0, last_activity=datetime.now().strftime("%H:%M"))
+            for c in self._convs:
+                if c.rank is not None:
+                    c.rank += 1
+            self._convs.insert(0, existing)
+        self._active = existing.thread_id
+        self.opened.append(existing.thread_id)
+        return existing.model_copy()
 
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         if self._active != thread_id:
