@@ -42,6 +42,11 @@ class MockBrain(Brain):
         return mock_correct(text)
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
+        from brain.status_note import MARKER
+        if MARKER in prompt:
+            # Démo : un message différent selon l'angle demandé.
+            angle = next((l.split(":", 1)[1].strip() for l in prompt.splitlines() if l.startswith("Angle à prendre")), "")
+            return f"🎧 {angle[:1].upper()}{angle[1:60]}" if angle else "🎧 Concentré, je réponds dès que possible"
         if "Message à vérifier :" in prompt:
             _think(
                 "Je relève les heures, les jours et les numéros cités dans le message, puis je cherche dans le fil "

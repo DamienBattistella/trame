@@ -727,6 +727,16 @@ export function useTrame() {
     }
     return request<{ message: string }>("POST", "/api/me/status-message", { text });
   };
+  /** Un message de statut proposé dans ta voix ; rien n'est envoyé à Teams. `previous` :
+   *  le message actuel, pour en proposer un autre. source « fallback » : message tout prêt. */
+  const suggestStatusMessage = async (previous: string): Promise<Result<{ text: string; source: "brain" | "fallback" }>> => {
+    if (!connectedRef.current) {
+      const pool = ["🎧 Concentré, je réponds dès que possible", "☕ Pause rapide, je reviens vite", "🛠️ En plein dans le code, l'urgent passe toujours", "🚀 On avance bien aujourd'hui"];
+      const others = pool.filter((m) => m !== previous.trim());
+      return demo(900, { text: others[Math.floor(Math.random() * others.length)], source: "brain" as const });
+    }
+    return request<{ text: string; source: "brain" | "fallback" }>("POST", "/api/me/status-message/suggest", { text: previous });
+  };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
   /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
@@ -1426,6 +1436,7 @@ export function useTrame() {
     getMyStatus,
     setMyStatus,
     setStatusMessage,
+    suggestStatusMessage,
     sendDraft,
     composeDraft,
     removeDraft,

@@ -372,6 +372,11 @@ def create_app(
     def post_my_status(body: StatusBody):
         return {"ok": True, **watcher.set_my_status(body.presence)}
 
+    @app.post("/api/me/status-message/suggest")
+    def suggest_status_message(body: Optional[StatusMessageBody] = None):
+        """A status message proposed in the user's voice. Nothing is sent to Teams."""
+        return {"ok": True, **watcher.suggest_status_message(body.text if body else "")}
+
     @app.post("/api/me/status-message")
     def post_status_message(body: StatusMessageBody):
         return {"ok": True, **watcher.set_status_message(body.text)}

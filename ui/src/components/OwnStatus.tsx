@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Check, Loader2, RotateCcw } from "lucide-react";
+import { Check, Dices, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PRESENCE, PresenceBadge } from "@/components/kit";
 import type { Trame } from "@/api";
@@ -28,7 +28,7 @@ const MESSAGE_MAX = 280;
 export function OwnStatus({ trame }: { trame: Trame }) {
   const presence = trame.state.myPresence;
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<StatusChoice | "message" | null>(null);
+  const [busy, setBusy] = useState<StatusChoice | "message" | "suggest" | null>(null);
   const [message, setMessage] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -64,6 +64,16 @@ export function OwnStatus({ trame }: { trame: Trame }) {
     toast.success(res.message ? "Message de statut mis à jour" : "Message de statut effacé");
   };
 
+  // Un message proposé dans ta voix : il remplit la zone, OK l'envoie à Teams.
+  const suggest = async () => {
+    setBusy("suggest");
+    const res = await trame.suggestStatusMessage(message);
+    setBusy(null);
+    if (!res.ok) return toast.error("Aucun message proposé", { description: res.error });
+    setMessage(res.text.slice(0, MESSAGE_MAX));
+    if (res.source === "fallback") toast.info("Message tout prêt", { description: "Le cerveau n'a pas répondu : voici une proposition simple." });
+  };
+
   const working = busy !== null;
   const dirty = saved !== null && message.replace(/\s+/g, " ").trim() !== saved;
 
@@ -79,7 +89,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
           <span className="hidden max-w-28 truncate sm:inline">{label}</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-1.5">
+      <PopoverContent align="end" className="w-80 p-1.5">
         <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">Ton statut dans Teams</div>
         <div role="menu" aria-label="Choisir son statut">
           {CHOICES.map((c) => (
@@ -114,39 +124,67 @@ export function OwnStatus({ trame }: { trame: Trame }) {
           </button>
         </div>
         <div className="mt-1.5 border-t px-1 pb-1 pt-2.5">
-          <label htmlFor="trame-status-message" className="px-1 text-xs font-medium text-muted-foreground">
-            Message de statut
-          </label>
+          <div className="flex items-center justify-between px-1">
+            <label htmlFor="trame-status-message" className="text-xs font-medium text-muted-foreground">
+              Message de statut
+            </label>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 rounded-full px-2 text-xs text-muted-foreground hover:text-foreground"
+              disabled={working || saved === null}
+              onClick={suggest}
+              title="Proposer un message dans ta voix (rien n'est envoyé avant OK)"
+            >
+              {busy === "suggest" ? <Loader2 className="size-3.5 animate-spin" /> : <Dices className="size-3.5" />}
+              Proposer
+            </Button>
+          </div>
           <form
-            className="mt-1.5 flex gap-1.5"
+            className="mt-1.5 flex flex-col gap-1.5"
             onSubmit={(e) => {
               e.preventDefault();
               if (dirty) saveMessage(message);
             }}
           >
-            <Input
+            {/* Tout le message se lit : la zone grandit avec le texte (jusqu'à six lignes
+                environ, puis défile). Entrée enregistre, comme dans Teams. */}
+            <Textarea
               id="trame-status-message"
               value={message}
               maxLength={MESSAGE_MAX}
+              rows={1}
               disabled={working || saved === null}
               placeholder={saved === null ? "Lecture dans Teams…" : "Aucun message"}
-              onChange={(e) => setMessage(e.target.value)}
-              className="h-8 text-xs"
+              onChange={(e) => setMessage(e.target.value.replace(/\r?\n/g, " "))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (dirty && !working) saveMessage(message);
+                }
+              }}
+              className="field-sizing-content max-h-32 min-h-8 resize-none py-1.5 text-xs leading-relaxed break-words"
             />
-            <Button type="submit" size="sm" className="h-8" disabled={working || !dirty}>
-              {busy === "message" ? <Loader2 className="size-3.5 animate-spin" /> : "OK"}
-            </Button>
+            <div className="flex items-center gap-2 px-1">
+              {saved ? (
+                <button
+                  type="button"
+                  disabled={working}
+                  onClick={() => saveMessage("")}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-60"
+                >
+                  Effacer le message
+                </button>
+              ) : null}
+              <span className={cn("ml-auto text-[11px] tabular-nums text-muted-foreground", message.length >= MESSAGE_MAX && "text-warning")}>
+                {message.length}/{MESSAGE_MAX}
+              </span>
+              <Button type="submit" size="sm" className="h-7 px-3" disabled={working || !dirty}>
+                {busy === "message" ? <Loader2 className="size-3.5 animate-spin" /> : "OK"}
+              </Button>
+            </div>
           </form>
-          {saved ? (
-            <button
-              type="button"
-              disabled={working}
-              onClick={() => saveMessage("")}
-              className="mt-1.5 px-1 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-60"
-            >
-              Effacer le message
-            </button>
-          ) : null}
         </div>
       </PopoverContent>
     </Popover>
