@@ -161,6 +161,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
+        "ui": {"conversation_sort": "watched"},
     }
 
 
@@ -182,6 +183,16 @@ def test_settings_put_partial_hot_swap_and_persist(make_client, fresh_home):
     assert saved["reply"]["auto_send_countdown_seconds"] == 12
     assert saved["context"]["github"]["repos"] == "allowlist"
     assert client.get("/api/state").json()["brain"] == "copilot"
+
+
+def test_conversation_sort_defaults_to_watched_and_persists(make_client, fresh_home):
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"] == {"conversation_sort": "watched"}
+    r = client.put("/api/settings", json={"ui": {"conversation_sort": "alpha"}})
+    assert r.status_code == 200 and r.json()["settings"]["ui"]["conversation_sort"] == "alpha"
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["ui"]["conversation_sort"] == "alpha"
+    assert client.put("/api/settings", json={"ui": {"conversation_sort": "nope"}}).status_code == 422
 
 
 def test_settings_put_same_brain_keeps_instance(make_client):

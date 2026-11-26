@@ -161,6 +161,8 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
     <div className="flex flex-col gap-3">
       <ConversationList
         items={trame.state.watchlist}
+        sort={trame.conversationSort}
+        onSortChange={trame.setConversationSort}
         onBulk={(ids, watch) => trame.setWatchMany(ids, watch).then(report("Mise à jour groupée impossible"))}
         onRefresh={() =>
           trame.refreshConversations().then((res) => {
