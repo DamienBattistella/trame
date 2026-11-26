@@ -20,6 +20,7 @@ const GROUPS: { title: string; send?: boolean; tools: [string, string][] }[] = [
       ["list_drafts", "réponses à relire"],
       ["lookup_person", "fiche de l'entourage : rôle, équipe, ton"],
       ["get_persona", "ton SOUL.md"],
+      ["get_my_status", "ton statut Teams et ton message de statut"],
     ],
   },
   {
@@ -31,6 +32,7 @@ const GROUPS: { title: string; send?: boolean; tools: [string, string][] }[] = [
       ["type_in_teams", "écrit la réponse dans Teams sans l'envoyer"],
       ["follow_conversation", "suivre une discussion, mode Brouillon"],
       ["catch_up · set_paused", "rattrapage des non-lus, pause"],
+      ["set_my_status", "change ton statut Teams ou ton message de statut"],
     ],
   },
   {

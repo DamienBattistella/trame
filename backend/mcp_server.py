@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 import journal as journalmod
+import presence as presencemod
 import telemetry
 from watcher import ActionError, Watcher
 
@@ -74,6 +75,9 @@ TOOLS: list[dict] = [
     _tool("lookup_person", "Entourage", "Fiche d'une personne de l'entourage (rôle, équipe, relation, ton à adopter).",
           {"name": {"type": "string"}}, ["name"]),
     _tool("get_persona", "Persona (SOUL.md)", "Le SOUL.md qui décrit la voix et les habitudes de l'utilisateur."),
+    _tool("get_my_status", "Mon statut Teams",
+          "Statut Teams de l'utilisateur (available, busy, dnd, brb, away, offline…) et son message de statut, "
+          "tels que Teams les affiche. Trame ouvre brièvement le menu du profil dans sa fenêtre Teams pour lire le message."),
     # --- actions sans envoi ---
     _tool("suggest_reply", "Proposer avec Trame",
           "Fait rédiger une réponse par le cerveau de Trame, dans la voix de l'utilisateur. save=true la dépose dans « À relire ».",
@@ -92,6 +96,15 @@ TOOLS: list[dict] = [
            "mode": {"type": "string", "enum": ["draft", "auto"]}}, annotations=LOCAL),
     _tool("set_paused", "Pause", "Met Trame en pause (plus aucune réponse préparée ni envoyée) ou le relance.",
           {"paused": {"type": "boolean"}}, ["paused"], LOCAL),
+    _tool("set_my_status", "Changer mon statut Teams",
+          "Change le statut Teams de l'utilisateur, visible par ses collègues : available (Disponible), busy (Occupé), "
+          "dnd (Ne pas déranger), brb (De retour bientôt), away (Apparaître absent), offline (Apparaître hors ligne), "
+          "reset (Teams décide à nouveau). message change aussi le message de statut (\"\" l'efface). "
+          "Réussi seulement si Teams affiche ensuite ce qui est demandé. À faire seulement à la demande de l'utilisateur.",
+          {"presence": {"type": "string", "enum": list(presencemod.CHOICES)},
+           "message": {"type": "string", "maxLength": presencemod.MESSAGE_MAX,
+                       "description": "Message de statut ; chaîne vide pour l'effacer. Absent : inchangé."}},
+          annotations={**OUTWARD, "idempotentHint": True}),
     _tool("catch_up", "Rattrapage", "Prépare des réponses à relire pour les non-lus des discussions suivies (jamais d'envoi).",
           annotations=LOCAL),
     _tool("type_in_teams", "Saisir dans Teams",
@@ -186,7 +199,7 @@ def make_router(watcher: Watcher) -> APIRouter:
         return {"version": os.environ.get("TRAME_VERSION", "dev"), "brain": st.brain, "paused": st.paused,
                 "screen_sharing": st.screen_sharing, "teams": teams, "telemetry_error": watcher.telemetry_error,
                 "followed": sum(1 for w in st.watchlist if w.watch), "drafts": len(st.drafts),
-                "mcp_send_allowed": send_allowed()}
+                "mcp_send_allowed": send_allowed(), "my_presence": st.my_presence}
 
     def tool_logs(args: dict) -> Any:
         limit = int(args.get("limit", 100))
@@ -311,6 +324,20 @@ def make_router(watcher: Watcher) -> APIRouter:
         watcher.set_paused(bool(args["paused"]))
         return {"ok": True, "paused": watcher.state.paused}
 
+    def tool_my_status(_args: dict) -> Any:
+        return watcher.my_status()
+
+    def tool_set_my_status(args: dict) -> Any:
+        presence, message = args.get("presence"), args.get("message")
+        if presence is None and message is None:
+            raise ValueError("indique presence, message ou les deux")
+        out: dict = {"ok": True}
+        if presence is not None:
+            out.update(watcher.set_my_status(str(presence)))
+        if message is not None:
+            out.update(watcher.set_status_message(str(message)))
+        return out
+
     def tool_catch_up(_args: dict) -> Any:
         return {"ok": True, "drafts_prepared": watcher.catchup()}
 
@@ -334,7 +361,7 @@ def make_router(watcher: Watcher) -> APIRouter:
         "diagnose_teams": tool_diagnose, "get_settings": tool_settings,
         "list_conversations": tool_list_conversations, "read_conversation": tool_read,
         "summarize_conversation": tool_summary, "list_drafts": tool_drafts, "lookup_person": tool_person,
-        "get_persona": tool_persona,
+        "get_persona": tool_persona, "get_my_status": tool_my_status, "set_my_status": tool_set_my_status,
         "suggest_reply": tool_suggest, "propose_reply": tool_propose, "edit_draft": tool_edit,
         "dismiss_draft": tool_dismiss, "follow_conversation": tool_follow, "set_paused": tool_pause,
         "catch_up": tool_catch_up, "type_in_teams": tool_type,
