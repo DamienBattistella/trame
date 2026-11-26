@@ -183,6 +183,93 @@
     }
     return null;
   };
+  // Pièces jointes. Les fichiers arrivent du moteur (octets choisis par l'utilisateur
+  // dans Trame) : la page ne lit jamais de fichier sur le disque. Ils passent par le
+  // champ fichier de Teams (« Joindre »), sinon par un dépôt ou un collage sur l'éditeur,
+  // comme si l'utilisateur les y glissait.
+  const composeRoot = (box) => {
+    const btn = sendButton();
+    for (let el = box; el && el !== document.body; el = el.parentElement) if (btn && el.contains(btn)) return el;
+    return box?.parentElement || null;
+  };
+  const shownText = (root) => {
+    if (!root) return "";
+    const parts = [root.innerText];
+    for (const el of root.querySelectorAll("[aria-label], [title]")) parts.push(el.getAttribute("aria-label") || "", el.getAttribute("title") || "");
+    return norm(parts.join(" "));
+  };
+  const REMOVE = /^(remove|supprimer|retirer|delete)\b/i;
+  const removeButtons = (root) =>
+    Array.from(root?.querySelectorAll("button[aria-label]") || []).filter((b) => REMOVE.test(b.getAttribute("aria-label") || ""));
+  const uploading = (root) => Boolean(root?.querySelector('[role="progressbar"]'));
+  const toFiles = (files) =>
+    files.map((f) => {
+      const bin = atob(f.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new File([bytes], f.name, { type: f.type || "application/octet-stream" });
+    });
+  // Seul le champ fichier de la zone de saisie : jamais un autre champ de la page (photo
+  // de profil, arrière-plan…) qui enverrait le fichier ailleurs. Un champ réservé aux
+  // images ne convient pas à un document.
+  const fileInput = (root) =>
+    Array.from(root?.querySelectorAll('input[type="file"]') || []).find((el) => !/^\s*image\//.test(el.accept || "")) || null;
+  const attach = async (box, files) => {
+    const list = toFiles(files);
+    const transfer = () => {
+      const dt = new DataTransfer();
+      list.forEach((f) => dt.items.add(f));
+      return dt;
+    };
+    const names = files.map((f) => norm(f.name));
+    const listed = () => {
+      const t = shownText(composeRoot(box));
+      return names.every((n) => t.includes(n));
+    };
+    const tries = [
+      [
+        "champ fichier",
+        () => {
+          const input = fileInput(composeRoot(box));
+          if (!input) throw new Error("pas de champ fichier");
+          input.files = transfer().files;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+      ],
+      [
+        "dépôt",
+        () => {
+          const dt = transfer();
+          for (const type of ["dragenter", "dragover", "drop"]) {
+            box.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+          }
+        },
+      ],
+      [
+        "collage",
+        () => box.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer(), bubbles: true, cancelable: true })),
+      ],
+    ];
+    for (const [how, run] of tries) {
+      if (late()) return null;
+      try {
+        run();
+      } catch {
+        continue;
+      }
+      if (await waitFor(listed, 5000)) {
+        // Teams téléverse le fichier (OneDrive) avant de permettre l'envoi : on attend la
+        // fin, en gardant de quoi envoyer et confirmer avant que le moteur abandonne.
+        const end = Math.max(Date.now() + 1000, (deadline || Date.now() + 60000) - 20000);
+        while (Date.now() < end && (uploading(composeRoot(box)) || !sendReady())) await sleep(300);
+        if (uploading(composeRoot(box))) return { how, error: "téléversement toujours en cours" };
+        return { how };
+      }
+    }
+    return null;
+  };
+  const dropAttachments = (box) => removeButtons(composeRoot(box)).forEach((b) => b.click());
   const NEW_CHAT = [
     '[data-tid="chat-list-new-chat-button"]',
     '[data-tid="new-chat-button"]',
@@ -838,15 +925,24 @@
       await thumbnails(shown);
       return { messages: shown.map(({ key, ...m }) => m), top };
     },
-    type: async ({ name, text, send, quote, mentions }) => {
-      if (mentions && mentions.length) return typeWithMentions({ name, text, send, quote, mentions });
+    type: async ({ name, text, send, quote, mentions, files }) => {
+      if (mentions && mentions.length) {
+        if (Array.isArray(files) && files.length) return { ok: false, error: "pièce jointe et mention dans le même message non prises en charge" };
+        return typeWithMentions({ name, text, send, quote, mentions });
+      }
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
       let box = editor();
       if (!box) return { ok: false, error: "zone de saisie introuvable" };
       if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
+      const withFiles = Array.isArray(files) && files.length > 0;
+      if (withFiles && !send) return { ok: false, error: "pièce jointe sans envoi refusée" };
+      if (withFiles && removeButtons(composeRoot(box)).length) {
+        return { ok: false, error: "une pièce jointe attend déjà dans la zone de saisie de Teams" };
+      }
       const fail = (error) => {
         if (quote) unquote(box);
         clear(box);
+        if (withFiles) dropAttachments(box);
         return { ok: false, error };
       };
       if (quote) {
@@ -855,12 +951,22 @@
         if (!isOpen(name)) return fail("conversation changée pendant la citation");
         box = editor() || box;
       }
-      const how = await insert(box, text);
+      let joined = "";
+      if (withFiles) {
+        const got = await attach(box, files);
+        if (!got) return fail("Teams n'a pas pris la pièce jointe (champ fichier, dépôt et collage essayés)");
+        if (got.error) return fail(`pièce jointe : ${got.error}`);
+        joined = `, pièce jointe : ${got.how}`;
+        if (!isOpen(name)) return fail("conversation changée pendant l'ajout de la pièce jointe");
+        box = editor() || box;
+      }
+      const how = text ? await insert(box, text) : "aucun texte";
       if (!how) return fail(`texte non inséré (focus : ${document.hasFocus() ? "oui" : "non"})`);
       if (!send) return { ok: true };
       if (!isOpen(name)) return fail("conversation changée avant l'envoi");
       if (late()) return fail("délai dépassé avant l'envoi");
-      const key = flat(text).slice(0, 40);
+      // Un message sans texte se reconnaît au nom de son premier fichier.
+      const key = text ? flat(text).slice(0, 40) : flat(files[0].name);
       const before = lastMessages(3).filter((t) => t.includes(key)).length;
       // Teams active Envoyer une fois le texte pris en compte : lui laisser le temps.
       await waitFor(sendReady, 1500);
@@ -868,10 +974,18 @@
       const via = sendReady() ? "bouton" : "Entrée";
       if (via === "bouton") btn.click();
       else box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
-      const trace = `saisie : ${how}, envoi : ${via}`;
+      const trace = `saisie : ${how}${joined}, envoi : ${via}`;
       // Envoyé seulement si le message apparaît dans la conversation : une zone de saisie
       // vidée ne prouve rien (page gelée, éditeur réinitialisé).
-      const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, 6000);
+      const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, withFiles ? 15000 : 6000);
+      if (shown && withFiles) {
+        // Le message est là : ses fichiers doivent l'être aussi, sinon pas de « envoyé ».
+        const seen = norm(lastMessages(3).join(" "));
+        const missing = files.filter((f) => !seen.includes(norm(f.name))).map((f) => f.name);
+        if (missing.length) {
+          return { ok: false, uncertain: true, error: `message visible, pièce jointe non visible (${missing.join(", ")}) : vérifie dans Teams (${trace})` };
+        }
+      }
       if (shown) return { ok: true };
       if (box.innerText.trim() || modelText(box)) return fail(`envoi refusé par Teams (${trace})`);
       return { ok: false, uncertain: true, error: `message non visible dans la conversation, vérifie dans Teams (${trace})` };
@@ -915,6 +1029,8 @@
       send_button: Boolean(sendButton()),
       new_chat_button: Boolean(Array.from(document.querySelectorAll(NEW_CHAT)).find(visible)),
       send_ready: sendReady(),
+      file_inputs: document.querySelectorAll('input[type="file"]').length,
+      compose_root: Boolean(editor() && composeRoot(editor())),
       ckeditor: Boolean(editor() && cke(editor())),
       editor_model: (() => {
         const e = editor();

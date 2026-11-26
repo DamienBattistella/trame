@@ -316,15 +316,27 @@ class WebBridgeDriver(TeamsDriver):
         quote = self._ref(reply_to) if reply_to is not None else None
         return self._type(thread_id, text, send, quote=quote, mentions=mentions)
 
+    # Teams web: the files go through its own « Joindre » file input (or a drop on the
+    # editor), then the message is sent with them. Upload to OneDrive takes a while.
+    can_attach = True
+    ATTACH_TIMEOUT = 90.0
+
+    def _send_files_into_active(self, thread_id, text, files, reply_to=None) -> bool:
+        # Only the bytes the user chose travel to the page: never a path for it to read.
+        return self._type(thread_id, text, True, quote=self._ref(reply_to) if reply_to else None,
+                          files=[f.wire() for f in files])
+
     def _type(self, thread_id: str, text: str, send: bool, quote: Optional[dict] = None,
-              mentions: Optional[list[str]] = None) -> bool:
+              mentions: Optional[list[str]] = None, files: Optional[list[dict]] = None) -> bool:
         args: dict = {"name": self._name(thread_id), "text": text, "send": send}
         if quote is not None:
             args["quote"] = quote
         if mentions:
             args["mentions"] = mentions
+        if files:
+            args["files"] = files
         # Each mention waits for Teams' suggestions: a few more seconds per person.
-        timeout = (18 if quote else 15) + 6 * len(mentions or [])
+        timeout = self.ATTACH_TIMEOUT if files else (18 if quote else 15) + 6 * len(mentions or [])
         try:
             res = self._rpc("type", timeout=timeout, **args)
         except BridgeUnavailable as e:

@@ -8,6 +8,7 @@ from datetime import datetime
 from contextlib import contextmanager
 from typing import Iterator, Callable, Iterable, Optional, Sequence
 
+import attachments as attachmod
 import config as cfgmod
 import safety
 import people as peoplemod
@@ -21,6 +22,7 @@ from github import context as gh
 from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck, FactCheckSources,
                     IncomingMessage, LogItem, MessageRef, Notice, Surface, WatchEntity)
 from drivers.base import Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
+from attachments import Attachment
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
 from brain.correct import MAX_CHARS as CORRECT_MAX_CHARS, CorrectionError
@@ -327,11 +329,15 @@ class Watcher:
         return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
 
     def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False,
-                 reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = ()) -> bool:
+                 reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = (),
+                 files: Sequence[Attachment] = ()) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
         restore=True puts the user's previous conversation back afterwards. Pause (for
         automatic sends) and screen share are re-checked under the UI lock, right before
-        typing: either may have started during the LLM call, the countdown or the wait."""
+        typing: either may have started during the LLM call, the countdown or the wait.
+        files: chosen by the user and sent by their click; never with an automatic send."""
+        if files and (auto or not send):
+            raise ValueError("pièces jointes : envoi manuel uniquement")
         self._why.reason = None
         with self._ui_lock:
             if auto and (self.state.paused or self._stop.is_set()):
@@ -343,8 +349,10 @@ class Watcher:
                 return False
             try:
                 with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto,
-                                    reply=reply_to is not None, mentions=len(mentions)) as sp:
-                    if mentions:
+                                    reply=reply_to is not None, mentions=len(mentions), files=len(files)) as sp:
+                    if files:
+                        focus = self.driver.type_focused(thread_id, text, send, restore, reply_to=reply_to, files=files)
+                    elif mentions:
                         focus = self.driver.type_focused(thread_id, text, send, restore, reply_to=reply_to,
                                                          mentions=list(mentions))
                     elif reply_to is None:
@@ -354,11 +362,13 @@ class Watcher:
                     telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
             except SendUncertain as e:
                 # Never report "nothing was sent" here: a resend could duplicate it.
-                self._remember_sent(thread_id, text)
+                if text.strip():
+                    self._remember_sent(thread_id, text)
                 self.log("warn", f"Envoi non confirmé, à vérifier dans Teams : {e}")
                 if auto:
                     return False
-                raise ActionError(409, "Envoi non confirmé : le message est peut-être parti. Vérifie dans Teams avant de renvoyer.")
+                what = "le message et ses pièces jointes sont peut-être partis" if files else "le message est peut-être parti"
+                raise ActionError(409, f"Envoi non confirmé : {what}. Vérifie dans Teams avant de renvoyer.")
             except Exception as e:
                 self._why.reason = str(e)
                 self.log("warn", f"Saisie impossible: {e}")
@@ -367,7 +377,7 @@ class Watcher:
                 self._why.reason = focus.reason
                 if focus.reason:
                     self.log("warn", f"Saisie refusée : {focus.reason}")
-            if focus.ok and send:
+            if focus.ok and send and text.strip():
                 self._remember_sent(thread_id, text)
         self._warn_if_not_restored(focus)
         return focus.ok
@@ -461,14 +471,17 @@ class Watcher:
         return names
 
     def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None,
-                   mentions: Optional[Sequence[str]] = None) -> None:
+                   mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> None:
         if reply_to is not None:
             self._require("reply")
+        self._attach_allowed(files)
         with self._claim(draft_id) as d:
             body = text.strip() if text and text.strip() else d.proposal
             names = self._mentions_in(body, mentions)
+            self._attach_allowed(files, names)
             self._typing_allowed()
-            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names):
+            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
+                                 files=files):
                 with self._lock:
                     d.proposal = body
                 self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
@@ -477,7 +490,7 @@ class Watcher:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
         self._history.pop(d.thread_id, None)
         self._thread_cache.pop(d.thread_id, None)
-        self.log("sent", f"Envoyé à {d.from_}{self._in_reply(reply_to)}")
+        self.log("sent", f"Envoyé à {d.from_}{self._in_reply(reply_to)}{self._joined(files)}")
 
     def compose_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None) -> None:
         if reply_to is not None:
@@ -570,22 +583,42 @@ class Watcher:
                          f"{'s' if len(results) > 1 else ''}")
         return {"results": results}
 
+    def _attach_allowed(self, files: Sequence[Attachment], mentions: Optional[Sequence[str]] = None) -> None:
+        if files and not self.driver.can_attach:
+            raise ActionError(501, f"Pièce jointe impossible : {self.driver.attach_unsupported}.")
+        if files and mentions:
+            raise ActionError(422, "Pièce jointe et mention dans le même message : pas encore pris en charge. "
+                                   "Envoie le fichier dans un message sans mention.")
+
+    @staticmethod
+    def _joined(files: Sequence[Attachment]) -> str:
+        return f" avec {attachmod.describe(list(files))}" if files else ""
+
+    def attachments_info(self) -> dict:
+        """What the conversation view needs to offer « Joindre » (or say why not)."""
+        return {"can_attach": bool(self.driver.can_attach),
+                "unsupported": None if self.driver.can_attach else self.driver.attach_unsupported,
+                **attachmod.limits()}
+
     def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None,
-                    mentions: Optional[Sequence[str]] = None) -> None:
+                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> None:
         entity = self._conversation(thread_id)
         body = text.strip()
-        if not body:
+        if not body and not files:
             raise ActionError(422, "Le message est vide.")
         if reply_to is not None:
             self._require("reply")
         names = self._mentions_in(body, mentions)
+        self._attach_allowed(files, names)
         self._typing_allowed()
-        if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names):
+        if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
+                             files=files):
             self.log("warn", f"Envoi à {entity.display_name} refusé.{self._because()}")
             raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)
         self._thread_cache.pop(thread_id, None)
-        self.log("sent", f"Envoyé à {entity.display_name}{self._in_reply(reply_to)} : « {body[:60]} »")
+        quoted = f" : « {body[:60]} »" if body else ""
+        self.log("sent", f"Envoyé à {entity.display_name}{self._in_reply(reply_to)}{quoted}{self._joined(files)}")
 
     def react(self, thread_id: str, target: MessageRef, reaction: str) -> None:
         """One click reaction on a precise message. Same guards as typing: screen share,

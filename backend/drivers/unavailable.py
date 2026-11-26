@@ -12,6 +12,7 @@ class UnavailableDriver(TeamsDriver):
     "moteur injoignable"; nothing is read and nothing is ever typed."""
 
     start_chat_unsupported = "Teams n'est pas repéré"
+    attach_unsupported = "Teams n'est pas repéré"
     search_messages_unsupported = "Teams n'est pas repéré"
 
     def __init__(self, reason: str):
