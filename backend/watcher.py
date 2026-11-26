@@ -297,6 +297,8 @@ class Watcher:
                 used_github=gh_ref, sender_label=self._sender_label(msg.sender),
             ))
             self.state.drafts = drafts
+        # The discussion view rereads the conversation: its cached copy lacks this message.
+        self._thread_cache.pop(msg.thread_id, None)
 
     # --- actions from the API ---
     def _draft(self, draft_id: str) -> Draft:
@@ -338,6 +340,8 @@ class Watcher:
                 raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
+        self._history.pop(d.thread_id, None)
+        self._thread_cache.pop(d.thread_id, None)
         self.log("sent", f"Envoyé à {d.from_}")
 
     def compose_draft(self, draft_id: str, text: Optional[str] = None) -> None:
