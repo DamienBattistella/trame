@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime
 from contextlib import contextmanager
-from typing import Iterator, Callable, Iterable, Optional
+from typing import Iterator, Callable, Iterable, Optional, Sequence
 
 import config as cfgmod
 import safety
@@ -56,7 +56,8 @@ class Watcher:
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
             capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
-                                      reply=bool(getattr(driver, "supports_reply", False))),
+                                      reply=bool(getattr(driver, "supports_reply", False)),
+                                      mentions=bool(getattr(driver, "supports_mentions", False))),
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -304,7 +305,7 @@ class Watcher:
         return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
 
     def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False,
-                 reply_to: Optional[MessageRef] = None) -> bool:
+                 reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = ()) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
         restore=True puts the user's previous conversation back afterwards. Pause (for
         automatic sends) and screen share are re-checked under the UI lock, right before
@@ -320,8 +321,11 @@ class Watcher:
                 return False
             try:
                 with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto,
-                                    reply=reply_to is not None) as sp:
-                    if reply_to is None:
+                                    reply=reply_to is not None, mentions=len(mentions)) as sp:
+                    if mentions:
+                        focus = self.driver.type_focused(thread_id, text, send, restore, reply_to=reply_to,
+                                                         mentions=list(mentions))
+                    elif reply_to is None:
                         focus = self.driver.type_focused(thread_id, text, send, restore)
                     else:
                         focus = self.driver.type_focused(thread_id, text, send, restore, reply_to=reply_to)
@@ -411,14 +415,38 @@ class Watcher:
             raise ActionError(501, "Répondre à un message précis n'est pas possible avec ce pilote Teams.")
         if gesture == "react" and not caps.react:
             raise ActionError(501, "Réagir à un message n'est pas possible avec ce pilote Teams.")
+        if gesture == "mentions" and not caps.mentions:
+            raise ActionError(501, "Mentionner quelqu'un n'est pas possible avec ce pilote Teams.")
 
-    def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None) -> None:
+    MAX_MENTIONS = 10
+
+    def _mentions_in(self, text: str, mentions: Optional[Sequence[str]]) -> list[str]:
+        """Names to mention, each written « @Nom » in text, without duplicates. Refuses a
+        name missing from the text: Teams would get a mention the reader cannot see."""
+        names: list[str] = []
+        for raw in mentions or ():
+            name = " ".join((raw or "").split())
+            if name and name.casefold() not in (n.casefold() for n in names):
+                names.append(name)
+        if not names:
+            return []
+        self._require("mentions")
+        if len(names) > self.MAX_MENTIONS:
+            raise ActionError(422, f"Au plus {self.MAX_MENTIONS} mentions par message.")
+        missing = [n for n in names if f"@{n}".casefold() not in text.casefold()]
+        if missing:
+            raise ActionError(422, f"Mention absente du texte : @{missing[0]}.")
+        return names
+
+    def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None,
+                   mentions: Optional[Sequence[str]] = None) -> None:
         if reply_to is not None:
             self._require("reply")
         with self._claim(draft_id) as d:
             body = text.strip() if text and text.strip() else d.proposal
+            names = self._mentions_in(body, mentions)
             self._typing_allowed()
-            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to):
+            if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names):
                 with self._lock:
                     d.proposal = body
                 self.log("warn", f"Envoi à {d.from_} refusé : conversation non confirmée, réponse conservée")
@@ -519,15 +547,17 @@ class Watcher:
                          f"{'s' if len(results) > 1 else ''}")
         return {"results": results}
 
-    def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None) -> None:
+    def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None,
+                    mentions: Optional[Sequence[str]] = None) -> None:
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body:
             raise ActionError(422, "Le message est vide.")
         if reply_to is not None:
             self._require("reply")
+        names = self._mentions_in(body, mentions)
         self._typing_allowed()
-        if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to):
+        if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names):
             self.log("warn", f"Envoi à {entity.display_name} refusé.{self._because()}")
             raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)

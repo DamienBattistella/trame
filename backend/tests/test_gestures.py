@@ -17,7 +17,7 @@ def test_messages_carry_id_and_reactions(make_client):
     client, _watcher, _driver = make_client()
     msgs = client.get(f"{DM_URL}/messages").json()["messages"]
     assert msgs[2]["id"] == "m2" and msgs[2]["reactions"] == []
-    assert client.get("/api/state").json()["capabilities"] == {"react": True, "reply": True}
+    assert client.get("/api/state").json()["capabilities"] == {"react": True, "reply": True, "mentions": True}
 
 
 def test_react_to_a_precise_message(make_client):
@@ -123,11 +123,12 @@ def test_suggest_target_outside_the_read_window(make_client):
 class PlainDriver(MockTeamsDriver):
     supports_reactions = False
     supports_reply = False
+    supports_mentions = False
 
 
 def test_driver_without_gestures_refuses_cleanly(make_client):
     client, _watcher, driver = make_client(driver=PlainDriver(interval=9999))
-    assert client.get("/api/state").json()["capabilities"] == {"react": False, "reply": False}
+    assert client.get("/api/state").json()["capabilities"] == {"react": False, "reply": False, "mentions": False}
     r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "like"})
     assert r.status_code == 501
     r = client.post(f"{DM_URL}/send", json={"text": "x", "reply_to": TARGET})

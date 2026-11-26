@@ -270,6 +270,42 @@ fn teams_web_eval(app: AppHandle, script: String) -> Result<(), String> {
     w.eval(&script).map_err(|e| e.to_string())
 }
 
+/// Real keystrokes into the Teams page, for what Teams only does on genuine typing
+/// (the @mention picker ignores events made up by a script). Only the Teams window
+/// may ask, and only for itself: it can type into its own page and nothing else.
+/// The keys go through WebView2's DevTools protocol, so the window can stay parked.
+#[tauri::command]
+fn teams_type_trusted(window: tauri::WebviewWindow, text: String) -> Result<(), String> {
+    if window.label() != TEAMS_WEB {
+        return Err("réservé à Teams intégré".into());
+    }
+    if text.is_empty() || text.chars().count() > 120 || text.chars().any(char::is_control) {
+        return Err("texte refusé".into());
+    }
+    window
+        .with_webview(move |webview| {
+            #[cfg(windows)]
+            unsafe {
+                use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+                use windows::core::HSTRING;
+                let Ok(core) = webview.controller().CoreWebView2() else { return };
+                let method = HSTRING::from("Input.dispatchKeyEvent");
+                for ch in text.chars() {
+                    let key = ch.to_string();
+                    let down = serde_json::json!({ "type": "keyDown", "key": key, "text": key, "unmodifiedText": key });
+                    let up = serde_json::json!({ "type": "keyUp", "key": key });
+                    for event in [down, up] {
+                        let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+                        let _ = core.CallDevToolsProtocolMethod(&method, &HSTRING::from(event.to_string()), &done);
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = (webview, &text);
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// The Teams page answers here; the Trame UI forwards the answer to the engine.
 #[tauri::command]
 fn teams_bridge_reply(app: AppHandle, payload: serde_json::Value) {
@@ -312,6 +348,7 @@ fn main() {
             teams_web_close,
             teams_web_eval,
             teams_bridge_reply,
+            teams_type_trusted,
             notify
         ])
         .setup(|app| {

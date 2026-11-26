@@ -140,6 +140,7 @@ class MockTeamsDriver(TeamsDriver):
     can_search_messages = True
     supports_reactions = True
     supports_reply = True
+    supports_mentions = True
 
     def __init__(self, interval: float = 20.0):
         self.interval = interval
@@ -152,6 +153,7 @@ class MockTeamsDriver(TeamsDriver):
         self.allow_anyone = True
         # Gestes simulés : réponses citant un message, réactions posées (par id de message).
         self.replies: list[tuple[str, str, str, bool]] = []
+        self.mentioned: list[tuple[str, str, list[str], bool]] = []
         self.reactions: dict[str, list[str]] = {}
 
     def _thread(self, thread_id: str) -> list[tuple[str, str, str, str]]:
@@ -268,6 +270,14 @@ class MockTeamsDriver(TeamsDriver):
         action = "RÉPONSE ENVOYÉE" if send else "RÉPONSE SAISIE"
         print(f"[mock] {action} -> {thread_id} (à « {target.text[:30]} »): {text[:80]}")
         return True
+
+    def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],
+                            reply_to: Optional[MessageRef] = None) -> bool:
+        ok = (self._reply_in_active(thread_id, reply_to, text, send) if reply_to is not None
+              else self._type_into_active(thread_id, text, send))
+        if ok:
+            self.mentioned.append((thread_id, text, list(mentions), send))
+        return ok
 
     def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
         if self._active != thread_id:

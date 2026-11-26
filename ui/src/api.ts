@@ -48,7 +48,7 @@ export interface TrameState {
   logs: LogItem[];
   notices: Notice[];
   /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
-  capabilities: { react: boolean; reply: boolean };
+  capabilities: { react: boolean; reply: boolean; mentions: boolean };
 }
 
 export type Result<T = {}> = ({ ok: true; error?: undefined } & T) | { ok: false; error: string; status?: number };
@@ -107,7 +107,7 @@ function mapState(s: any): TrameState {
       at: n.at,
       surface: n.surface as Surface,
     })),
-    capabilities: { react: Boolean(s.capabilities?.react), reply: Boolean(s.capabilities?.reply) },
+    capabilities: { react: Boolean(s.capabilities?.react), reply: Boolean(s.capabilities?.reply), mentions: Boolean(s.capabilities?.mentions) },
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -332,7 +332,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false } };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false } };
   }
   return {
     paused: false,
@@ -344,7 +344,7 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
-    capabilities: { react: true, reply: true },
+    capabilities: { react: true, reply: true, mentions: true },
   };
 }
 
@@ -564,9 +564,10 @@ export function useTrame() {
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
-  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null): Promise<Result> =>
+  /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams. */
+  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = []): Promise<Result> =>
     connectedRef.current
-      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null })
+      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null, mentions })
       : demo(700, {});
   /** Ouvre la conversation dans Teams et tape le texte, sans envoyer. */
   const composeDraft = (id: string, text: string): Promise<Result> =>
@@ -847,9 +848,9 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, results: res.results.map(mapHit) };
   };
-  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null): Promise<Result> => {
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = []): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});
-    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null });
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null, mentions });
   };
   /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis). */
   const suggestInThread = async (threadId: string, target?: MessageRef | null): Promise<Result<{ text: string }>> => {

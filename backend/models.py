@@ -111,6 +111,7 @@ class Capabilities(BaseModel):
     """Ce que le pilote Teams actif sait faire en plus de lire et d'écrire."""
     react: bool = False
     reply: bool = False
+    mentions: bool = False
 
 
 class AppState(BaseModel):
