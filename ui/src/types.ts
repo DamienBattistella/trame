@@ -297,3 +297,32 @@ export interface PendingFile {
   type: string;
   data: string;
 }
+
+/** Une étape d'une action suivie dans le panneau Réflexion : étape de Trame, réflexion du modèle, ou échec. */
+export interface ReflectionStep {
+  /** Millisecondes depuis le début de l'action. */
+  atMs: number;
+  kind: "step" | "thinking" | "error";
+  text: string;
+}
+
+export type ReflectionAction = "correct" | "check" | "suggest";
+
+/** Ce que fait le modèle pendant une action de la zone de réponse. Reste local : jamais envoyé dans Teams. */
+export interface ReflectionRun {
+  id: string;
+  action: ReflectionAction | string;
+  title: string;
+  threadId: string | null;
+  conversation: string | null;
+  provider: string;
+  model: string;
+  startedAt: string;
+  status: "running" | "done" | "error" | "cancelled";
+  steps: ReflectionStep[];
+  result: string;
+  durationMs: number | null;
+  /** Le cerveau a transmis le texte de sa réflexion (sinon : étapes de Trame seulement). */
+  reasoning: boolean;
+  rev: number;
+}

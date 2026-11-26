@@ -14,6 +14,7 @@ sys.path.insert(0, str(BACKEND))
 os.environ["TRAME_HOME"] = tempfile.mkdtemp(prefix="trame-test-")
 os.environ["TRAME_DRIVER"] = "mock"
 os.environ["TRAME_MOCK_INTERVAL"] = "9999"
+os.environ["TRAME_MOCK_THINK_DELAY"] = "0"
 
 import config as cfgmod  # noqa: E402
 from brain.base import Brain  # noqa: E402

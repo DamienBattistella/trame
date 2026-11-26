@@ -10,6 +10,8 @@ import { InitialsAvatar, spring } from "@/components/kit";
 import { DiscussionView } from "@/components/DiscussionView";
 import { NewConversation } from "@/components/NewConversation";
 import { MessageSearchResults } from "@/components/MessageSearchResults";
+import { ReflectionPanel } from "@/components/ReflectionPanel";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { DraftItem, MessageHit, WatchEntity } from "@/types";
@@ -45,7 +47,8 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   };
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
-  const [briefOpen, setBriefOpen] = useState(false);
+  // Panneau ancré à droite : le résumé, ou la réflexion du modèle pendant une action.
+  const [dock, setDock] = useState<"brief" | "reflection" | null>(null);
   const [starting, setStarting] = useState(false);
   const wide = useWide();
 
@@ -200,7 +203,10 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             conversation={current}
             draft={draftOf.get(current.threadId) ?? null}
             found={found?.threadId === current.threadId ? found : null}
-            onBrief={(t) => (wide ? setBriefOpen((o) => !o) : onBrief(t))}
+            onBrief={(t) => (wide ? setDock((d) => (d === "brief" ? null : "brief")) : onBrief(t))}
+            reflectionOpen={dock === "reflection"}
+            onReflection={(open) => setDock((d) => (open ? "reflection" : d === "reflection" ? null : d))}
+            autoReflection={wide}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -220,7 +226,22 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
       {/* Résumé ancré à droite : il pousse la discussion au lieu de la recouvrir, et suit
           la discussion choisie dans la barre latérale. */}
       <AnimatePresence initial={false}>
-        {briefOpen && wide && current && trame.briefPrefs.enabled && (
+        {dock === "reflection" && wide && (
+          <motion.aside
+            key="reflection"
+            aria-label="Réflexion du modèle"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: BRIEF_WIDTH, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={spring}
+            className="shrink-0 overflow-hidden border-l bg-sidebar"
+          >
+            <div className="h-full" style={{ width: BRIEF_WIDTH }}>
+              <ReflectionPanel trame={trame} onClose={() => setDock(null)} />
+            </div>
+          </motion.aside>
+        )}
+        {dock === "brief" && wide && current && trame.briefPrefs.enabled && (
           <motion.aside
             key="brief"
             aria-label="Résumé de la discussion"
@@ -236,13 +257,20 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                   dock
                   trame={trame}
                   target={{ threadId: current.threadId, displayName: current.displayName }}
-                  onClose={() => setBriefOpen(false)}
+                  onClose={() => setDock(null)}
                 />
               </Suspense>
             </div>
           </motion.aside>
         )}
       </AnimatePresence>
+      {/* Fenêtre étroite : la réflexion s'ouvre en tiroir, seulement à la demande. */}
+      <Sheet open={dock === "reflection" && !wide} onOpenChange={(o) => !o && setDock(null)}>
+        <SheetContent side="right" className="w-full gap-0 sm:max-w-[420px] [&>button]:hidden" onOpenAutoFocus={(e) => e.preventDefault()}>
+          <SheetTitle className="sr-only">Réflexion du modèle</SheetTitle>
+          <ReflectionPanel trame={trame} onClose={() => setDock(null)} />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
