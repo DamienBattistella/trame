@@ -28,6 +28,7 @@ import { LogExportButtons } from "@/components/LogExportButtons";
 import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
+import { GraphSettings } from "@/components/GraphSettings";
 import { TeamsCheckBanner } from "@/components/TeamsCheck";
 import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -359,6 +360,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       body: (
       <div className="flex flex-col gap-6">
         <TeamsWebSettings trame={trame} />
+        <GraphSettings trame={trame} />
         <GroupList>
           <UpdatesRow />
           <ChangelogRow />

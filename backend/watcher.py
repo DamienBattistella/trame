@@ -2356,14 +2356,19 @@ class Watcher:
                     prev = by_id.get(clean)
                     if prev is None or (w.watch and not prev.watch):
                         by_id[clean] = w
-        # A chat started from Trame under its name, now listed by Teams with its id.
+        # A chat saved under its name (started from Trame, or listed without an id), now
+        # listed with Teams' own id (page or Microsoft Graph): the choices follow it.
         moved: set[str] = set()
         for w in self.state.watchlist:
-            if w.thread_id in self._started and w.thread_id.startswith("name:"):
-                target = by_name.get(w.thread_id[5:].casefold())
-                if target and target != w.thread_id:
-                    by_id.setdefault(target, w)
-                    moved.add(w.thread_id)
+            if not w.thread_id.startswith("name:"):
+                continue
+            target = by_name.get(rail_label.parse(w.thread_id[5:]).name.casefold())
+            if target and target != w.thread_id and not target.startswith("name:"):
+                prev = by_id.get(target)
+                if prev is None or (w.watch and not prev.watch):
+                    by_id[target] = w
+                moved.add(w.thread_id)
+                if w.thread_id in self._started:
                     self._started.discard(w.thread_id)
                     self._started.add(target)
         found = {d.thread_id for d in discovered}

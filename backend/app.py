@@ -39,8 +39,12 @@ def make_driver() -> TeamsDriver:
     # the old desktop-app driver for diagnosis, TRAME_DRIVER=mock runs anywhere.
     mode = os.environ.get("TRAME_DRIVER") or ("web" if os.name == "nt" else "mock")
     if mode == "web":
+        from drivers.graph import GraphDriver
         from drivers.web_bridge import WebBridgeDriver
-        return WebBridgeDriver()
+        from msgraph.service import SERVICE
+        # Microsoft Graph first when IT registered Trame and the user signed in; the
+        # Teams page otherwise, and for what Graph cannot do (docs/teams-graph.md).
+        return GraphDriver(WebBridgeDriver(), SERVICE.client)
     if os.name == "nt" and mode != "mock":
         try:
             from drivers.windows_uia import WindowsUIADriver
@@ -104,6 +108,11 @@ WS_POLL = 0.25
 WS_KEEPALIVE = 15.0
 # While the model thinks, the reflection panel is fed this often.
 WS_REFLECTION_POLL = 0.08
+
+
+class GraphConfigBody(BaseModel):
+    client_id: str = Field(default="", max_length=64)
+    tenant_id: str = Field(default="", max_length=64)
 
 
 class PauseBody(BaseModel):
@@ -659,7 +668,7 @@ def create_app(
 
     def _bridge():
         from drivers.web_bridge import WebBridgeDriver
-        d = watcher.driver
+        d = getattr(watcher.driver, "inner", watcher.driver)
         if not isinstance(d, WebBridgeDriver):
             raise ActionError(409, "Teams intégré n'est pas activé.")
         return d
@@ -675,6 +684,42 @@ def create_app(
         _bridge().deliver(body.id, body.ok, body.result, body.error)
         return {"ok": True}
 
+    # --- Microsoft Graph (docs/teams-graph.md): registration, sign-in, path per action ---
+    def _graph_status() -> dict:
+        from msgraph.service import SERVICE
+        routes = getattr(watcher.driver, "routes", None)
+        return {**SERVICE.status(), "routes": routes() if callable(routes) else {}}
+
+    @app.get("/api/graph")
+    def graph_status():
+        return {"ok": True, "graph": _graph_status()}
+
+    @app.put("/api/graph")
+    def graph_configure(body: GraphConfigBody):
+        from msgraph.service import SERVICE
+        try:
+            SERVICE.configure(body.client_id, body.tenant_id)
+        except ValueError as e:
+            raise ActionError(422, str(e))
+        return {"ok": True, "graph": _graph_status()}
+
+    @app.post("/api/graph/login")
+    def graph_login():
+        from msgraph.service import SERVICE
+        auth = SERVICE.auth(retry=True)
+        if auth is None:
+            raise ActionError(409, SERVICE.error or "Application Graph non renseignée (identifiants donnés par la DSI).")
+        auth.login()
+        return {"ok": True, "graph": _graph_status()}
+
+    @app.post("/api/graph/logout")
+    def graph_logout():
+        from msgraph.service import SERVICE
+        auth = SERVICE.auth()
+        if auth is not None:
+            auth.logout()
+        return {"ok": True, "graph": _graph_status()}
+
     @app.get("/api/health")
     def get_health():
         """Santé de Trame : Teams, page Teams, file d'envoi, cerveau, veille, disque."""
@@ -683,7 +728,7 @@ def create_app(
     @app.get("/api/teams-web/status")
     def teams_web_status():
         from drivers.web_bridge import WebBridgeDriver
-        d = watcher.driver
+        d = getattr(watcher.driver, "inner", watcher.driver)
         if not isinstance(d, WebBridgeDriver):
             return {"ok": True, "status": {"enabled": False}}
         status = d.status()

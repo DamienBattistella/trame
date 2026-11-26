@@ -656,6 +656,31 @@ function demoGithubStatus(): GithubStatus {
 export type BriefPrefs = Settings["brief"] & { github: boolean };
 const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.enabled });
 
+export type GraphRoute = { via: "graph" | "page"; reason: string | null; at: string };
+export type GraphStatus = {
+  client_id: string;
+  tenant_id: string;
+  configured: boolean;
+  signed_in: boolean;
+  account: string | null;
+  pending: boolean;
+  error: string | null;
+  routes: Record<string, GraphRoute>;
+};
+const DEMO_GRAPH: GraphStatus = {
+  client_id: "",
+  tenant_id: "",
+  configured: false,
+  signed_in: false,
+  account: null,
+  pending: false,
+  error: null,
+  routes: {
+    list: { via: "page", reason: "Graph non connecté", at: "10:02:11" },
+    read: { via: "page", reason: "Graph non connecté", at: "10:02:12" },
+  },
+};
+
 async function request<T = {}>(method: string, path: string, body?: unknown): Promise<Result<T>> {
   try {
     const res = await fetch(HTTP + path, {
@@ -1602,6 +1627,24 @@ export function useTrame() {
     return request("GET", "/api/teams-web/status");
   };
 
+  /** Microsoft Graph : application enregistrée par la DSI, connexion, voie suivie par action. */
+  const graphStatus = async (): Promise<Result<{ graph: GraphStatus }>> => {
+    if (!connectedRef.current) return demo(200, { graph: DEMO_GRAPH });
+    return request("GET", "/api/graph");
+  };
+  const graphConfigure = async (clientId: string, tenantId: string): Promise<Result<{ graph: GraphStatus }>> => {
+    if (!connectedRef.current) return demo(200, { graph: { ...DEMO_GRAPH, client_id: clientId, tenant_id: tenantId } });
+    return request("PUT", "/api/graph", { client_id: clientId, tenant_id: tenantId });
+  };
+  const graphLogin = async (): Promise<Result<{ graph: GraphStatus }>> => {
+    if (!connectedRef.current) return demo(200, { graph: { ...DEMO_GRAPH, signed_in: true, account: "prenom.nom@exemple.fr" } });
+    return request("POST", "/api/graph/login");
+  };
+  const graphLogout = async (): Promise<Result<{ graph: GraphStatus }>> => {
+    if (!connectedRef.current) return demo(200, { graph: DEMO_GRAPH });
+    return request("POST", "/api/graph/logout");
+  };
+
   /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
   const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
     if (!connectedRef.current) {
@@ -1874,6 +1917,10 @@ export function useTrame() {
     ignoreFollowUp,
     diagnoseTeams,
     teamsWebStatus,
+    graphStatus,
+    graphConfigure,
+    graphLogin,
+    graphLogout,
     checkTeams,
     exportLogs,
     queryLogs,

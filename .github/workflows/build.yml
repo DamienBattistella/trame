@@ -81,6 +81,7 @@ jobs:
             --copy-metadata opentelemetry-sdk `
             --copy-metadata opentelemetry-exporter-otlp-proto-http `
             --collect-submodules comtypes `
+            --collect-submodules msal `
             --add-data "..\config.json;." `
             --add-data "..\SOUL.md;." `
             --add-data "..\ENTOURAGE.json;." `
