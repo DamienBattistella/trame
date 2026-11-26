@@ -38,6 +38,7 @@ import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
 import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
+import { loadPrefs, savePrefs, type NotifyPrefs, type NotifyScope } from "@/lib/notifyPrefs";
 import { DraftItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
 
 
@@ -891,28 +892,91 @@ function ToggleRow({
   );
 }
 
+const SCOPES: { value: NotifyScope; label: string }[] = [
+  { value: "all", label: "Tous les messages" },
+  { value: "direct", label: "Messages privés, mentions et conversations suivies" },
+  { value: "mentions", label: "Seulement quand on me mentionne" },
+];
+
 function NotificationsRow() {
   const [on, setOn] = useState(notificationsEnabled);
+  const [prefs, setPrefs] = useState<NotifyPrefs>(loadPrefs);
+  const update = (next: NotifyPrefs) => {
+    setPrefs(next);
+    savePrefs(next);
+  };
+  const active = on && isDesktop();
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3">
-      <div className="flex min-w-0 flex-col">
-        <Label htmlFor="notifications" className="font-normal">Notification Windows à chaque message reçu</Label>
-        <span className="text-xs text-muted-foreground">
-          Pour toutes les conversations, suivies ou non. Rien quand Trame est au premier plan.
-        </span>
+    <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-col">
+          <Label htmlFor="notifications" className="font-normal">Notification Windows à chaque message reçu</Label>
+          <span className="text-xs text-muted-foreground">
+            Rien quand Trame est au premier plan. Plusieurs messages d'affilée sont regroupés.
+          </span>
+        </div>
+        <Switch
+          id="notifications"
+          checked={active}
+          disabled={!isDesktop()}
+          onCheckedChange={async (v) => {
+            setOn(v);
+            setNotificationsEnabled(v);
+            if (v && !(await notify("Trame", "Les notifications sont activées."))) {
+              toast.error("Notification non affichée", { description: "Windows a refusé la notification. Vérifie Paramètres › Système › Notifications." });
+            }
+          }}
+        />
       </div>
-      <Switch
-        id="notifications"
-        checked={on && isDesktop()}
-        disabled={!isDesktop()}
-        onCheckedChange={async (v) => {
-          setOn(v);
-          setNotificationsEnabled(v);
-          if (v && !(await notify("Trame", "Les notifications sont activées."))) {
-            toast.error("Notification non affichée", { description: "Windows a refusé la notification. Vérifie Paramètres › Système › Notifications." });
-          }
-        }}
-      />
+      <div className={cn("flex flex-col gap-2 pl-1 text-sm", !active && "opacity-60")}>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">Pour</span>
+          <select
+            aria-label="Messages qui donnent une notification"
+            value={prefs.scope}
+            disabled={!active}
+            onChange={(e) => update({ ...prefs, scope: e.target.value as NotifyScope })}
+            className="h-8 min-w-0 max-w-72 flex-1 rounded-md border bg-background px-2 text-sm"
+          >
+            {SCOPES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-muted-foreground">
+            <Switch
+              aria-label="Heures calmes"
+              checked={prefs.quiet.on}
+              disabled={!active}
+              onCheckedChange={(v) => update({ ...prefs, quiet: { ...prefs.quiet, on: v } })}
+            />
+            Heures calmes, aucune notification
+          </label>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            de
+            <input
+              type="time"
+              aria-label="Début des heures calmes"
+              value={prefs.quiet.from}
+              disabled={!active || !prefs.quiet.on}
+              onChange={(e) => update({ ...prefs, quiet: { ...prefs.quiet, from: e.target.value } })}
+              className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+            />
+            à
+            <input
+              type="time"
+              aria-label="Fin des heures calmes"
+              value={prefs.quiet.to}
+              disabled={!active || !prefs.quiet.on}
+              onChange={(e) => update({ ...prefs, quiet: { ...prefs.quiet, to: e.target.value } })}
+              className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+            />
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

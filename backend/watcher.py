@@ -528,9 +528,13 @@ class Watcher:
             if self._is_own_message(msg, self.cfg.get("triggers", {}).get("self_names", ["Damien"])):
                 return
             entity = next((w for w in self.state.watchlist if w.thread_id == msg.thread_id), None)
+            names = [n.strip().casefold() for n in self.cfg.get("triggers", {}).get("self_names", ["Damien"]) if n.strip()]
+            mentioned = any(m.strip().casefold() in names or any(m.strip().casefold().startswith(n + " ") for n in names)
+                            for m in msg.mentions)
             notice = Notice(id=str(uuid.uuid4())[:8], thread_id=msg.thread_id,
                             conversation=entity.display_name if entity else msg.sender,
-                            **{"from": msg.sender}, text=msg.text, at=msg.received_at, surface=msg.surface)
+                            **{"from": msg.sender}, text=msg.text, at=msg.received_at, surface=msg.surface,
+                            mentioned=mentioned, followed=bool(entity and entity.watch))
             with self._lock:
                 self.state.notices = [notice, *self.state.notices][: self.MAX_NOTICES]
         except Exception:
