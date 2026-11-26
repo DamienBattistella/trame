@@ -5,7 +5,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
 import { toast } from "sonner";
-import { TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -138,18 +137,27 @@ export function Panel({
 
       <div className="flex min-h-0 flex-1 flex-col">
 
-        <TabsContent value="inbox" className="min-h-0 flex-1 overflow-hidden">
-          <Inbox trame={trame} onBrief={setBriefFor} />
-        </TabsContent>
-        <TabsContent value="meetings" className="flex-1 overflow-auto">
-          <Meetings trame={trame} />
-        </TabsContent>
-        <TabsContent value="logs" className="min-h-0 flex-1 overflow-auto">
-          <ActivityLog logs={state.logs} trame={trame} />
-        </TabsContent>
-        <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
-          <SettingsView trame={trame} onRestartSetup={onRestartSetup} onBrief={setBriefFor} />
-        </TabsContent>
+        {/* Une section à la fois, choisie dans le rail (App) ; les autres ne sont pas montées. */}
+        {tab === "inbox" && (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <Inbox trame={trame} onBrief={setBriefFor} />
+          </div>
+        )}
+        {tab === "meetings" && (
+          <div className="flex-1 overflow-auto">
+            <Meetings trame={trame} />
+          </div>
+        )}
+        {tab === "logs" && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <ActivityLog logs={state.logs} trame={trame} />
+          </div>
+        )}
+        {tab === "settings" && (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SettingsView trame={trame} onRestartSetup={onRestartSetup} onBrief={setBriefFor} />
+          </div>
+        )}
       </div>
       {briefUsed && (
         <Suspense fallback={null}>
@@ -690,8 +698,8 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
   const current = panes.find((p) => p.id === pane) ?? panes[0];
 
   return (
-    <div className="flex h-full min-h-0 gap-6 py-5">
-      <nav aria-label="Rubriques des réglages" className="flex w-48 shrink-0 flex-col gap-0.5">
+    <div className="flex h-full min-h-0 gap-4 py-5 lg:gap-6">
+      <nav aria-label="Rubriques des réglages" className="flex w-40 shrink-0 flex-col gap-0.5 lg:w-48">
         {panes.map((p) => {
           const Icon = p.icon;
           const active = p.id === current.id;
