@@ -200,11 +200,13 @@ def test_mcp_list_then_fetch_vtt(make_client, transcripts_dir):
     client, _w, driver = make_client()
     token = _token(client)
     err, listed = _mcp(client, token, "list_meetings", {})
-    assert not err and [m["title"] for m in listed["meetings"]] == ["Point interop HL7", "Rétro sprint 42"]
+    titles = [m["title"] for m in listed["meetings"]]
+    assert not err and "Café d'équipe" not in titles and titles.index("Point interop HL7") < titles.index("Rétro sprint 42")
+    assert [m["date"] for m in listed["meetings"]] == sorted((m["date"] for m in listed["meetings"]), reverse=True)
     assert set(listed["meetings"][0]) == {"meeting_id", "title", "date", "when", "chat", "organizer", "transcript"}
     err, all_ = _mcp(client, token, "list_meetings", {"transcript_only": False, "limit": 1})
     assert len(all_["meetings"]) == 1
-    mid = listed["meetings"][1]["meeting_id"]
+    mid = next(m["meeting_id"] for m in listed["meetings"] if m["title"] == "Rétro sprint 42")
     err, got = _mcp(client, token, "get_meeting_transcript", {"meeting_id": mid})
     assert not err and got["vtt"].startswith("WEBVTT\n") and Path(got["path"]).exists()
     assert got["date"] == "2026-11-23" and got["speakers"] == ["Chiara Rossi", "Damien Battistella"]

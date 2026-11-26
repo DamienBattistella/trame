@@ -201,8 +201,9 @@ def test_api_lists_meetings_and_saves_vtt(make_client, transcripts_dir):
     client, watcher, _d = make_client()
     r = client.get("/api/meetings").json()
     assert r["ok"] and r["directory"] == str(transcripts_dir)
-    first = r["meetings"][0]
-    assert first["title"] == "Point interop HL7" and first["date"] == "2026-11-24" and first["transcript"] is True
+    first = next(m for m in r["meetings"] if m["title"] == "Point interop HL7")
+    assert first["date"] == "2026-11-24" and first["transcript"] is True and first["saved"] is None
+    assert (first["start"], first["end"]) == ("10:00", "10:30")
     saved = client.post("/api/meetings/transcript", json={"thread_id": first["thread_id"], "mid": first["mid"]}).json()
     assert saved["ok"] and saved["name"] == "2026-11-24 Point interop HL7.vtt" and saved["complete"] is True
     assert saved["cues"] == 4 and saved["organizer"] == "Sofia Marino"
@@ -211,8 +212,10 @@ def test_api_lists_meetings_and_saves_vtt(make_client, transcripts_dir):
     assert text.startswith("WEBVTT\n") and "Organisateur: Sofia Marino" in text
     cues = t.parse_vtt(text)
     assert cues[0].speaker == "Sofia Marino" and cues[0].text.endswith("Les tests OBX passent depuis ce matin.")
-    # L'organisateur est connu des listes suivantes.
-    assert client.get("/api/meetings").json()["meetings"][0]["organizer"] == "Sofia Marino"
+    # L'organisateur et le fichier enregistré sont connus des listes suivantes.
+    again = next(m for m in client.get("/api/meetings").json()["meetings"] if m["title"] == "Point interop HL7")
+    assert again["organizer"] == "Sofia Marino"
+    assert again["saved"] == {"path": saved["path"], "name": "2026-11-24 Point interop HL7.vtt"}
     assert any("Transcription de « Point interop HL7 » enregistrée" in j.text for j in watcher.journal.query("Point interop")["items"])
 
 
@@ -318,3 +321,81 @@ def test_web_bridge_transcript_relays_entries():
         res = d.meeting_transcript("title-19:meeting_abc@thread.v2", "17")
     assert res["entries"] == entries
     assert ("transcript", {"mid": "17", "probe": False}) in page.ops
+
+
+# --- liste : créneau, tri, fichier déjà enregistré ----------------------------------
+@pytest.mark.parametrize("when,expected", [
+    ("mardi 24 novembre 2026 11:00 - 11:45", ("11:00", "11:45")),
+    ("jeudi 3 septembre 2026 9:05 – 10:30", ("09:05", "10:30")),
+    ("Tuesday, November 24, 2026 9:00 AM - 9:30 AM", ("09:00", "09:30")),
+    ("Tuesday, November 24, 2026 11:30 AM - 1:00 PM", ("11:30", "13:00")),
+    ("24/11/2026 14h00 - 15h15", ("14:00", "15:15")),
+    ("2026-11-24", (None, None)), ("mardi 24 novembre 2026", (None, None)), ("", (None, None)),
+    ("10:00 - 25:00", (None, None)),
+])
+def test_parse_meeting_slot(when, expected):
+    assert t.parse_meeting_slot(when) == expected
+
+
+def test_saved_file(tmp_path):
+    day = date(2026, 11, 24)
+    assert t.saved_file(tmp_path, "Point interop", day) is None
+    (tmp_path / "2026-11-24 Point interop.vtt").write_text("WEBVTT\n", encoding="utf-8")
+    assert t.saved_file(tmp_path, "Point interop", day) == tmp_path / "2026-11-24 Point interop.vtt"
+    assert t.saved_file(tmp_path / "absent", "Point interop", day) is None
+
+
+def test_api_meetings_sorted_most_recent_first(make_client):
+    client, _w, _d = make_client()
+    meetings = client.get("/api/meetings").json()["meetings"]
+    keys = [(m["date"], m["start"]) for m in meetings]
+    assert keys == sorted(keys, reverse=True)
+    assert meetings[0]["title"] == "Synchro inter-équipes" and meetings[0]["date"] == "2026-11-26"
+    assert sum(m["title"] == "Synchro inter-équipes" for m in meetings) == 4
+
+
+def test_api_denied_transcript(make_client):
+    client, _w, _d = make_client()
+    r = client.post("/api/meetings/transcript", json={"thread_id": "19:meeting_mock10@thread.v2", "mid": "1700000010"})
+    assert r.status_code == 403 and "Accès refusé" in r.json()["error"]
+
+
+def test_api_open_and_reveal_file(make_client, transcripts_dir, monkeypatch):
+    import os
+    import subprocess
+
+    launched, started = [], []
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: launched.append(a[0]))
+    monkeypatch.setattr(os, "startfile", lambda p: started.append(p), raising=False)
+    client, _w, _d = make_client()
+    saved = client.post("/api/meetings/transcript",
+                        json={"thread_id": "19:meeting_mock1@thread.v2", "mid": "1700000001"}).json()
+    opened = client.post("/api/meetings/file", json={"path": saved["path"]})
+    assert opened.status_code == 200 and opened.json()["path"] == saved["path"]
+    shown = client.post("/api/meetings/file", json={"path": saved["path"], "reveal": True})
+    assert shown.status_code == 200
+    if os.name == "nt":
+        assert started == [saved["path"]] and launched == [f'explorer.exe /select,"{saved["path"]}"']
+    # Rien d'autre qu'un .vtt existant, en chemin complet.
+    exe = Path(saved["path"]).parent / "outil.exe"
+    exe.write_bytes(b"MZ")
+    for bad, code in ((str(exe), 422), ("relatif.vtt", 422), (str(exe.parent / "absent.vtt"), 404),
+                      ("\\\\serveur\\partage\\a.vtt", 422)):
+        r = client.post("/api/meetings/file", json={"path": bad})
+        assert r.status_code == code, bad
+    assert len(started) <= 1 and len(launched) <= 1
+
+
+def test_api_set_folder(make_client, tmp_path, monkeypatch):
+    import os
+
+    opened = []
+    monkeypatch.setattr(os, "startfile", lambda p: opened.append(p), raising=False)
+    client, _w, _d = make_client()
+    target = tmp_path / "CR"
+    r = client.post("/api/meetings/folder", json={"directory": str(target)})
+    assert r.status_code == 200 and r.json()["directory"] == str(target)
+    assert client.get("/api/meetings").json()["directory"] == str(target)
+    assert client.get("/api/meetings/folder").json() == {"ok": True, "directory": str(target)}
+    assert opened == []
+    assert client.post("/api/meetings/folder", json={"directory": "relatif"}).status_code == 422

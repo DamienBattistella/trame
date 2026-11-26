@@ -676,17 +676,45 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
 
 // Mode démo : réunions fictives, rien n'est lu ni écrit.
 const DEMO_TRANSCRIPTS_DIR = String.raw`C:\Users\vous\Documents\Trame\Transcriptions`;
-const DEMO_MEETINGS: Meeting[] = [
-  { meetingId: "demo-1", threadId: "19:meeting_demo1@thread.v2", mid: "1", title: "Point interop HL7", when: "mardi 24 novembre 2026 10:00 - 10:30",
-    date: "2026-11-24", chat: "Point interop HL7", organizer: "", transcript: true },
-  { meetingId: "demo-2", threadId: "19:meeting_demo2@thread.v2", mid: "2", title: "Rétro sprint 42", when: "lundi 23 novembre 2026 16:00 - 17:00",
-    date: "2026-11-23", chat: "Rétro sprint 42", organizer: "", transcript: true },
-  { meetingId: "demo-3", threadId: "19:meeting_demo3@thread.v2", mid: "3", title: "Café d'équipe", when: "vendredi 20 novembre 2026 09:00 - 09:15",
-    date: "2026-11-20", chat: "Café d'équipe", organizer: "", transcript: false },
+/** Nom du .vtt, comme le moteur le forme (« 2026-11-24 Titre.vtt »). */
+const demoFileName = (m: Meeting) => `${m.date ? m.date + " " : ""}${m.title.replace(/[<>:"/\\|?*]/g, " ").replace(/\s+/g, " ").trim()}.vtt`;
+// Réunions fictives datées par rapport à aujourd'hui, dans l'ordre des conversations
+// (pas des dates) comme Teams les donne : récurrentes, plusieurs périodes, déjà récupérées.
+const DEMO_MEETING_SEEDS: [title: string, daysAgo: number, start: string, end: string, transcript: boolean, saved?: boolean][] = [
+  ["Point interop HL7", 2, "10:00", "10:30", true, true],
+  ["Rétro sprint 42", 3, "16:00", "17:00", true],
+  ["Café d'équipe", 6, "09:00", "09:15", false],
+  ["Synchro inter-équipes", 0, "11:30", "12:00", true],
+  ["Revue d'architecture", 0, "09:00", "10:00", true],
+  ["Atelier parcours patient", 1, "15:30", "16:30", true],
+  ["Point projet Atlas", 1, "13:45", "14:30", true],
+  ["Synchro inter-équipes", 7, "11:30", "12:00", true, true],
+  ["Point projet Atlas", 8, "13:45", "14:30", true, true],
+  ["Démo de fin de sprint", 13, "14:30", "15:00", true],
+  ["Synchro inter-équipes", 14, "11:30", "12:00", true],
+  ["Synchro inter-équipes", 28, "11:30", "12:00", true, true],
+  ["Point recette", 56, "10:00", "11:15", true],
+  ["Comité de pilotage", 84, "14:00", "15:30", true],
 ];
+/** Mode démo : Teams ne montre pas cette transcription (refus d'accès). */
+const DEMO_DENIED = "Démo de fin de sprint";
+function demoMeetings(): Meeting[] {
+  const today = new Date();
+  const fmt = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return DEMO_MEETING_SEEDS.map(([title, daysAgo, start, end, transcript, saved], i) => {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysAgo);
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const m: Meeting = { meetingId: `demo-${i + 1}`, threadId: `19:meeting_demo${i + 1}@thread.v2`, mid: String(i + 1), title,
+      when: `${fmt.format(d)} ${start} - ${end}`, date, start, end, chat: title, organizer: saved ? "Sofia Marino" : "",
+      transcript, saved: null };
+    return saved ? { ...m, saved: { path: `${DEMO_TRANSCRIPTS_DIR}\\${demoFileName(m)}`, name: demoFileName(m) } } : m;
+  });
+}
 const mapMeeting = (m: any): Meeting => ({
   meetingId: m.meeting_id || `${m.thread_id}#${m.mid}`, threadId: m.thread_id, mid: String(m.mid), title: m.title || m.chat || "Réunion",
-  when: m.when || "", date: m.date ?? null, chat: m.chat || "", organizer: m.organizer || "", transcript: Boolean(m.transcript),
+  when: m.when || "", date: m.date ?? null, start: m.start ?? null, end: m.end ?? null, chat: m.chat || "",
+  organizer: m.organizer || "", transcript: Boolean(m.transcript),
+  saved: m.saved?.path ? { path: String(m.saved.path), name: String(m.saved.name || "") } : null,
 });
 
 /** Seuls le nom, le type et le contenu partent : jamais un chemin sur le disque. */
@@ -1266,7 +1294,7 @@ export function useTrame() {
   };
   /** Réunions terminées des conversations de réunion récentes (Trame les ouvre dans Teams, en lecture). */
   const listMeetings = async (): Promise<Result<{ meetings: Meeting[]; directory: string }>> => {
-    if (!connectedRef.current) return demo(1200, { meetings: DEMO_MEETINGS.map((m) => ({ ...m })), directory: DEMO_TRANSCRIPTS_DIR });
+    if (!connectedRef.current) return demo(1200, { meetings: demoMeetings(), directory: DEMO_TRANSCRIPTS_DIR });
     const res = await request<{ meetings: any[]; directory: string }>("GET", "/api/meetings");
     return res.ok ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory } : res;
   };
@@ -1276,8 +1304,9 @@ export function useTrame() {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(2200);
       if (!m.transcript) return { ok: false, error: "Pas de transcription pour cette réunion.", status: 404 };
+      if (m.title === DEMO_DENIED) return { ok: false, error: "Accès refusé : Teams ne te montre pas cette transcription.", status: 403 };
       const dir = directory || DEMO_TRANSCRIPTS_DIR;
-      const name = `${m.date ? m.date + " " : ""}${m.title.replace(/[<>:"/\\|?*]/g, " ").replace(/\s+/g, " ").trim()}.vtt`;
+      const name = demoFileName(m);
       return { ok: true, path: `${dir}\\${name}`, name, directory: dir, cues: 4, speakers: ["Lucas Bernard", "Sofia Marino"], complete: true, organizer: "Sofia Marino" };
     }
     const res = await request<any>("POST", "/api/meetings/transcript", { thread_id: m.threadId, mid: m.mid, directory: directory || null });
@@ -1289,6 +1318,26 @@ export function useTrame() {
   const openTranscriptsFolder = async (directory?: string): Promise<Result<{ directory: string }>> => {
     if (!connectedRef.current) return demo(300, { directory: directory || DEMO_TRANSCRIPTS_DIR });
     return request("POST", "/api/meetings/open-folder", { directory: directory || null });
+  };
+  /** Le dossier des transcriptions, sans lire Teams ni rien ouvrir. */
+  const getTranscriptsFolder = async (): Promise<Result<{ directory: string }>> => {
+    if (!connectedRef.current) return demo(0, { directory: DEMO_TRANSCRIPTS_DIR });
+    return request("GET", "/api/meetings/folder");
+  };
+  /** Change le dossier des transcriptions (retenu pour les suivantes), sans rien ouvrir. */
+  const setTranscriptsFolder = async (directory: string): Promise<Result<{ directory: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return /^[A-Za-z]:[\\/]/.test(directory.trim())
+        ? demo(300, { directory: directory.trim() })
+        : { ok: false, error: "Indique un chemin complet (par exemple C:\\Users\\toi\\Documents\\Transcriptions).", status: 422 };
+    }
+    return request("POST", "/api/meetings/folder", { directory });
+  };
+  /** Ouvre un .vtt enregistré, ou le montre sélectionné dans l'Explorateur (reveal). */
+  const openTranscript = async (path: string, reveal = false): Promise<Result<{ path: string }>> => {
+    if (!connectedRef.current) return demo(200, { path });
+    return request("POST", "/api/meetings/file", { path, reveal });
   };
   /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
   const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
@@ -1773,6 +1822,9 @@ export function useTrame() {
     listMeetings,
     saveTranscript,
     openTranscriptsFolder,
+    getTranscriptsFolder,
+    setTranscriptsFolder,
+    openTranscript,
     reactInThread,
     deleteInThread,
     sendInThread,

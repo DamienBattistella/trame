@@ -398,10 +398,15 @@ export interface Meeting {
   when: string;
   /** Date ISO, si le créneau a pu être lu. */
   date: string | null;
+  /** Début et fin « HH:MM », si le créneau a des heures lisibles. */
+  start: string | null;
+  end: string | null;
   chat: string;
   /** Connu une fois la transcription relue (propriétaire de l'enregistrement). */
   organizer: string;
   transcript: boolean;
+  /** Le .vtt déjà enregistré dans le dossier des transcriptions, s'il y est. */
+  saved: { path: string; name: string } | null;
 }
 
 /** Une transcription enregistrée en .vtt sur le poste. */
