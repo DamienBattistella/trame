@@ -1,0 +1,268 @@
+[
+  {
+    "version": "0.11.1",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Teams intégré, raison d'un envoi refusé et zone de saisie",
+        "details": [
+          "le message d'erreur donne la vraie raison (conversation pas ouverte, zone de saisie introuvable ou non vide, texte non inséré…)",
+          "recherche de la zone de saisie plus robuste (éditeur lui-même éditable, éléments visibles seulement)",
+          "les réactions (« 1 réaction Rigole. ») ne polluent plus l'historique",
+          "diagnostic : détail de la zone de saisie trouvée"
+        ]
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.11.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Teams intégré (expérimental), Teams web dans une fenêtre cachée de Trame",
+        "details": [
+          "Pont : script injecté dans teams.microsoft.com ; la page ne peut appeler qu'une commande (teams_bridge_reply), capacité Tauri dédiée. Ordres du moteur via /api/teams-web/poll, relayés par l'interface, réponses via /api/teams-web/reply. Pilote web côté moteur.",
+          "Sécurité : conversation confirmée par le titre, saisie refusée si la zone n'est pas vide ou si une autre conversation est ouverte.",
+          "Nouveaux messages détectés par l'aperçu de la liste, dans les deux pilotes (le pilote UIA n'en détectait aucun).",
+          "Contreparties affichées : deuxième session, accusés de lecture, accès conditionnel possible. Voir DESIGN.md.",
+          "Commandes Tauri désormais déclarées (app manifest) et autorisées explicitement pour la fenêtre principale."
+        ]
+      }
+    ],
+    "fix": [
+      {
+        "title": "Chasse aux bugs (fenêtre Teams, envois incertains, relais web)",
+        "details": [
+          "UIA : choisit la fenêtre principale de Teams (liste des conversations), pas une fenêtre de réunion « … | Microsoft Teams » au premier plan",
+          "aperçus « Vous : » reconnus comme mes messages ; changement d'heure affichée (« Hier ») n'est plus un nouveau message ; masquage « » complet",
+          "Teams intégré : commandes expirées jamais exécutées, délais en temps réel, zone de saisie vidée sur échec, page Teams seulement, envoi incertain signalé sans dire « rien n'a été envoyé »",
+          "Tauri : ouverture de la fenêtre Teams en async (blocage WebView2), moteur relancé si la mise à jour échoue, une seule mise à jour à la fois, fermeture de la session Teams web quand l'option est coupée",
+          "UI : la recherche ne ferme plus la discussion, brouillon le plus récent, réglages par section, relais avec reprise progressive",
+          "MCP hors boucle asynchrone, diagnostic sous verrou UI, télémétrie reconfigurée après réinitialisation"
+        ]
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.10.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "L'export des journaux inclut un diagnostic Teams court",
+        "details": []
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.9.3",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Teams, ouvrir une conversation sans souris (accessibilité), titre sans « (You) »",
+        "details": []
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.9.2",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Résumé, l'étape en échec est la bonne (lecture Teams, pas GitHub)",
+        "details": []
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.9.1",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Teams, conversation ouverte confirmée par le titre de la fenêtre",
+        "details": [
+          "aucun signal de sélection n'est exposé sur la liste des conversations (selected=false partout, même après le clic), mais le titre de la fenêtre nomme la conversation ouverte (« Chat | X | Microsoft Teams »). La confirmation (et la conversation active) passe donc par le titre ;",
+          "les AutomationId (« menurmh ») sont des id React qui changent à chaque relance de Teams : seuls les vrais id « 19:…@thread » servent d'identifiant, sinon le nom ; les conversations suivies sont migrées ;",
+          "Copilot, Quick views, Mentions, Drafts, Saved, Favorites… sont filtrés (rubriques, pas des conversations) ;",
+          "le diagnostic indique la conversation lue dans le titre."
+        ]
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.9.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Serveur MCP local, Teams pour Claude Code, Copilot ou Jarvis",
+        "details": []
+      },
+      {
+        "title": "Export manuel des journaux, copie ou fichier",
+        "details": []
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.8.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Journaux et traces OpenTelemetry (OTLP) pour le débogage",
+        "details": [
+          "Traces : une par message traité (trame.message) avec ses étapes trame.brain.draft, trame.github.fetch, trame.teams.read, trame.teams.type (durées, confirmation, restauration de la vue).",
+          "Journaux : chaque ligne du Journal en LogRecord, corrélée à la trace.",
+          "Destination : collecteur OTLP/HTTP (/v1/traces, /v1/logs) ou, sans URL, fichier JSON lines %APPDATA%\\Trame\\otel.jsonl (rotation à 10 Mo).",
+          "Texte des messages jamais exporté sauf option explicite (« … » masqué).",
+          "Build : métadonnées OpenTelemetry embarquées ; le test du moteur empaqueté vérifie que l'export démarre."
+        ]
+      },
+      {
+        "title": "Discussions façon client de messagerie, barre latérale par statut",
+        "details": []
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.7.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Mode manuel, une conversation ouverte dans Trame avec historique et réponse",
+        "details": []
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.6.1",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Teams, conversation ouverte reconnue par tous les signaux de sélection ; diagnostic intégré",
+        "details": []
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.6.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Mises à jour visibles et régulières, réglages en deux colonnes, éditeur de SOUL.md",
+        "details": [
+          "Mises à jour : vérifiées au lancement puis toutes les 6 h (Trame vit dans la barre des tâches et n'est presque jamais relancé) ; notification « Mettre à jour » ; Réglages › Général › version, « Rechercher », « Installer et redémarrer ».",
+          "Réglages façon application de bureau : barre latérale (Général, Cerveau, Entourage, GitHub, Résumé, Sécurité, Avancé), une rubrique à la fois, indicateur d'enregistrement dans l'en-tête de la rubrique.",
+          "Onglets dans l'en-tête de la fenêtre (shadcn Tabs).",
+          "SOUL.md : éditeur Markdown pré-rempli avec ce que Teams sait déjà (nom, groupes actifs, tes derniers messages comme exemples), qualité en direct ; « Modifier le texte » sur un fichier déposé.",
+          "Conversations : tri « Récentes » (ordre de Teams) ou « A à Z », heure du dernier message, filtre « Non lus » ; icônes de type sur les filtres ; initiales sans emojis ni crochets.",
+          "Entourage : glisser-déposer ; Tauri laisse passer le glisser-déposer HTML (dragDropEnabled false), ce qui répare aussi le dépôt du SOUL.md.",
+          "Pilote : un identifiant par nom brut est nettoyé avant la recherche."
+        ]
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.5.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Réglages complets, zone de danger, avatars en couleur typés Teams",
+        "details": [
+          "Bouton réglages de l'en-tête : ouvre l'onglet Réglages. « Reprendre la configuration » devient une ligne des Réglages ; « Réinitialiser Trame » en zone de danger (confirmation sur place) : réglages par défaut, plus rien de suivi, brouillons, SOUL.md et entourage effacés, connexions Claude et GitHub gardées. Version de l'application en bas.",
+          "Conversations : la liste enregistrée ne garde que tes choix, nom et type viennent de Teams ; les anciennes entrées « Chat X Offline Last message » sont migrées sans perdre ce que tu suivais.",
+          "Avatars : teinte stable par nom, pastille Teams indiquant 1:1, groupe ou canal ; seul le nom est affiché.",
+          "Reprise de la configuration : le SOUL.md déjà déposé réapparaît.",
+          "Thème sombre : texte sombre sur le rouge de danger (contraste AA)."
+        ]
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.4.1",
+    "date": "2026-11-26",
+    "feat": [],
+    "fix": [
+      {
+        "title": "Windows, sortie des outils décodée en UTF-8 (GitHub restait « non connecté »)",
+        "details": [
+          "encoding utf-8 (errors=replace) sur tous les appels gh / claude / Copilot, prompt compris ;",
+          "lecture de gh auth status tolérante à un symbole mal décodé ;",
+          "plus de fenêtre de console qui clignote à chaque appel (winproc)."
+        ]
+      }
+    ],
+    "perf": []
+  },
+  {
+    "version": "0.4.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "SOUL.md expliqué, état des cerveaux dans les cartes, Teams en visuel",
+        "details": [
+          "Après le dépôt du SOUL.md : ce que Trame en retient (rôle, ton, tu ou vous, longueur, limites, exemples), qualité (Complet / Correct / À compléter), conseil, et réponse d'exemple rédigée avec ce fichier.",
+          "Choix du cerveau : l'état de connexion est dans chaque carte ; la ligne de connexion n'apparaît que s'il reste quelque chose à faire.",
+          "Accueil : logo Teams et moins de texte ; la vérification de Teams se lance toute seule la première fois.",
+          "GitHub : plus de « Code expiré » à tort ; l'issue réelle de gh est remontée (réussite ou erreur), avec 15 s de revérification."
+        ]
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.3.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Noms Teams lisibles, entourage importé d'Orbite, wizard plus large",
+        "details": [
+          "Teams : l'étiquette du rail (« Chat X Offline Last message … ») est découpée en nom, type (1:1, groupe, réunion, canal), non-lu et aperçu ; identifiant par nom stable malgré la présence ; rattrapage alimenté par l'aperçu du rail.",
+          "Entourage : import d'ENTOURAGE.json (export Orbite) dans Réglages ; la fiche de l'expéditeur et des participants est ajoutée au prompt ; rôle et équipe affichés sous le nom dans les brouillons.",
+          "Wizard plus large ; l'accueil relance la vérification de Teams."
+        ]
+      }
+    ],
+    "fix": [],
+    "perf": []
+  },
+  {
+    "version": "0.2.0",
+    "date": "2026-11-26",
+    "feat": [
+      {
+        "title": "Connexion du cerveau intégrée au choix (Claude et Copilot)",
+        "details": [
+          "Claude : état réel de Claude Code (installé, connecté, compte, offre) via `claude auth status --json` ; « Se connecter » lance `claude auth login` (navigateur), lien de secours, annulation, attente.",
+          "Copilot : connexion GitHub intégrée sous le choix.",
+          "Même connexion dans Réglages › Cerveau.",
+          "Windows : la commande claude est résolue (claude.cmd ou claude.exe)."
+        ]
+      }
+    ],
+    "fix": [],
+    "perf": []
+  }
+]

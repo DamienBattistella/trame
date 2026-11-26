@@ -10,6 +10,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
 import { TeamsWebRelay } from "@/components/TeamsWebRelay";
+import { WhatsNew } from "@/components/Changelog";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { installUpdate, isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
@@ -247,6 +248,7 @@ export default function App() {
         </main>
       </Tabs>
       <TeamsWebRelay />
+      <WhatsNew />
       <Toaster richColors position="bottom-right" />
     </TooltipProvider>
     </MotionConfig>

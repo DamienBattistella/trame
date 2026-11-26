@@ -51,7 +51,7 @@ class McpSettings(BaseModel):
 
 
 class TeamsWebSettings(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
 
 
 class Settings(BaseModel):
@@ -143,7 +143,7 @@ def from_config(cfg: dict) -> Settings:
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
         telemetry=_telemetry(cfg.get("telemetry", {})),
-        teams_web=TeamsWebSettings(enabled=bool(cfg.get("teams_web", {}).get("enabled", False))),
+        teams_web=TeamsWebSettings(enabled=True),
         mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or "")),
     )
 

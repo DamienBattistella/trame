@@ -29,9 +29,9 @@ from brain.auth import ClaudeAuth
 
 
 def make_driver() -> TeamsDriver:
-    # « Teams intégré » (expérimental) when enabled, else the real UIA driver on
-    # Windows; mock elsewhere so the API runs anywhere.
-    mode = os.environ.get("TRAME_DRIVER") or ("web" if cfgmod.load().get("teams_web", {}).get("enabled") else "uia")
+    # Teams web inside Trame (« Teams intégré ») is the driver. TRAME_DRIVER=uia keeps
+    # the old desktop-app driver for diagnosis, TRAME_DRIVER=mock runs anywhere.
+    mode = os.environ.get("TRAME_DRIVER") or ("web" if os.name == "nt" else "mock")
     if mode == "web":
         from drivers.web_bridge import WebBridgeDriver
         return WebBridgeDriver()
@@ -371,7 +371,8 @@ def create_app(
 
     @app.get("/api/teams-web/poll")
     def teams_web_poll():
-        cmd = _bridge().next_command(20.0)
+        bridge = _bridge()
+        cmd = bridge.next_command(bridge.POLL_WAIT)
         return {"ok": True, "command": cmd}
 
     @app.post("/api/teams-web/reply")
@@ -385,7 +386,9 @@ def create_app(
         d = watcher.driver
         if not isinstance(d, WebBridgeDriver):
             return {"ok": True, "status": {"enabled": False}}
-        return {"ok": True, "status": {"enabled": True, **d.status()}}
+        status = d.status()
+        watcher.teams_ready(bool(status.get("ready")))
+        return {"ok": True, "status": {"enabled": True, **status}}
 
     @app.get("/api/logs/export")
     def logs_export():
@@ -410,9 +413,10 @@ def create_app(
     @app.post("/api/selftest")
     def selftest():
         try:
-            watcher.state.selftest_ok = bool(watcher.driver.selftest())
+            ok = bool(watcher.driver.selftest())
         except Exception:
-            watcher.state.selftest_ok = False
+            ok = False
+        watcher.teams_ready(ok)
         return {"ok": True, "selftest_ok": watcher.state.selftest_ok}
 
     @app.websocket("/ws")

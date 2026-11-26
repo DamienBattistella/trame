@@ -15,11 +15,12 @@ import { GithubConnect } from "@/components/GithubConnect";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { SOUL_MAX_BYTES, Trame } from "@/api";
+import { isDesktop, teamsWebHide, teamsWebOpen } from "@/desktop";
 import { mockConversations } from "@/mockData";
 import { WatchEntity } from "@/types";
 
 const TOTAL = 8;
-const PROBE_CHECKS = ["Fenêtre Teams trouvée", "Liste des messages repérée", "Zone de saisie repérée"];
+const PROBE_CHECKS = ["Fenêtre Teams de Trame ouverte", "Connecté à ton compte", "Conversations trouvées"];
 
 const slide = {
   enter: (dir: number) => ({ x: dir * 48, opacity: 0 }),
@@ -102,27 +103,63 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   };
 
   const [probeError, setProbeError] = useState<string | null>(null);
-  const runProbe = async () => {
-    setProbe("running");
-    setProbeDone(0);
-    setProbeError(null);
-    const res = await trame.selftest();
-    if (!res.ok) {
-      setProbe("fail");
-      setProbeError(res.error);
-      return;
-    }
-    if (!res.selftestOk) {
-      setProbe("fail");
-      setProbeError("Teams n'est pas repéré. Ouvre une conversation et vérifie à nouveau. Tu peux continuer : tout restera en brouillon.");
-      return;
-    }
-    for (let i = 1; i <= PROBE_CHECKS.length; i++) {
+  const webShown = useRef(false);
+  const advance = async (n: number) => {
+    for (let i = probeDone + 1; i <= n; i++) {
       setProbeDone(i);
       await new Promise((r) => setTimeout(r, 250));
     }
-    setProbe("ok");
   };
+
+  /** Connexion à Teams : Teams web s'ouvre dans une fenêtre de Trame, on s'y connecte
+   *  une fois, puis elle se cache. Hors de l'appli de bureau (démo), simple auto-test. */
+  const runProbe = async () => {
+    setProbe("running");
+    setProbeError(null);
+    if (!isDesktop()) {
+      const res = await trame.selftest();
+      if (!res.ok || !res.selftestOk) {
+        setProbe("fail");
+        setProbeError(res.ok ? "Teams n'est pas repéré." : res.error);
+        return;
+      }
+      await advance(PROBE_CHECKS.length);
+      setProbe("ok");
+      return;
+    }
+    if (!webShown.current) {
+      webShown.current = true;
+      const err = await teamsWebOpen(true);
+      if (err) {
+        setProbe("fail");
+        setProbeError(`Ouverture de Teams impossible : ${err}`);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (step !== 2 || !isDesktop() || !connected || probe === "ok") return;
+    let live = true;
+    const tick = async () => {
+      const res = await trame.teamsWebStatus();
+      if (!live || !res.ok) return;
+      const st = res.status;
+      const done = !st.relay ? 0 : !st.ready ? 1 : 3;
+      if (done > probeDone) await advance(done);
+      if (st.ready && live) {
+        await trame.selftest();
+        await teamsWebHide();
+        setProbe("ok");
+        setProbeError(null);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [step, connected, probe, probeDone]);
 
   const go = (delta: number) => {
     if (activation === "error") {
@@ -201,12 +238,12 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   const githubConnected = trame.githubStatus?.loggedIn ?? false;
   const canContinue =
-    (step !== 2 || probe === "ok" || probe === "fail") &&
+
     (activation === "idle" || activation === "error") &&
     (step !== TOTAL - 1 || live);
   const last = step === TOTAL - 1;
   // Étapes facultatives encore vides : le bouton principal devient « Plus tard », en retrait.
-  const skippable = (step === 5 && !soul) || (step === 6 && !githubConnected);
+  const skippable = (step === 2 && probe !== "ok") || (step === 5 && !soul) || (step === 6 && !githubConnected);
   const canGoBack = step > 0 && activation !== "run" && activation !== "ok";
 
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
@@ -229,7 +266,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           ) : trame.state.selftestOk ? (
             <><span className="font-medium text-foreground">Teams</span> <Check className="size-4" strokeWidth={3} /></>
           ) : (
-            <>Pas encore repéré</>
+            <>À connecter</>
           )}
         </motion.div>
       ),
@@ -244,8 +281,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       ),
     },
     {
-      title: "Vérification de Teams",
-      sub: "Garde une conversation ouverte dans Teams.",
+      title: "Connexion à Teams",
+      sub: "Connecte-toi une fois dans la fenêtre Teams de Trame. Elle se cache ensuite toute seule.",
       body: (
         <div className="flex w-full flex-col items-center gap-4">
           <GroupList>
@@ -273,10 +310,17 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               )}
             </AnimatePresence>
           </GroupList>
-          <Button variant="outline" className="rounded-full px-6" disabled={probe === "running"} onClick={runProbe}>
-            {probe === "running" && <Loader2 className="size-4 animate-spin" />}
-            {probe === "ok" || probe === "fail" ? "Vérifier à nouveau" : probe === "running" ? "Vérification…" : "Vérifier"}
-          </Button>
+          {probe !== "ok" &&
+            (isDesktop() ? (
+              <Button variant="outline" className="rounded-full px-6" onClick={() => teamsWebOpen(true)}>
+                <TeamsLogo className="size-4" /> Afficher Teams
+              </Button>
+            ) : (
+              <Button variant="outline" className="rounded-full px-6" disabled={probe === "running"} onClick={runProbe}>
+                {probe === "running" && <Loader2 className="size-4 animate-spin" />}
+                {probe === "running" ? "Vérification…" : "Vérifier à nouveau"}
+              </Button>
+            ))}
         </div>
       ),
     },

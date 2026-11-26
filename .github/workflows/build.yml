@@ -57,6 +57,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -128,6 +129,10 @@ jobs:
       - name: Generate app icons
         run: npm run tauri icon src-tauri/icons/source.png
         working-directory: ui
+
+      - name: Changelog (nouveautés affichées dans l'appli)
+        shell: pwsh
+        run: node .github/scripts/changelog.mjs --next $env:VERSION
 
       - name: Set app version
         shell: pwsh

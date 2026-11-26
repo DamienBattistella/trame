@@ -28,7 +28,8 @@ def test_handshake_and_tools(make_client):
     assert client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
                        headers={"Authorization": f"Bearer {token}"}).status_code == 202
     names = {t["name"] for t in _call(client, token, "tools/list").json()["result"]["tools"]}
-    assert names == {"list_conversations", "read_conversation", "summarize_conversation", "list_drafts", "propose_reply"}
+    assert names == {"list_conversations", "read_conversation", "summarize_conversation", "list_drafts", "propose_reply",
+                     "get_status", "get_logs", "get_telemetry"}
 
 
 def test_propose_reply_lands_in_review_and_never_sends(make_client):
@@ -50,3 +51,22 @@ def test_regenerate_token(make_client):
     second = client.put("/api/settings", json={"mcp": {"regenerate_token": True}}).json()["settings"]["mcp"]["token"]
     assert second and second != first
     assert _call(client, first, "ping").status_code == 401 and _call(client, second, "ping").status_code == 200
+
+
+def test_status_logs_and_telemetry_tools(make_client):
+    client, watcher, _d = make_client()
+    token = _enable(client)
+    watcher.log("warn", "Envoi à Alice refusé : « secret 40k »")
+
+    def tool(name, **args):
+        r = _call(client, token, "tools/call", {"name": name, "arguments": args}).json()["result"]
+        assert r["isError"] is False, r
+        return json.loads(r["content"][0]["text"])
+
+    status = tool("get_status")
+    assert status["teams"]["driver"] and "followed" in status
+    logs = tool("get_logs", level="warn")
+    assert logs and all(l["level"] == "warn" for l in logs) and not any("40k" in l["text"] for l in logs)
+    full = tool("get_logs", full=True)
+    assert full["text"].startswith("# Trame : journaux")
+    assert "records" in tool("get_telemetry", limit=5)

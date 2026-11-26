@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -27,7 +28,7 @@ export interface BriefTarget {
   displayName: string;
 }
 
-type Phase = "loading" | "generating" | "done" | "error";
+type Phase = "loading" | "empty" | "generating" | "done" | "error";
 
 // Le POST est un seul appel : les deux premières étapes avancent au minuteur, la fin suit la réponse.
 const STEP_DELAYS = [1100, 2600];
@@ -36,10 +37,13 @@ export function BriefSheet({
   trame,
   target,
   onClose,
+  dock = false,
 }: {
   trame: Trame;
   target: BriefTarget | null;
   onClose: () => void;
+  /** Panneau ancré à droite de la discussion (comme T3 Code), au lieu d'un tiroir. */
+  dock?: boolean;
 }) {
   const [shown, setShown] = useState<BriefTarget | null>(target);
   const [phase, setPhase] = useState<Phase>("loading");
@@ -119,6 +123,10 @@ export function BriefSheet({
         toast.error(`Résumé impossible pour « ${target.displayName} »`, {
           description: `${res.error} Rien n'a été perdu.`,
         });
+      } else if (dock) {
+        // Le panneau suit la discussion choisie : on ne lance pas un appel au cerveau
+        // à chaque clic dans la barre latérale, seulement à la demande.
+        setPhase("empty");
       } else {
         generate(target, null);
       }
@@ -133,14 +141,18 @@ export function BriefSheet({
     ...(github ? ["Recherche GitHub"] : []),
   ];
 
-  return (
-    <Sheet open={target !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 sm:max-w-[480px]" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <SheetHeader className="flex-row items-center gap-3 px-5 py-4 pr-12">
+  const Header = dock ? DockHeader : SheetHeader;
+  const Title = dock ? DockTitle : SheetTitle;
+  const Description = dock ? DockDescription : SheetDescription;
+  const Footer = dock ? DockFooter : SheetFooter;
+
+  const content = (
+    <>
+        <Header className="flex-row items-center gap-3 px-5 py-4 pr-12">
           <InitialsAvatar name={shown?.displayName ?? ""} />
           <div className="flex min-w-0 flex-col">
-            <SheetTitle className="truncate">{shown?.displayName}</SheetTitle>
-            <SheetDescription className="text-xs">
+            <Title className="truncate">{shown?.displayName}</Title>
+            <Description className="text-xs">
               <AnimatePresence mode="popLayout" initial={false}>
                 <motion.span
                   key={phase === "done" && brief ? brief.generatedAt : phase}
@@ -151,16 +163,21 @@ export function BriefSheet({
                 >
                   {phase === "done" && brief
                     ? `Généré à ${brief.generatedAt}`
-                    : phase === "loading"
+                    : phase === "loading" || phase === "empty"
                       ? "Résumé et contexte"
                       : phase === "error"
                         ? "La génération n'a pas abouti"
                         : "Génération en cours…"}
                 </motion.span>
               </AnimatePresence>
-            </SheetDescription>
+            </Description>
           </div>
-        </SheetHeader>
+          {dock && (
+            <Button variant="ghost" size="icon" className="absolute top-3.5 right-3 size-8 rounded-full" aria-label="Fermer le résumé" onClick={onClose}>
+              <X className="size-4" />
+            </Button>
+          )}
+        </Header>
         <Separator />
 
         <ScrollArea className="min-h-0 flex-1">
@@ -174,6 +191,21 @@ export function BriefSheet({
                 className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"
               >
                 <Loader2 className="size-4 animate-spin" /> Recherche d'un brief récent…
+              </motion.div>
+            )}
+
+            {phase === "empty" && shown && (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex flex-col items-center gap-3 px-6 py-16 text-center"
+              >
+                <p className="text-sm text-muted-foreground">Pas encore de résumé pour cette discussion.</p>
+                <Button size="sm" className="rounded-full" onClick={() => generate(shown, null)}>
+                  <RefreshCw className="size-4" /> Résumer
+                </Button>
               </motion.div>
             )}
 
@@ -250,7 +282,7 @@ export function BriefSheet({
               transition={spring}
             >
               <Separator />
-              <SheetFooter className="mt-0 gap-2 px-5 py-3">
+              <Footer className="mt-0 gap-2 px-5 py-3">
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" className="rounded-full" onClick={() => generate(shown, brief)}>
                   <RefreshCw className="size-4" /> Régénérer
@@ -262,10 +294,20 @@ export function BriefSheet({
                 {brief.sources.reposSearched} dépôt{brief.sources.reposSearched > 1 ? "s" : ""} consulté
                 {brief.sources.reposSearched > 1 ? "s" : ""}
               </span>
-              </SheetFooter>
+              </Footer>
             </motion.div>
           )}
         </AnimatePresence>
+    </>
+  );
+
+  if (dock) {
+    return <div className="relative flex h-full min-h-0 flex-col">{content}</div>;
+  }
+  return (
+    <Sheet open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="w-full gap-0 sm:max-w-[480px]" onOpenAutoFocus={(e) => e.preventDefault()}>
+        {content}
       </SheetContent>
     </Sheet>
   );
@@ -410,4 +452,17 @@ function CopyButton({ brief }: { brief: Brief }) {
       </Button>
     </motion.div>
   );
+}
+
+function DockHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return <div className={cn("relative flex flex-col gap-1.5", className)} {...props} />;
+}
+function DockTitle({ className, ...props }: React.ComponentProps<"h2">) {
+  return <h2 className={cn("font-semibold text-foreground", className)} {...props} />;
+}
+function DockDescription({ className, ...props }: React.ComponentProps<"p">) {
+  return <p className={cn("text-sm text-muted-foreground", className)} {...props} />;
+}
+function DockFooter({ className, ...props }: React.ComponentProps<"div">) {
+  return <div className={cn("flex flex-col gap-2", className)} {...props} />;
 }

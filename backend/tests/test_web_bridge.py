@@ -46,6 +46,7 @@ class FakePage:
 
 def test_bridge_end_to_end(make_client, monkeypatch):
     monkeypatch.setattr(WebBridgeDriver, "RPC_TIMEOUT", 3.0)
+    monkeypatch.setattr(WebBridgeDriver, "POLL_WAIT", 0.5)
     driver = WebBridgeDriver()
     client, watcher, _ = make_client(driver=driver)
     page = FakePage(client)
@@ -96,3 +97,14 @@ def test_own_message_in_french_never_triggers(make_client):
     _c, watcher, driver = make_client()
     msg = IncomingMessage(thread_id="19:aa11@thread.v2", sender="Vous", text="je regarde", received_at="10:00", surface=Surface.dm)
     assert watcher._process(msg) is None and driver.typed == []
+
+
+def test_teams_ready_marks_checked_and_reads_conversations(make_client):
+    _c, watcher, driver = make_client()
+    watcher.state.selftest_ok = False
+    watcher.state.watchlist = []
+    watcher.teams_ready(True)
+    assert watcher.state.selftest_ok and watcher.state.watchlist
+    assert any(l.text == "Teams connecté" for l in watcher.state.logs)
+    watcher.teams_ready(True)
+    assert sum(l.text == "Teams connecté" for l in watcher.state.logs) == 1

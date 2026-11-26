@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronRight, History, Inbox as InboxIcon, Loader2, Search, Timer, X } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { DraftItem, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
+
+const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
+const BRIEF_WIDTH = 420;
 
 type GroupId = "review" | "unread" | "followed" | "others";
 const GROUPS: { id: GroupId; label: string }[] = [
@@ -34,6 +37,8 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   const [selected, setSelected] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const wide = useWide();
 
   // The engine lists the newest draft first: keep that one per conversation.
   const draftOf = useMemo(() => {
@@ -158,7 +163,13 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
 
       <main className="min-w-0 flex-1">
         {current ? (
-          <DiscussionView key={current.threadId} trame={trame} conversation={current} draft={draftOf.get(current.threadId) ?? null} onBrief={onBrief} />
+          <DiscussionView
+            key={current.threadId}
+            trame={trame}
+            conversation={current}
+            draft={draftOf.get(current.threadId) ?? null}
+            onBrief={(t) => (wide ? setBriefOpen((o) => !o) : onBrief(t))}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <span className="grid size-12 place-items-center rounded-full bg-secondary text-muted-foreground">
@@ -173,6 +184,33 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
           </div>
         )}
       </main>
+
+      {/* Résumé ancré à droite : il pousse la discussion au lieu de la recouvrir, et suit
+          la discussion choisie dans la barre latérale. */}
+      <AnimatePresence initial={false}>
+        {briefOpen && wide && current && trame.briefPrefs.enabled && (
+          <motion.aside
+            key="brief"
+            aria-label="Résumé de la discussion"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: BRIEF_WIDTH, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={spring}
+            className="shrink-0 overflow-hidden border-l bg-sidebar"
+          >
+            <div className="h-full" style={{ width: BRIEF_WIDTH }}>
+              <Suspense fallback={null}>
+                <BriefSheet
+                  dock
+                  trame={trame}
+                  target={{ threadId: current.threadId, displayName: current.displayName }}
+                  onClose={() => setBriefOpen(false)}
+                />
+              </Suspense>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -210,4 +248,16 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
       </span>
     </button>
   );
+}
+
+/** Fenêtre assez large pour le panneau de résumé à côté de la discussion. */
+function useWide(query = "(min-width: 1024px)") {
+  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setWide(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return wide;
 }

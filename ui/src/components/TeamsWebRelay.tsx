@@ -57,8 +57,14 @@ export function TeamsWebRelay() {
       }
     };
     loop();
+    // Le moteur apprend ainsi que Teams est connecté (et relit les conversations),
+    // même si aucun écran de réglage n'est ouvert.
+    const watch = setInterval(() => {
+      if (opened) fetch(`${API}/api/teams-web/status`).catch(() => undefined);
+    }, 20000);
     return () => {
       stopped = true;
+      clearInterval(watch);
       offReply();
     };
   }, []);

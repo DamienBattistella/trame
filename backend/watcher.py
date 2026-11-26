@@ -63,12 +63,33 @@ class Watcher:
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
 
     # --- lifecycle ---
+    def teams_ready(self, ready: bool) -> None:
+        """Teams web signed in after the engine started (the usual case): mark Teams as
+        checked and read its conversations, which were unknown until then."""
+        if ready == self.state.selftest_ok:
+            return
+        self.state.selftest_ok = ready
+        if not ready:
+            self.log("warn", "Teams : connexion perdue, tout reste en brouillon")
+            return
+        self.log("info", "Teams connecté")
+        try:
+            discovered = self.driver.list_conversations()
+        except Exception:
+            return
+        with self._lock:
+            self.state.watchlist = self._merge(discovered)
+        self._persist_watchlist()
+
     def start(self) -> None:
         try:
             self.state.selftest_ok = bool(self.driver.selftest())
         except Exception:
             self.state.selftest_ok = False
-        self.log("info", f"Vérification de Teams : {'OK' if self.state.selftest_ok else 'échec, tout reste en brouillon'}")
+        if not self.state.selftest_ok and getattr(self.driver, "waits_for_relay", False):
+            self.log("info", "Teams : en attente de la fenêtre Teams de Trame")
+        else:
+            self.log("info", f"Vérification de Teams : {'OK' if self.state.selftest_ok else 'échec, tout reste en brouillon'}")
         try:
             self.state.watchlist = self._merge(self.driver.list_conversations())
             self._persist_watchlist()
@@ -355,6 +376,7 @@ class Watcher:
             raise ActionError(422, "Le message est vide.")
         self._typing_allowed()
         if not self._deliver(thread_id, body, send=True, restore=True):
+            self.log("warn", f"Envoi à {entity.display_name} refusé.{self._because()}")
             raise ActionError(409, f"Rien n'a été envoyé à « {entity.display_name} ».{self._because()}")
         self._history.pop(thread_id, None)
         self._thread_cache.pop(thread_id, None)
@@ -787,8 +809,14 @@ class Watcher:
         try:
             with self._ui_lock:
                 diag = self.driver.diagnose(None)
-            teams = {k: diag.get(k) for k in ("driver", "window", "teams_windows", "title_conversation", "rail_items", "selected_now")}
-            teams["compose_found"] = bool(diag.get("compose")) if "compose" in diag else None
+            if diag.get("driver") == "web_bridge":
+                page = diag.get("diagnose") if isinstance(diag.get("diagnose"), dict) else {"erreur": diag.get("diagnose")}
+                teams = {"driver": "web_bridge", "relay": diag.get("relay"), "ready": diag.get("ready"), "error": diag.get("error"),
+                         **{k: page.get(k) for k in ("title_conversation", "rail", "items", "editor", "editor_info",
+                                                     "textboxes", "send_button", "messages", "erreur") if k in page}}
+            else:
+                teams = {k: diag.get(k) for k in ("driver", "window", "teams_windows", "title_conversation", "rail_items", "selected_now")}
+                teams["compose_found"] = bool(diag.get("compose")) if "compose" in diag else None
             out += ["", "## Teams (diagnostic court)", json.dumps(teams, ensure_ascii=False)]
         except Exception as e:
             out += ["", "## Teams (diagnostic court)", f"indisponible : {e!r}"]

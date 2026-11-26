@@ -1,12 +1,14 @@
 from __future__ import annotations
 import hmac
 import json
+import os
 from typing import Any, Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+import telemetry
 from watcher import ActionError, Watcher
 
 PROTOCOL = "2025-06-18"
@@ -57,6 +59,36 @@ TOOLS: list[dict] = [
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False},
     },
+    {
+        "name": "get_status",
+        "description": "État de Trame : version, cerveau, pause, connexion à Teams (fenêtre, compte), conversations suivies.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_logs",
+        "description": "Journal de Trame (événements récents). full=true renvoie l'export complet : journal, diagnostic Teams, "
+                       "fin de backend.log et d'OpenTelemetry. Le texte des messages reste masqué « … » sauf réglage contraire.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"full": {"type": "boolean", "default": False},
+                           "level": {"type": "string", "enum": ["all", "warn", "sent", "info"], "default": "all"},
+                           "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}},
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_telemetry",
+        "description": "Derniers enregistrements OpenTelemetry (spans trame.message, brain.draft, teams.read, teams.type… "
+                       "et logs), quand la télémétrie est envoyée dans le fichier local otel.jsonl.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+                           "name": {"type": "string", "description": "Ne garder que les spans dont le nom contient ce texte"},
+                           "errors_only": {"type": "boolean", "default": False}},
+        },
+        "annotations": {"readOnlyHint": True},
+    },
 ]
 
 
@@ -102,7 +134,57 @@ def make_router(watcher: Watcher) -> APIRouter:
         draft = watcher.propose_external_reply(str(args["thread_id"]), str(args.get("text", "")))
         return {"ok": True, "draft_id": draft.id, "note": "Réponse déposée dans « À relire ». L'utilisateur l'enverra lui-même."}
 
+    def tool_status(_args: dict) -> Any:
+        st = watcher.state
+        teams: dict = {"driver": type(watcher.driver).__name__, "checked": st.selftest_ok}
+        status = getattr(watcher.driver, "status", None)
+        if callable(status):
+            try:
+                teams.update(status())
+            except Exception as e:
+                teams["error"] = str(e)
+        return {"version": os.environ.get("TRAME_VERSION", "dev"), "brain": st.brain, "paused": st.paused,
+                "screen_sharing": st.screen_sharing, "teams": teams, "telemetry_error": watcher.telemetry_error,
+                "followed": sum(1 for w in st.watchlist if w.watch), "drafts": len(st.drafts)}
+
+    def tool_logs(args: dict) -> Any:
+        limit = int(args.get("limit", 100))
+        if args.get("full"):
+            return {"text": watcher.export_logs(tail_lines=limit * 2, otel_records=limit)}
+        level = args.get("level", "all")
+        items = [l for l in watcher.state.logs if level == "all" or l.level == level][:limit]
+        return [{"at": l.at, "level": l.level, "text": telemetry.redact(l.text)} for l in items]
+
+    def tool_telemetry(args: dict) -> Any:
+        limit = int(args.get("limit", 100))
+        name = str(args.get("name") or "")
+        telemetry.flush()
+        path = telemetry.file_path()
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()[-2000:]
+        except OSError:
+            return {"records": [], "note": "Pas de fichier otel.jsonl : télémétrie désactivée ou envoyée à un collecteur OTLP."}
+        out = []
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if name and name not in str(rec.get("name", "")):
+                continue
+            if args.get("errors_only") and not (rec.get("status", {}).get("status_code") == "ERROR"
+                                                 or (rec.get("severity_number") or 0) >= 13):
+                continue
+            out.append(rec)
+            if len(out) >= limit:
+                break
+        return {"records": out}
+
     handlers: dict[str, Callable[[dict], Any]] = {
+        "get_status": tool_status,
+        "get_logs": tool_logs,
+        "get_telemetry": tool_telemetry,
         "list_conversations": tool_list_conversations,
         "read_conversation": tool_read,
         "summarize_conversation": tool_summary,

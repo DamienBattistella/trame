@@ -16,6 +16,9 @@ class BridgeUnavailable(RuntimeError):
 
 
 class WebBridgeDriver(TeamsDriver):
+    waits_for_relay = True
+    POLL_WAIT = 20.0
+
     """« Teams intégré » (expérimental) : Teams web (teams.microsoft.com) in a hidden
     WebView2 window of Trame. Commands go to that page through the Trame UI, which
     relays them (/api/teams-web/poll) and returns the answers (/api/teams-web/reply).

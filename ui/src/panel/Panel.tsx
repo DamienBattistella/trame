@@ -27,6 +27,7 @@ import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
 import { McpSettings } from "@/components/McpSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
+import { ChangelogRow } from "@/components/Changelog";
 import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
@@ -372,9 +373,11 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       icon: Settings2,
       desc: "Démarrage et comportement de l'application.",
       body: (
-      <div>
+      <div className="flex flex-col gap-6">
+        <TeamsWebSettings trame={trame} />
         <GroupList>
           <UpdatesRow />
+          <ChangelogRow />
           <AutostartRow />
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
             Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
@@ -552,22 +555,6 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       desc: "Configuration et réinitialisation.",
       body: (
         <div className="flex flex-col gap-6">
-          <div>
-            <SectionLabel>Teams intégré</SectionLabel>
-            <TeamsWebSettings
-              trame={trame}
-              enabled={settings.teamsWeb.enabled}
-              onToggle={async (enabled) => {
-                const res = await trame.updateSettings({ teamsWeb: { enabled } });
-                if (!res.ok) {
-                  toast.error("Réglage non enregistré", { description: res.error });
-                  return false;
-                }
-                setSettings(res.settings);
-                return true;
-              }}
-            />
-          </div>
       <div className="pb-4">
         <GroupList>
           <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">

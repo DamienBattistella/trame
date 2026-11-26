@@ -182,7 +182,7 @@ def test_engine_starts_when_teams_driver_cannot_load(monkeypatch, make_client):
             raise ImportError("No module named 'uiautomation'")
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.delenv("TRAME_DRIVER", raising=False)
+    monkeypatch.setenv("TRAME_DRIVER", "uia")
     monkeypatch.setattr(appmod.os, "name", "nt")
     monkeypatch.setattr(builtins, "__import__", no_uia)
     driver = appmod.make_driver()
@@ -259,3 +259,11 @@ def test_merge_migrates_unstable_react_ids(make_client):
     by = {w.thread_id: w for w in merged}
     assert by["name:Romain CUREAU"].watch and by["name:Romain CUREAU"].mode == "auto"
     assert "menurmh" not in by and "menur9z" not in by
+
+
+def test_teams_web_is_the_default_driver_on_windows(monkeypatch):
+    import app as appmod
+    from drivers.web_bridge import WebBridgeDriver
+    monkeypatch.delenv("TRAME_DRIVER", raising=False)
+    monkeypatch.setattr(appmod.os, "name", "nt")
+    assert isinstance(appmod.make_driver(), WebBridgeDriver)
