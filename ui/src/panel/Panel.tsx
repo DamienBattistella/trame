@@ -445,7 +445,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       id: "github",
       label: "GitHub",
       icon: GitBranch,
-      desc: "Retrouver les PR et issues dont on te parle. En lecture seule.",
+      desc: "Retrouver les PR et issues dont on te parle, et publier un compte-rendu en pull request.",
       state: save.github,
       body: (
       <motion.div animate={githubCtl}>
@@ -471,7 +471,55 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
                   disabled={!github.enabled}
                   onChange={(allRepos) => update("github", { github: { ...github, allRepos } })}
                 />
-                <div className="px-4 py-2.5 text-xs text-muted-foreground">Lecture seule · consulté seulement quand le message le justifie.</div>
+                <div className="px-4 py-2.5 text-xs text-muted-foreground">Consulté seulement quand le message le justifie.</div>
+              </GroupList>
+
+              <div className="mt-4">
+                <SectionLabel>Publier un compte-rendu</SectionLabel>
+              </div>
+              <GroupList className="mt-1">
+                <ToggleRow
+                  label="Autoriser Trame à ouvrir des pull requests"
+                  hint="Coupé : Trame ne fait que lire GitHub. Le bouton « Publier » reste désactivé."
+                  checked={github.write.enabled}
+                  onChange={(enabled) => update("github", { github: { ...github, write: { ...github.write, enabled } } })}
+                />
+                <AnimatePresence initial={false}>
+                  {github.write.enabled && (
+                    <motion.div
+                      key="github-write-options"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="divide-y divide-border overflow-hidden"
+                    >
+                      <ToggleRow
+                        label="Publier dans tous mes dépôts accessibles"
+                        hint="Sinon, seulement les dépôts de la liste ci-dessous."
+                        checked={github.write.allRepos}
+                        onChange={(allRepos) => update("github", { github: { ...github, write: { ...github.write, allRepos } } })}
+                      />
+                      <RepoAllowlist
+                        repos={github.write.reposAllowlist}
+                        onChange={(repos) => update("github", { github: { ...github, write: { ...github.write, reposAllowlist: repos } } })}
+                      />
+                      <PathTemplate
+                        value={github.write.pathTemplate}
+                        onChange={(pathTemplate) => update("github", { github: { ...github, write: { ...github.write, pathTemplate } } })}
+                      />
+                      <ToggleRow
+                        label="Ouvrir les pull requests en brouillon"
+                        checked={github.write.draft}
+                        onChange={(draft) => update("github", { github: { ...github, write: { ...github.write, draft } } })}
+                      />
+                      <div className="px-4 py-2.5 text-xs text-muted-foreground">
+                        Jamais automatique : seulement sur ton clic, après confirmation. Branche + fichier + PR brouillon ;
+                        jamais de push sur la branche par défaut, jamais d'écrasement, jamais de fusion. Le jeton GitHub doit
+                        avoir l'accès « repo » (reconnecte-toi si besoin).
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </GroupList>
             </motion.div>
           )}
@@ -1006,6 +1054,105 @@ function BlockedWords({ words, onChange }: { words: string[]; onChange: (w: stri
           </AnimatePresence>
         </motion.form>
       </div>
+    </div>
+  );
+}
+
+/** Dépôts où Trame a le droit d'ouvrir une pull request (quand « tous les dépôts » est coupé). */
+function RepoAllowlist({ repos, onChange }: { repos: string[]; onChange: (r: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const controls = useAnimationControls();
+  const add = () => {
+    const r = draft.trim();
+    if (!r) return;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(r)) {
+      controls.start(shake);
+      toast.info("Format attendu : organisation/dépôt");
+      return;
+    }
+    if (repos.some((x) => x.toLowerCase() === r.toLowerCase())) {
+      controls.start(shake);
+      toast.info(`« ${r} » est déjà dans la liste`);
+      return;
+    }
+    onChange([...repos, r]);
+    setDraft("");
+  };
+  return (
+    <div className="flex flex-col gap-2.5 px-4 py-3">
+      <span className="text-sm">Dépôts autorisés</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <AnimatePresence initial={false} mode="popLayout">
+          {repos.map((r) => (
+            <motion.span
+              key={r}
+              layout
+              initial={{ scale: 0.6, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.6, opacity: 0 }}
+              transition={pop}
+              className="flex items-center gap-1 rounded-full bg-secondary py-0.5 pr-1 pl-2.5 font-mono text-xs"
+            >
+              {r}
+              <button
+                onClick={() => onChange(repos.filter((x) => x !== r))}
+                aria-label={`Retirer « ${r} »`}
+                className="grid size-4 place-items-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            </motion.span>
+          ))}
+        </AnimatePresence>
+        <motion.form
+          layout
+          animate={controls}
+          onSubmit={(e) => {
+            e.preventDefault();
+            add();
+          }}
+          className="flex items-center gap-1"
+        >
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="organisation/dépôt"
+            className="h-7 w-48 rounded-full px-3 font-mono text-xs md:text-xs"
+          />
+        </motion.form>
+      </div>
+    </div>
+  );
+}
+
+/** Où le compte-rendu est déposé dans le dépôt. {date} = jour de la réunion, {slug} = titre. */
+function PathTemplate({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const v = draft.trim();
+    if (v && v !== value) onChange(v);
+    else setDraft(value);
+  };
+  return (
+    <div className="flex flex-col gap-1.5 px-4 py-3">
+      <span className="text-sm">Chemin du fichier</span>
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        spellCheck={false}
+        className="h-8 font-mono text-xs"
+      />
+      <span className="text-xs text-muted-foreground">
+        <span className="font-mono">{"{date}"}</span> = jour de la réunion, <span className="font-mono">{"{slug}"}</span> = titre. Doit finir par <span className="font-mono">.md</span>.
+      </span>
     </div>
   );
 }

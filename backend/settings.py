@@ -33,9 +33,48 @@ class ModelSettings(BaseModel):
         return _model(v)
 
 
+# Where a published meeting report lands, and the branch it rides in on. {date} is the
+# meeting day (ISO), {slug} the de-accented title; the file is always a new .md.
+DEFAULT_PATH_TEMPLATE = "docs/comptes-rendus/{date}-{slug}.md"
+
+
+class GithubWriteSettings(BaseModel):
+    """Opening pull requests on GitHub. Off by default: until the user turns it on, Trame
+    only ever reads GitHub. Even on, it only adds a branch + a new file + a draft PR —
+    never a push to a protected branch, never an overwrite, never a merge."""
+    enabled: bool = False
+    all_repos: bool = False
+    repos_allowlist: list[str] = Field(default_factory=list)
+    path_template: str = DEFAULT_PATH_TEMPLATE
+    draft: bool = True
+
+    @field_validator("repos_allowlist")
+    @classmethod
+    def _repos(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for r in v:
+            r = str(r or "").strip()
+            if r and r not in out:
+                out.append(r)
+        return out
+
+    @field_validator("path_template")
+    @classmethod
+    def _template(cls, v: str) -> str:
+        v = str(v or "").strip().lstrip("/")
+        if not v:
+            return DEFAULT_PATH_TEMPLATE
+        if ".." in v.split("/") or "\\" in v or "{slug}" not in v:
+            raise ValueError("chemin invalide : relatif, sans « .. », avec {slug} et terminé par .md")
+        if not v.lower().endswith(".md"):
+            raise ValueError("le chemin doit se terminer par .md")
+        return v
+
+
 class GithubSettings(BaseModel):
     enabled: bool
     all_repos: bool
+    write: GithubWriteSettings = GithubWriteSettings()
 
 
 class SafetySettings(BaseModel):
@@ -150,9 +189,18 @@ class ModelsPatch(_Patch):
         return None if v is None else _model(v)
 
 
+class GithubWritePatch(_Patch):
+    enabled: Optional[bool] = None
+    all_repos: Optional[bool] = None
+    repos_allowlist: Optional[list[str]] = None
+    path_template: Optional[str] = None
+    draft: Optional[bool] = None
+
+
 class GithubPatch(_Patch):
     enabled: Optional[bool] = None
     all_repos: Optional[bool] = None
+    write: Optional[GithubWritePatch] = None
 
 
 class SafetyPatch(_Patch):
@@ -252,7 +300,8 @@ def from_config(cfg: dict) -> Settings:
         onboarded=bool(cfg.get("onboarded", False)),
         brain="copilot" if cfg.get("brain", {}).get("provider") == "copilot" else "claude",
         models=_models(cfg.get("brain", {})),
-        github=GithubSettings(enabled=bool(gh.get("enabled", True)), all_repos=gh.get("repos", "all") == "all"),
+        github=GithubSettings(enabled=bool(gh.get("enabled", True)), all_repos=gh.get("repos", "all") == "all",
+                              write=_github_write(gh.get("write", {}) or {})),
         safety=SafetySettings(
             auto_pause_on_screen_share=bool(safety.get("auto_pause_on_screen_share", True)),
             selftest_gate=bool(reply.get("selector_selftest_gate", True)),
@@ -281,6 +330,21 @@ def from_config(cfg: dict) -> Settings:
                         allow_send=bool(cfg.get("mcp", {}).get("allow_send", False))),
         ui=_ui(cfg.get("ui", {})),
     )
+
+
+def _github_write(w: dict) -> GithubWriteSettings:
+    """Tolerates hand-edited config: a bad value falls back to the safe default
+    (write off), never breaking the settings API."""
+    try:
+        return GithubWriteSettings(
+            enabled=bool(w.get("enabled", False)),
+            all_repos=w.get("repos", "allowlist") == "all",
+            repos_allowlist=[r for r in w.get("repos_allowlist", []) if isinstance(r, str)],
+            path_template=str(w.get("path_template") or DEFAULT_PATH_TEMPLATE),
+            draft=bool(w.get("draft", True)),
+        )
+    except ValueError:
+        return GithubWriteSettings()
 
 
 def _ui(u: dict) -> UiSettings:
@@ -322,6 +386,13 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     gh["enabled"] = merged.github.enabled
     gh["repos"] = "all" if merged.github.all_repos else "allowlist"
     gh.setdefault("repos_allowlist", [])
+    w = gh.setdefault("write", {})
+    w["enabled"] = merged.github.write.enabled
+    w["repos"] = "all" if merged.github.write.all_repos else "allowlist"
+    w["repos_allowlist"] = merged.github.write.repos_allowlist
+    w["path_template"] = merged.github.write.path_template
+    w["draft"] = merged.github.write.draft
+    w.setdefault("repo_map", {})  # meeting title → repo, learned on publish; kept across edits
     reply = out.setdefault("reply", {})
     reply["selector_selftest_gate"] = merged.safety.selftest_gate
     reply["auto_send_countdown_seconds"] = merged.safety.countdown_seconds
