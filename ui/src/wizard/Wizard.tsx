@@ -747,7 +747,13 @@ function ModeCard({
       <p className="text-xs leading-relaxed text-muted-foreground">
         {auto ? (
           <>
-            Envoi seul après <strong className="font-medium text-foreground">{countdown} s</strong>, annulable par la pause.
+            {countdown === 0 ? (
+              <>Envoi seul <strong className="font-medium text-foreground">immédiat</strong>.</>
+            ) : (
+              <>
+                Envoi seul après <strong className="font-medium text-foreground">{countdown} s</strong>, annulable par la pause.
+              </>
+            )}
           </>
         ) : (
           "Trame prépare, tu relis et tu envoies."

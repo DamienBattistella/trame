@@ -400,7 +400,8 @@ class Watcher:
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
             # Sent without a click: the people on the other side see it went out alone.
             outgoing = safety.mark_automatic(proposal) if safety.marks_automatic(cfg) else proposal
-            self.log("info", f"Réponse à {msg.sender} envoyée dans {secs} s (la pause l'annule) : « {outgoing} »")
+            when = "tout de suite" if not secs else f"dans {secs} s (la pause l'annule)"
+            self.log("info", f"Réponse à {msg.sender} envoyée {when} : « {outgoing} »")
             if not self._countdown_ok(secs):
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi à {msg.sender} annulé : réponse gardée en brouillon")
