@@ -48,6 +48,9 @@ def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: 
     if thread_summary:
         parts.append(f"\nContexte du fil (derniers messages) :\n{thread_summary}")
     if github_context:
-        parts.append(f"\nContexte GitHub pertinent :\n{github_context}")
+        parts.append(
+            "\nContexte GitHub pertinent (lu à l'instant, fait foi) : si la question y trouve sa réponse, "
+            f"réponds avec ces faits au lieu de promettre de regarder.\n{github_context}"
+        )
     parts.append(f"\nDernier message reçu :\n{incoming}\n\nRéponse :")
     return "\n".join(parts)

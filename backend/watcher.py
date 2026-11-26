@@ -722,7 +722,7 @@ class Watcher:
         repos_searched = 0
         if prefs.github.enabled:
             numbers = gh.mentioned_numbers(transcript)
-            if numbers or digest.search_queries:
+            if numbers or digest.search_queries or gh.linked_refs(transcript):
                 gh_cfg = self.cfg.get("context", {}).get("github", {})
                 try:
                     repos = gh.scope(prefs.github.all_repos, gh_cfg.get("repos_allowlist", []))
