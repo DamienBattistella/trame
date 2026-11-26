@@ -64,6 +64,11 @@ const memory: { meetings: Meeting[] | null; directory: string; readAt: Date | nu
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
 const clock = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+/** « à 10:02 » aujourd'hui, sinon « le 25/11 à 10:02 » (liste gardée d'un jour précédent). */
+const readLabel = (d: Date) =>
+  d.toDateString() === new Date().toDateString()
+    ? `à ${clock(d)}`
+    : `le ${d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} à ${clock(d)}`;
 
 /** Réunions Teams terminées et leur transcription, enregistrée en .vtt sur le poste
  *  (lisible par le skill meeting-report). Trame ouvre chaque conversation de réunion dans
@@ -88,6 +93,18 @@ export function Meetings({ trame }: { trame: Trame }) {
   useEffect(() => {
     Object.assign(memory, { meetings, readAt, directory, fetches });
   }, [meetings, readAt, directory, fetches]);
+
+  // Au premier affichage, la liste gardée sur le poste : elle survit au redémarrage et aux mises à jour.
+  useEffect(() => {
+    if (memory.meetings) return;
+    void trame.knownMeetings().then((res) => {
+      // Une lecture dans Teams arrivée entre-temps a la priorité.
+      if (!res.ok || res.meetings.length === 0 || memory.meetings) return;
+      setMeetings(res.meetings);
+      setReadAt(res.readAt);
+      setDirectory(res.directory);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (directory) return;
@@ -239,7 +256,7 @@ export function Meetings({ trame }: { trame: Trame }) {
           <p className="min-w-0 flex-1 text-xs text-pretty text-muted-foreground tabular-nums" aria-live="polite">
             {plural(meetings.length, "réunion")}
             {savedCount > 0 && ` · ${plural(savedCount, "enregistrée")}`}
-            {readAt && ` · lue à ${clock(readAt)}`}
+            {readAt && ` · lue ${readLabel(readAt)}`}
           </p>
           {batch ? (
             <Button variant="secondary" size="sm" className="rounded-full tabular-nums" onClick={() => (stopBatch.current = true)}>

@@ -375,6 +375,54 @@ def remember_dir(home: Path, directory: Path) -> None:
         pass
 
 
+# --- liste des réunions gardée sur le poste (%APPDATA%\Trame, conservé par les mises à jour) ---
+MEETINGS_KEPT = 500
+_MEETING_KEYS = ("thread_id", "chat", "mid", "title", "when", "transcript", "meeting_id", "date", "start", "end",
+                 "organizer")
+
+
+def _meetings_file(home: Path) -> Path:
+    return home / "meetings.json"
+
+
+def load_meetings(home: Path) -> tuple[list[dict], Optional[str]]:
+    """Les réunions de la dernière lecture et son heure (ISO), sans toucher à Teams."""
+    try:
+        raw = json.loads(_meetings_file(home).read_text(encoding="utf-8"))
+        items = [m for m in raw.get("meetings") or [] if isinstance(m, dict) and m.get("meeting_id")
+                 and m.get("thread_id") and m.get("mid")]
+        read_at = raw.get("read_at") if isinstance(raw.get("read_at"), str) else None
+        return items, read_at
+    except (OSError, ValueError, AttributeError):
+        return [], None
+
+
+def merge_meetings(known: Iterable[dict], found: Iterable[dict]) -> list[dict]:
+    """Les réunions lues à l'instant, plus celles déjà connues qui ne sont plus dans la
+    fenêtre récente de Teams : une réunion vue une fois n'est jamais perdue. Une valeur
+    lue gagne, sauf un organisateur vide (on garde celui déjà connu)."""
+    by_id: dict[str, dict] = {m["meeting_id"]: dict(m) for m in known}
+    for m in found:
+        old = by_id.get(m["meeting_id"], {})
+        by_id[m["meeting_id"]] = {**old, **m, "organizer": m.get("organizer") or old.get("organizer", "")}
+    out = list(by_id.values())
+    out.sort(key=lambda m: (m.get("date") is not None, m.get("date") or "", m.get("start") or ""), reverse=True)
+    return out[:MEETINGS_KEPT]
+
+
+def store_meetings(home: Path, meetings: Iterable[dict], read_at: str) -> None:
+    """Écrit la liste (sans l'état du fichier, relu du disque à chaque fois) ; fichier
+    remplacé d'un bloc pour ne jamais laisser une liste à moitié écrite."""
+    items = [{k: m.get(k) for k in _MEETING_KEYS} for m in meetings]
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        tmp = _meetings_file(home).with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"read_at": read_at, "meetings": items}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, _meetings_file(home))
+    except OSError:
+        pass
+
+
 def save(directory: Path, name: str, content: str) -> Path:
     """Écrit le fichier sans jamais en écraser un autre : « … (2).vtt » au besoin."""
     directory.mkdir(parents=True, exist_ok=True)
