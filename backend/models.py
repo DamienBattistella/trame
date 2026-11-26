@@ -220,6 +220,16 @@ class AppState(BaseModel):
     # Conversations épinglées en haut de la liste, dans l'ordre choisi (identifiants).
     # Indépendant de « Suivie » : une conversation non suivie peut être en favori.
     favorites: list[str] = Field(default_factory=list)
+    # Conversations archivées (identifiant -> détail) : hors des sections principales,
+    # de retour au premier message reçu. Rien n'est supprimé, ni dans Trame ni dans Teams.
+    archived: dict[str, "Archived"] = Field(default_factory=dict)
+
+
+class Archived(BaseModel):
+    at: str  # ISO, heure locale
+    auto: bool = False  # archivée par l'archivage automatique (sinon à la main)
+    label: Optional[str] = None  # heure de la liste Teams au moment de l'archivage
+    hidden: bool = False  # aussi masquée dans Teams (Microsoft Graph)
 
 
 class UndoableSend(BaseModel):

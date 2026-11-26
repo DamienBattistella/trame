@@ -10,6 +10,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Iterator, Callable, Iterable, Optional, Sequence
 
+import archiving
 import attachments as attachmod
 import config as cfgmod
 import follow_ups as followmod
@@ -28,7 +29,7 @@ import transcripts as transcriptsmod
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
+from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
 from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
@@ -94,6 +95,7 @@ class Watcher:
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
             watchlist=[WatchEntity(**w) for w in self.cfg.get("watchlist", [])],
             favorites=_unique(str(t) for t in self.cfg.get("favorites", []) if t),
+            archived=_archived(self.cfg.get("archived")),
             capabilities=Capabilities(react=bool(getattr(driver, "supports_reactions", False)),
                                       reply=bool(getattr(driver, "supports_reply", False)),
                                       mentions=bool(getattr(driver, "supports_mentions", False)),
@@ -105,6 +107,8 @@ class Watcher:
         self._lock = threading.RLock()
         self._ui_lock = threading.Lock()
         self._briefs: dict[str, Brief] = {}
+        # Dernier message vu passer, par conversation : complète l'heure de la liste Teams.
+        self._seen_at: dict[str, datetime] = {}
         self._history: dict[str, tuple[float, str]] = {}
         # thread id -> (read at, messages, how many were asked, start of the conversation reached)
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
@@ -213,6 +217,7 @@ class Watcher:
             self._check_wake.set()
         threading.Thread(target=self._check_loop, daemon=True).start()
         threading.Thread(target=self._follow_up_loop, daemon=True).start()
+        threading.Thread(target=self._archive_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -580,6 +585,10 @@ class Watcher:
     MAX_NOTICES = 20
 
     def _on_message(self, msg: IncomingMessage) -> None:
+        # Un message reçu ramène une conversation archivée, comme Teams pour un chat masqué.
+        self._seen_at[msg.thread_id] = datetime.now()
+        if msg.thread_id in self.state.archived:
+            self._unarchive(msg.thread_id, "nouveau message")
         # Followed or not, an open discussion view rereads the conversation: its cached
         # copy lacks this message (one of the user's own, typed in Teams, included).
         self._touch(msg.thread_id)
@@ -1940,6 +1949,115 @@ class Watcher:
         self._persist_favorites()
         return favorites
 
+    # --- archivage ---
+    ARCHIVE_EVERY = 600.0
+
+    def set_archived(self, thread_id: str, archived: bool) -> dict:
+        """Archiver (ou désarchiver) à la main. Rien n'est supprimé ; dans Teams, la
+        conversation n'est masquée que si l'option est active et Graph connecté."""
+        with self._lock:
+            entity = self._entity(thread_id)
+            was = thread_id in self.state.archived
+        if archived and not was:
+            self._archive(entity, auto=False)
+        elif not archived and was:
+            self._unarchive(thread_id, None)
+        return self.archived_view()
+
+    def archived_view(self) -> dict:
+        with self._lock:
+            return {t: a.model_dump() for t, a in self.state.archived.items()}
+
+    def can_hide_in_teams(self) -> bool:
+        """Masquer dans Teams demande Microsoft Graph : jamais par la page Teams."""
+        client = getattr(self.driver, "_client", None)
+        try:
+            return bool(callable(client) and client() is not None and hasattr(self.driver, "hide_chat"))
+        except Exception:
+            return False
+
+    def _hide_in_teams(self, thread_id: str, hide: bool) -> bool:
+        if not self.can_hide_in_teams():
+            return False
+        try:
+            return bool(self.driver.hide_chat(thread_id, hide))
+        except Exception as e:
+            self.log("warn", f"Teams : conversation non {'masquée' if hide else 'réaffichée'} ({e})")
+            return False
+
+    def _archive(self, entity: WatchEntity, auto: bool) -> None:
+        hide = bool((self.cfg.get("archive") or {}).get("hide_in_teams", False))
+        hidden = self._hide_in_teams(entity.thread_id, True) if hide else False
+        with self._lock:
+            self.state.archived = {**self.state.archived, entity.thread_id: Archived(
+                at=datetime.now().isoformat(timespec="seconds"), auto=auto, label=entity.last_activity, hidden=hidden)}
+        self._persist_archived()
+        how = "sans activité depuis longtemps" if auto else "à la main"
+        self.log("info", f"Conversation archivée ({how}) : {entity.display_name}" + (" · masquée dans Teams" if hidden else ""))
+
+    def _unarchive(self, thread_id: str, why: Optional[str]) -> None:
+        with self._lock:
+            info = self.state.archived.get(thread_id)
+            if info is None:
+                return
+            self.state.archived = {t: a for t, a in self.state.archived.items() if t != thread_id}
+            name = next((w.display_name for w in self.state.watchlist if w.thread_id == thread_id), thread_id)
+        self._persist_archived()
+        if info.hidden:
+            self._hide_in_teams(thread_id, False)
+        self.log("info", f"Conversation désarchivée{f' ({why})' if why else ''} : {name}")
+
+    def _wake_from_list(self, entities: list[WatchEntity]) -> None:
+        """Une conversation archivée dont la liste Teams montre une activité nouvelle (non lue,
+        ou une autre heure qu'à l'archivage) revient d'elle-même."""
+        for e in entities:
+            info = self.state.archived.get(e.thread_id)
+            if info is None:
+                continue
+            if e.unread or (e.last_activity and info.label and e.last_activity != info.label):
+                self._unarchive(e.thread_id, "nouveau message")
+
+    def auto_archive(self, now: Optional[datetime] = None) -> list[str]:
+        """Archive les conversations sans activité depuis le nombre de jours choisi.
+        Jamais un favori, une réponse à relire, une relance en cours ni le mode Auto,
+        ni une conversation dont l'âge est inconnu."""
+        days = settingsmod.archive_after(self.cfg.get("archive") or {})
+        if not days:
+            return []
+        now = now or datetime.now()
+        with self._lock:
+            drafts = {d.thread_id for d in self.state.drafts}
+            follow = {f.thread_id for f in self.state.follow_ups}
+            favorites = list(self.state.favorites)
+            candidates = [w for w in self.state.watchlist if w.thread_id not in self.state.archived and not w.is_self]
+        done: list[str] = []
+        for w in candidates:
+            if archiving.protected(w.thread_id, favorites=favorites, drafts=drafts, follow_ups=follow,
+                                   auto=w.watch and w.mode == "auto"):
+                continue
+            seen = self._seen_at.get(w.thread_id)
+            if archiving.is_stale(archiving.last_activity(w.last_activity, seen, now), days, now.date()):
+                self._archive(w, auto=True)
+                done.append(w.thread_id)
+        return done
+
+    def _archive_loop(self) -> None:
+        while not self._stop.wait(self.ARCHIVE_EVERY):
+            try:
+                self.auto_archive()
+            except Exception as e:
+                self.log("warn", f"Archivage automatique impossible : {e}")
+
+    def _persist_archived(self) -> None:
+        with self._lock:
+            cfg = dict(self.cfg)
+            cfg["archived"] = {t: a.model_dump() for t, a in self.state.archived.items()}
+            self.cfg = cfg
+            try:
+                cfgmod.save(cfg)
+            except Exception as e:
+                self.log("warn", f"Sauvegarde des archives impossible: {e}")
+
     def _persist_favorites(self) -> None:
         with self._lock:
             cfg = dict(self.cfg)
@@ -2455,6 +2573,7 @@ class Watcher:
                 discovered = []
             self.state.watchlist = [w.model_copy(update={"watch": False, "mode": "draft"}) for w in discovered]
             self.state.favorites = []
+            self.state.archived = {}
         self.log("info", "Trame réinitialisé : configuration à refaire")
 
     def set_soul(self, content: str) -> None:
@@ -2556,8 +2675,10 @@ class Watcher:
             if w.thread_id in moved:
                 continue
             if w.thread_id not in found and w.thread_id not in legacy and (
-                    w.watch or w.thread_id in self._started or w.thread_id in self.state.favorites):
+                    w.watch or w.thread_id in self._started or w.thread_id in self.state.favorites
+                    or w.thread_id in self.state.archived):
                 out.append(w)
+        self._wake_from_list(out)
         return out
 
     def health(self) -> dict:
@@ -2636,3 +2757,14 @@ class Watcher:
         item = journalmod.now_item(level, text)
         self.journal.append(item)
         self.state.logs = [item, *self.state.logs][:200]
+
+
+def _archived(raw) -> dict:
+    out = {}
+    if isinstance(raw, dict):
+        for t, a in raw.items():
+            try:
+                out[str(t)] = Archived(**a) if isinstance(a, dict) else Archived(at=str(a))
+            except Exception:
+                continue
+    return out

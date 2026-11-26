@@ -105,6 +105,8 @@ export interface Settings {
   brief: { enabled: boolean; lastMessages: number };
   /** Relances : proposer de relancer une question restée sans réponse depuis delayHours heures ouvrées. */
   followUps: { enabled: boolean; delayHours: number };
+  /** Archivage : sans activité depuis afterDays jours (0 : jamais), et masquer aussi dans Teams (Graph). */
+  archive: { afterDays: number; hideInTeams: boolean };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
@@ -122,6 +124,7 @@ export interface SettingsPatch {
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;
   followUps?: Partial<Settings["followUps"]>;
+  archive?: Partial<Settings["archive"]>;
   telemetry?: Partial<Settings["telemetry"]>;
   mcp?: { enabled?: boolean; regenerateToken?: boolean; allowSend?: boolean };
   teamsWeb?: { enabled?: boolean };

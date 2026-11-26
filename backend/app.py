@@ -127,6 +127,10 @@ class FavoriteBody(BaseModel):
     favorite: bool
 
 
+class ArchiveBody(BaseModel):
+    archived: bool
+
+
 class FavoritesOrderBody(BaseModel):
     order: list[str] = Field(max_length=500)
 
@@ -371,6 +375,14 @@ def create_app(
     @app.post("/api/favorite/{thread_id:path}")
     def set_favorite(thread_id: str, body: FavoriteBody):
         return {"ok": True, "favorites": watcher.set_favorite(thread_id, body.favorite)}
+
+    @app.post("/api/archive/{thread_id:path}")
+    def set_archived(thread_id: str, body: ArchiveBody):
+        return {"ok": True, "archived": watcher.set_archived(thread_id, body.archived)}
+
+    @app.get("/api/archive")
+    def archive_status():
+        return {"ok": True, "archived": watcher.archived_view(), "can_hide_in_teams": watcher.can_hide_in_teams()}
 
     @app.put("/api/favorites")
     def reorder_favorites(body: FavoritesOrderBody):

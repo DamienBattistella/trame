@@ -75,6 +75,18 @@ def follow_up_delay(f: dict) -> int:
     return _int((f or {}).get("delay_hours", 24), 24, 1, 168)
 
 
+class ArchiveSettings(BaseModel):
+    """Archivage automatique des conversations sans activité depuis after_days jours
+    (0 : jamais), et masquage dans Teams par Microsoft Graph (désactivé par défaut)."""
+    after_days: int = Field(default=0, ge=0, le=365)
+    hide_in_teams: bool = False
+
+
+def archive_after(a: dict) -> int:
+    days = _int((a or {}).get("after_days", 0), 0, 0, 365)
+    return days
+
+
 class TelemetrySettings(BaseModel):
     enabled: bool = False
     endpoint: str = Field(default="", max_length=300)
@@ -115,6 +127,7 @@ class Settings(BaseModel):
     safety: SafetySettings
     brief: BriefSettings
     follow_ups: FollowUpSettings = FollowUpSettings()
+    archive: ArchiveSettings = ArchiveSettings()
     telemetry: TelemetrySettings = TelemetrySettings()
     mcp: McpSettings = McpSettings()
     teams_web: TeamsWebSettings = TeamsWebSettings()
@@ -165,6 +178,11 @@ class FollowUpPatch(_Patch):
     delay_hours: Optional[int] = Field(default=None, ge=1, le=168)
 
 
+class ArchivePatch(_Patch):
+    after_days: Optional[int] = Field(default=None, ge=0, le=365)
+    hide_in_teams: Optional[bool] = None
+
+
 class TelemetryPatch(_Patch):
     enabled: Optional[bool] = None
     endpoint: Optional[str] = Field(default=None, max_length=300)
@@ -193,6 +211,7 @@ class SettingsPatch(_Patch):
     safety: Optional[SafetyPatch] = None
     brief: Optional[BriefPatch] = None
     follow_ups: Optional[FollowUpPatch] = None
+    archive: Optional[ArchivePatch] = None
     telemetry: Optional[TelemetryPatch] = None
     mcp: Optional[McpPatch] = None
     teams_web: Optional[TeamsWebPatch] = None
@@ -254,6 +273,8 @@ def from_config(cfg: dict) -> Settings:
         ),
         follow_ups=FollowUpSettings(enabled=bool((cfg.get("follow_ups") or {}).get("enabled", True)),
                                     delay_hours=follow_up_delay(cfg.get("follow_ups") or {})),
+        archive=ArchiveSettings(after_days=archive_after(cfg.get("archive") or {}),
+                                hide_in_teams=bool((cfg.get("archive") or {}).get("hide_in_teams", False))),
         telemetry=_telemetry(cfg.get("telemetry", {})),
         teams_web=TeamsWebSettings(enabled=True),
         mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or ""),
@@ -312,6 +333,7 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
         safety[key] = getattr(merged.safety, key)
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
     out["follow_ups"] = merged.follow_ups.model_dump()
+    out["archive"] = merged.archive.model_dump()
     out["telemetry"] = merged.telemetry.model_dump()
     out["mcp"] = merged.mcp.model_dump()
     out["teams_web"] = merged.teams_web.model_dump()

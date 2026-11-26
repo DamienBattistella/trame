@@ -239,7 +239,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   );
 }
 
-type Section = "brain" | "github" | "safety" | "brief" | "followUps" | "telemetry" | "mcp";
+type Section = "brain" | "github" | "safety" | "brief" | "followUps" | "archive" | "telemetry" | "mcp";
 type SaveState = "idle" | "saving" | "saved";
 
 const COUNTDOWNS = [0, 3, 5, 10];
@@ -281,17 +281,18 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
   const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", followUps: "idle", telemetry: "idle", mcp: "idle" });
-  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, followUps: 0, telemetry: 0, mcp: 0 });
+  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", followUps: "idle", archive: "idle", telemetry: "idle", mcp: "idle" });
+  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, followUps: 0, archive: 0, telemetry: 0, mcp: 0 });
   const timers = useRef<Partial<Record<Section, ReturnType<typeof setTimeout>>>>({});
   const brainCtl = useAnimationControls();
   const githubCtl = useAnimationControls();
   const safetyCtl = useAnimationControls();
   const briefCtl = useAnimationControls();
   const followUpsCtl = useAnimationControls();
+  const archiveCtl = useAnimationControls();
   const telemetryCtl = useAnimationControls();
   const mcpCtl = useAnimationControls();
-  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, followUps: followUpsCtl, telemetry: telemetryCtl, mcp: mcpCtl };
+  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, followUps: followUpsCtl, archive: archiveCtl, telemetry: telemetryCtl, mcp: mcpCtl };
 
   const load = async () => {
     setLoadError(null);
@@ -422,7 +423,15 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       label: "Conversations",
       icon: MessagesSquare,
       desc: "Quelles conversations Trame suit, et qui envoie : toi ou Trame.",
-      body: <Watchlist trame={trame} onBrief={onBrief} />,
+      state: save.archive,
+      body: (
+        <div className="flex flex-col gap-6">
+          <motion.div animate={archiveCtl} className="max-w-3xl">
+            <ArchiveSettingsBody trame={trame} value={settings.archive} onChange={(archive) => update("archive", { archive: { ...settings.archive, ...archive } })} />
+          </motion.div>
+          <Watchlist trame={trame} onBrief={onBrief} />
+        </div>
+      ),
     },
     {
       id: "people",
@@ -746,6 +755,56 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
           </motion.section>
         </AnimatePresence>
       </ScrollArea>
+    </div>
+  );
+}
+
+const ARCHIVE_AFTER = [0, 7, 14, 30, 90];
+
+/**
+ * Archivage automatique, désactivé par défaut : une conversation qui disparaît seule
+ * surprendrait (Teams lui-même ne masque rien tout seul). Masquer aussi dans Teams
+ * demande Microsoft Graph ; par la page Teams, l'option reste grisée et le dit.
+ */
+function ArchiveSettingsBody({ trame, value, onChange }: { trame: Trame; value: Settings["archive"]; onChange: (a: Partial<Settings["archive"]>) => void }) {
+  const [canHide, setCanHide] = useState<boolean | null>(null);
+  useEffect(() => {
+    trame.archiveStatus().then((r) => setCanHide(r.ok ? r.canHideInTeams : false));
+  }, [trame.connected]);
+  const days = Array.from(new Set([...ARCHIVE_AFTER, value.afterDays])).sort((a, b) => a - b);
+  return (
+    <div>
+      <SectionLabel>Archivage</SectionLabel>
+      <GroupList>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <span className="flex min-w-0 flex-col">
+            <span className="text-sm">Archiver les conversations sans activité depuis</span>
+            <span className="text-xs text-muted-foreground">Jamais un favori, une réponse à relire, une relance en cours ni une conversation en mode Auto.</span>
+          </span>
+          <Segment
+            label="Archiver après"
+            value={String(value.afterDays)}
+            options={days.map((n) => ({ value: String(n), label: n === 0 ? "Jamais" : `${n} j` }))}
+            onChange={(v) => onChange({ afterDays: Number(v) })}
+          />
+        </div>
+        <ToggleRow
+          label="Masquer aussi dans Teams"
+          hint={
+            canHide
+              ? "Par Microsoft Graph : la conversation disparaît aussi de ta liste Teams, et y revient quand tu la désarchives ou au prochain message."
+              : "Demande Microsoft Graph (Réglages › Général). Par la page Teams, l'archivage reste dans Trame."
+          }
+          checked={value.hideInTeams && Boolean(canHide)}
+          disabled={!canHide}
+          onChange={(hideInTeams) => onChange({ hideInTeams })}
+        />
+        <div className="px-4 py-2.5 text-xs text-muted-foreground">
+          Une conversation archivée quitte les sections de Discussions pour « Archivées », en bas de la liste. Rien n'est
+          supprimé ; elle revient d'elle-même au prochain message reçu. Pour en archiver une à la main : clic droit sur la
+          conversation, ou glisser-déposer sur « Archivées ».
+        </div>
+      </GroupList>
     </div>
   );
 }

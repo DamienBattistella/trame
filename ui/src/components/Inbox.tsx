@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
-import { ArrowDown, ArrowUp, BellRing, ChevronRight, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, BellRing, CheckCheck, ChevronRight, EllipsisVertical, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ import type { BriefTarget } from "@/components/BriefSheet";
 const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
 const BRIEF_WIDTH = 420;
 
-type GroupId = "favorites" | "review" | "followUp" | "unread" | "followed" | "others";
+type GroupId = "favorites" | "review" | "followUp" | "unread" | "followed" | "others" | "archived";
 const GROUPS: { id: GroupId; label: string }[] = [
   { id: "favorites", label: "Favoris" },
   { id: "review", label: "À relire" },
@@ -34,6 +34,7 @@ const GROUPS: { id: GroupId; label: string }[] = [
   { id: "unread", label: "Non lus" },
   { id: "followed", label: "Suivies" },
   { id: "others", label: "Autres" },
+  { id: "archived", label: "Archivées" },
 ];
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
 
@@ -44,7 +45,7 @@ const byRecent = (a: WatchEntity, b: WatchEntity) =>
 
 /** Discussions : barre latérale regroupée par statut, discussion choisie à droite. */
 export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarget) => void }) {
-  const { watchlist, drafts, followUps, favorites } = trame.state;
+  const { watchlist, drafts, followUps, favorites, archived } = trame.state;
   const favIndex = useMemo(() => new Map(favorites.map((t, i) => [t, i])), [favorites]);
   const isFavorite = (threadId: string) => favIndex.has(threadId);
   const [query, setQuery] = useState("");
@@ -55,7 +56,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     setSelected(threadId);
     setFound(hit);
   };
-  const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: true });
+  const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: true, archived: true });
   const [catching, setCatching] = useState(false);
   // Panneau ancré à droite : le résumé, ou la réflexion du modèle pendant une action.
   const [dock, setDock] = useState<"brief" | "reflection" | null>(null);
@@ -95,8 +96,11 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
 
   // Un favori n'apparaît qu'une fois, dans « Favoris » : ses indicateurs (à relire,
   // relance, non lu, présence) restent sur sa ligne.
+  // Archivée : seulement dans « Archivées », jusqu'au prochain message reçu (le moteur la ramène).
   const groupOf = (c: WatchEntity): GroupId =>
-    favIndex.has(c.threadId)
+    c.threadId in archived
+      ? "archived"
+      : favIndex.has(c.threadId)
       ? "favorites"
       : draftOf.has(c.threadId)
       ? "review"
@@ -109,13 +113,13 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             : "others";
 
   const grouped = useMemo(() => {
-    const out: Record<GroupId, WatchEntity[]> = { favorites: [], review: [], followUp: [], unread: [], followed: [], others: [] };
+    const out: Record<GroupId, WatchEntity[]> = { favorites: [], review: [], followUp: [], unread: [], followed: [], others: [], archived: [] };
     for (const c of items) out[groupOf(c)].push(c);
     for (const g of Object.values(out)) g.sort(byRecent);
     // Les favoris gardent l'ordre choisi par l'utilisateur, pas l'activité.
     out.favorites.sort((a, b) => (favIndex.get(a.threadId) ?? 0) - (favIndex.get(b.threadId) ?? 0));
     return out;
-  }, [items, draftOf, followUpOf, favIndex]);
+  }, [items, draftOf, followUpOf, favIndex, archived]);
 
   const groups = useMemo(() => {
     if (!query) return grouped;
@@ -128,6 +132,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
       unread: keep(grouped.unread),
       followed: keep(grouped.followed),
       others: keep(grouped.others),
+      archived: keep(grouped.archived),
     };
   }, [grouped, query]);
 
@@ -286,6 +291,9 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
       if (!r.ok) toast.error("Déplacement impossible", { description: r.error });
       return !r.ok;
     };
+    if (target === "archived") return archive(c, true);
+    // Ranger une conversation archivée ailleurs la sort d'abord des archives.
+    if (id in archived && fail(await trame.setArchived(id, false))) return;
     if (target === "favorites") {
       const order = prevFavs.filter((t) => t !== id);
       const at = index === undefined ? order.length : Math.max(0, Math.min(index, order.length));
@@ -299,7 +307,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
       setCollapsed((st) => ({ ...st, favorites: false }));
     } else {
       const watch = target === "followed";
-      if (!wasFav && prevWatch === watch) {
+      if (!wasFav && prevWatch === watch && !(id in archived)) {
         toast.info(watch ? `${c.displayName} est déjà suivie` : `${c.displayName} n'est déjà plus suivie`);
         return;
       }
@@ -309,6 +317,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     }
     // Annuler défait exactement ce qui vient d'être fait, avec les mêmes actions.
     const undo = async () => {
+      if (c.threadId in archived) await trame.setArchived(id, true);
       if (target === "favorites") return void (await trame.toggleFavorite(id));
       if (wasFav) {
         await trame.toggleFavorite(id);
@@ -325,6 +334,22 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     });
   };
 
+  /** Archiver (ou désarchiver) : la conversation quitte les sections, rien n'est supprimé. */
+  const archive = async (c: WatchEntity, on: boolean) => {
+    const res = await trame.setArchived(c.threadId, on);
+    if (!res.ok) return void toast.error(on ? "Archivage impossible" : "Désarchivage impossible", { description: res.error });
+    if (!on) return void toast.success(`${c.displayName} désarchivée`);
+    if (c.threadId === selected) setSelected(null);
+    toast.success(`${c.displayName} archivée`, {
+      description: "Elle revient d'elle-même au prochain message reçu.",
+      action: { label: "Annuler", onClick: () => void trame.setArchived(c.threadId, false) },
+    });
+  };
+  const markRead = async (c: WatchEntity) => {
+    const res = await trame.markRead(c.threadId);
+    if (!res.ok) toast.error("Impossible de marquer comme lu", { description: res.error });
+  };
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const [dragging, setDragging] = useState<WatchEntity | null>(null);
   const [overGroup, setOverGroup] = useState<GroupId | null>(null);
@@ -333,8 +358,21 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   // Le clic qui termine un glisser-déposer n'ouvre pas la conversation.
   const dragged = useRef(false);
 
+  // Position réelle du pointeur pendant le glisser (voir livePointer).
+  useEffect(() => {
+    if (!dragging) return;
+    const track = (e: PointerEvent) => (livePointer = { x: e.clientX, y: e.clientY });
+    window.addEventListener("pointermove", track, true);
+    return () => {
+      window.removeEventListener("pointermove", track, true);
+      livePointer = null;
+    };
+  }, [dragging]);
+
   const onDragStart = (e: DragStartEvent) => {
     dragged.current = true;
+    const start = e.activatorEvent as PointerEvent;
+    livePointer = { x: start.clientX, y: start.clientY };
     setDragging(items.find((c) => c.threadId === e.active.id) ?? null);
   };
   const onDragMove = (e: DragMoveEvent) => {
@@ -344,8 +382,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     if (group !== "favorites" || !over) return setInsertAt(null);
     const favId = over.data.current?.favId as string | undefined;
     if (!favId) return setInsertAt(grouped.favorites.length);
-    const start = e.activatorEvent as PointerEvent;
-    const y = start.clientY + e.delta.y;
+    const y = livePointer?.y ?? (e.activatorEvent as PointerEvent).clientY + e.delta.y;
     const i = grouped.favorites.findIndex((c) => c.threadId === favId);
     const rect = document.querySelector(`[data-drop="fav:${CSS.escape(favId)}"]`)?.getBoundingClientRect();
     if (!rect) return setInsertAt(null);
@@ -389,6 +426,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
               active={c.threadId === current?.threadId}
               onClick={() => !dragged.current && select(c.threadId)}
             />
+            <RowMenuButton name={c.displayName} />
             <FavoriteStar favorite={fav} name={c.displayName} onToggle={() => toggleFavorite(c)} />
           </DraggableRow>
         </ContextMenuTrigger>
@@ -415,22 +453,44 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
           )}
           {/* L'équivalent clavier du glisser-déposer : ranger la conversation ailleurs. */}
           <ContextMenuSeparator />
-          {!fav && (
-            <ContextMenuItem onSelect={() => void moveTo(c, "favorites")}>
-              <Star />
-              Déplacer vers Favoris
-            </ContextMenuItem>
-          )}
-          {(fav || !c.watch) && (
-            <ContextMenuItem onSelect={() => void moveTo(c, "followed")}>
-              <MessagesSquare />
-              Déplacer vers Suivies
-            </ContextMenuItem>
-          )}
-          {(fav || c.watch) && (
+          {fav ? (
+            <>
+              <ContextMenuItem onSelect={() => void moveTo(c, "followed")}>
+                <MessagesSquare />
+                Déplacer vers Suivies
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => void moveTo(c, "others")}>
+                <EyeOff />
+                Déplacer vers Autres (ne plus suivre)
+              </ContextMenuItem>
+            </>
+          ) : c.watch ? (
             <ContextMenuItem onSelect={() => void moveTo(c, "others")}>
               <EyeOff />
-              Déplacer vers Autres (ne plus suivre)
+              Ne plus suivre
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem onSelect={() => void moveTo(c, "followed")}>
+              <MessagesSquare />
+              Suivre
+            </ContextMenuItem>
+          )}
+          {c.unread && (
+            <ContextMenuItem onSelect={() => void markRead(c)}>
+              <CheckCheck />
+              Marquer comme lu
+            </ContextMenuItem>
+          )}
+          <ContextMenuSeparator />
+          {c.threadId in archived ? (
+            <ContextMenuItem onSelect={() => void archive(c, false)}>
+              <ArchiveRestore />
+              Désarchiver
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem onSelect={() => void archive(c, true)}>
+              <Archive />
+              Archiver
             </ContextMenuItem>
           )}
         </ContextMenuContent>
@@ -506,7 +566,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             onOpened={(threadId) => {
               // La conversation peut tomber dans un groupe replié (« Autres ») : on l'ouvre.
               setQuery("");
-              setCollapsed({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: false });
+              setCollapsed({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: false, archived: false });
               setSelected(threadId);
             }}
           />
@@ -517,6 +577,8 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             collisionDetection={innermost}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
+            // onDragMove part avant que dnd-kit ne change de cible : onDragOver donne la cible à jour.
+            onDragOver={onDragMove}
             onDragEnd={onDragEnd}
             onDragCancel={endDrag}
             accessibility={{ announcements, screenReaderInstructions: { draggable: "" } }}
@@ -790,9 +852,9 @@ function FavoriteStar({ favorite, name, onToggle }: { favorite: boolean; name: s
 
 // ── Glisser-déposer ─────────────────────────────────────────────────────────
 
-type DropTarget = "favorites" | "followed" | "others";
+type DropTarget = "favorites" | "followed" | "others" | "archived";
 /** Seules ces sections reçoivent une conversation : les autres suivent un état calculé par Trame. */
-const isDropTarget = (g: GroupId | null): g is DropTarget => g === "favorites" || g === "followed" || g === "others";
+const isDropTarget = (g: GroupId | null): g is DropTarget => g === "favorites" || g === "followed" || g === "others" || g === "archived";
 const REFUSED: Partial<Record<GroupId, string>> = {
   review: "« À relire » suit les réponses que Trame prépare",
   followUp: "« À relancer » suit les questions restées sans réponse",
@@ -800,15 +862,22 @@ const REFUSED: Partial<Record<GroupId, string>> = {
 };
 
 /**
+ * Position du pointeur à l'écran pendant un glisser. Les coordonnées de dnd-kit ajoutent
+ * le défilement de la liste : une fois la liste défilée, elles visent une autre section.
+ */
+let livePointer: { x: number; y: number } | null = null;
+
+/**
  * Cible sous le pointeur, lue dans la page telle qu'elle est : les sections vides qui paraissent
  * au début du glisser (et s'animent) décalent les autres, et les mesures de dnd-kit prises au
  * départ ne le voient pas. Le favori survolé l'emporte sur sa section (ligne d'insertion).
  */
 const innermost: CollisionDetection = ({ pointerCoordinates, droppableContainers }) => {
-  if (!pointerCoordinates) return [];
+  const at = livePointer ?? pointerCoordinates;
+  if (!at) return [];
   const live = new Set(droppableContainers.filter((d) => !d.disabled).map((d) => String(d.id)));
   const hits = document
-    .elementsFromPoint(pointerCoordinates.x, pointerCoordinates.y)
+    .elementsFromPoint(at.x, at.y)
     .map((el) => (el as HTMLElement).dataset?.drop)
     .filter((id): id is string => !!id && live.has(id));
   return [...new Set(hits)]
@@ -902,7 +971,17 @@ function InsertLine({ edge }: { edge: "top" | "bottom" }) {
 /** Aperçu sous le pointeur : la conversation, et ce que le dépôt va faire (ou pourquoi il est refusé). */
 function DragPreview({ c, group }: { c: WatchEntity; group: GroupId | null }) {
   const hint =
-    group === "favorites" ? "Favoris" : group === "followed" ? "Suivre" : group === "others" ? "Ne plus suivre" : group ? REFUSED[group] : null;
+    group === "favorites"
+      ? "Favoris"
+      : group === "followed"
+        ? "Suivre"
+        : group === "others"
+          ? "Ne plus suivre"
+          : group === "archived"
+            ? "Archiver"
+            : group
+              ? REFUSED[group]
+              : null;
   const refused = group !== null && !isDropTarget(group);
   return (
     <div className="flex w-72 cursor-grabbing items-center gap-3 rounded-xl border bg-popover px-2 py-2 shadow-lg">
@@ -912,5 +991,34 @@ function DragPreview({ c, group }: { c: WatchEntity; group: GroupId | null }) {
         {hint && <span className={cn("text-xs", refused ? "line-clamp-2 text-muted-foreground" : "truncate text-link")}>{refused ? `Pas ici : ${hint}` : hint}</span>}
       </span>
     </div>
+  );
+}
+
+/**
+ * « … » au survol d'une ligne : ouvre le même menu que le clic droit, là où est le bouton.
+ * Hors de l'ordre de tabulation comme l'étoile : au clavier, touche Menu ou Maj+F10.
+ */
+function RowMenuButton({ name }: { name: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={`Actions pour ${name}`}
+          aria-haspopup="menu"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: r.left, clientY: r.bottom + 2 }));
+          }}
+          className="absolute top-1.5 right-8 grid size-6 place-items-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-xs transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:text-foreground focus-visible:opacity-100"
+        >
+          <EllipsisVertical className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>Actions · Maj+F10</TooltipContent>
+    </Tooltip>
   );
 }

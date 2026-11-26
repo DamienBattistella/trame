@@ -91,7 +91,11 @@ export interface TrameState {
   followUps: FollowUpItem[];
   /** Conversations épinglées en haut de la liste, dans l'ordre choisi. Indépendant de « Suivie ». */
   favorites: string[];
+  /** Conversations archivées : hors des sections principales, de retour au premier message reçu. */
+  archived: Record<string, ArchivedInfo>;
 }
+
+export type ArchivedInfo = { at: string; auto: boolean; hidden: boolean };
 
 /** Un repère de la page Teams dont dépend Trame, introuvable. how « page » : absent au
  *  contrôle ; « usage » : absent quand une opération s'en est servie (menus). */
@@ -280,6 +284,7 @@ function mapState(s: any): TrameState {
     teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
     favorites: Array.isArray(s.favorites) ? s.favorites.map(String) : [],
+    archived: mapArchived(s.archived),
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -321,6 +326,10 @@ function mapSettings(s: any): Settings {
     followUps: {
       enabled: s?.follow_ups?.enabled === undefined ? true : Boolean(s.follow_ups.enabled),
       delayHours: Number(s?.follow_ups?.delay_hours ?? 24),
+    },
+    archive: {
+      afterDays: Number(s?.archive?.after_days ?? 0),
+      hideInTeams: Boolean(s?.archive?.hide_in_teams),
     },
     telemetry: {
       enabled: Boolean(s?.telemetry?.enabled),
@@ -528,6 +537,12 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.followUps.delayHours !== undefined) f.delay_hours = p.followUps.delayHours;
     out.follow_ups = f;
   }
+  if (p.archive) {
+    const a: Record<string, unknown> = {};
+    if (p.archive.afterDays !== undefined) a.after_days = p.archive.afterDays;
+    if (p.archive.hideInTeams !== undefined) a.hide_in_teams = p.archive.hideInTeams;
+    out.archive = a;
+  }
   if (p.telemetry) {
     const t: Record<string, unknown> = {};
     if (p.telemetry.enabled !== undefined) t.enabled = p.telemetry.enabled;
@@ -556,6 +571,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
     followUps: { ...s.followUps, ...p.followUps },
+    archive: { ...s.archive, ...p.archive },
     telemetry: { ...s.telemetry, ...p.telemetry },
     teamsWeb: { enabled: p.teamsWeb?.enabled ?? s.teamsWeb.enabled },
     ui: { ...s.ui, ...p.ui },
@@ -571,7 +587,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
   }
   return {
     paused: false,
@@ -592,6 +608,7 @@ function mockState(): TrameState {
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
     favorites: [...mockFavorites],
+    archived: {},
   };
 }
 
@@ -615,6 +632,7 @@ let localSettings: Settings = {
   },
   brief: { enabled: true, lastMessages: 30 },
   followUps: { enabled: true, delayHours: 24 },
+  archive: { afterDays: 0, hideInTeams: false },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
@@ -1984,6 +2002,25 @@ export function useTrame() {
       request("POST", `/api/favorite/${encodeURIComponent(threadId)}`, { favorite })
     );
   };
+  /** Archiver ou désarchiver : optimiste, remis comme avant si le moteur refuse. */
+  const setArchived = async (threadId: string, archived: boolean): Promise<Result> => {
+    if (!connectedRef.current && !demoRef.current) return { ok: false, error: OFFLINE };
+    const prev = stateRef.current.archived;
+    const next = { ...prev };
+    if (archived) next[threadId] = { at: new Date().toISOString(), auto: false, hidden: false };
+    else delete next[threadId];
+    setState((s) => ({ ...s, archived: next }));
+    if (!connectedRef.current) return { ok: true };
+    const res = await request<{ archived: Record<string, unknown> }>("POST", `/api/archive/${encodeURIComponent(threadId)}`, { archived });
+    setState((s) => ({ ...s, archived: res.ok ? mapArchived(res.archived) : prev }));
+    return res;
+  };
+  /** Masquer dans Teams n'est possible que par Microsoft Graph connecté. */
+  const archiveStatus = async (): Promise<Result<{ canHideInTeams: boolean }>> => {
+    if (!connectedRef.current) return { ok: true, canHideInTeams: false };
+    const res = await request<{ can_hide_in_teams: boolean }>("GET", "/api/archive");
+    return res.ok ? { ok: true, canHideInTeams: Boolean(res.can_hide_in_teams) } : res;
+  };
   /** Nouvel ordre des favoris (glisser-déposer, Ctrl+Maj+↑/↓). */
   const reorderFavorites = (order: string[]) =>
     applyFavorites(order, () => request("PUT", "/api/favorites", { order }));
@@ -2088,8 +2125,18 @@ export function useTrame() {
     setMode,
     toggleFavorite,
     reorderFavorites,
+    setArchived,
+    archiveStatus,
   };
 }
 
 export type Trame = ReturnType<typeof useTrame>;
 export { SOUL_MAX_BYTES };
+
+function mapArchived(raw: unknown): Record<string, ArchivedInfo> {
+  const out: Record<string, ArchivedInfo> = {};
+  if (raw && typeof raw === "object")
+    for (const [t, a] of Object.entries(raw as Record<string, any>))
+      out[t] = { at: String(a?.at ?? ""), auto: Boolean(a?.auto), hidden: Boolean(a?.hidden) };
+  return out;
+}
