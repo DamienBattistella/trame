@@ -200,6 +200,122 @@
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
+  // --- Un message précis du fil : réagir, répondre ---
+  const bodyOf = (el) =>
+    (el.querySelector('[data-tid="chat-pane-message"]')?.innerText || el.querySelector('[id^="content-"]')?.innerText || "")
+      .replace(REACTIONS, "")
+      .replace(/\s+\n/g, "\n")
+      .trim();
+  const msgId = (el) => {
+    const c = el.querySelector('[id^="content-"]');
+    if (c) return c.id.slice("content-".length);
+    return el.getAttribute("data-mid") || el.querySelector("[data-mid]")?.getAttribute("data-mid") || "";
+  };
+  // Le petit jeu de réactions de Teams, avec les libellés possibles (anglais, français).
+  const REACTION_NAMES = {
+    like: ["like", "j'aime", "j’aime", "jaime", "pouce"],
+    heart: ["heart", "love", "coeur", "adore"],
+    laugh: ["laugh", "rire", "haha", "drole"],
+    surprised: ["surprised", "surpris", "wow"],
+    sad: ["sad", "triste"],
+    angry: ["angry", "en colere", "colere", "fache"],
+  };
+  const reactionOf = (text) => {
+    const n = norm(text);
+    for (const [key, names] of Object.entries(REACTION_NAMES)) if (names.some((x) => n === x || n.startsWith(x + " ") || n.includes(" " + x + " ") || n.endsWith(" " + x))) return key;
+    return null;
+  };
+  // Réactions que l'utilisateur a déjà mises sur ce message : pastilles enfoncées ou
+  // dont le libellé dit « vous » / « you ».
+  const myReactions = (el) => {
+    const out = new Set();
+    for (const b of el.querySelectorAll('button, [role="button"]')) {
+      const l = label(b) || b.getAttribute("title") || "";
+      const key = reactionOf(l);
+      if (!key || !/\d/.test(l + b.innerText)) continue;
+      if (b.getAttribute("aria-pressed") === "true" || /\b(vous|you)\b/i.test(l)) out.add(key);
+    }
+    return Array.from(out);
+  };
+  // Les messages dans l'ordre, l'auteur reporté sur les messages groupés (comme read).
+  const thread = () => {
+    let sender = "";
+    return Array.from(document.querySelectorAll(MSGS)).map((el) => {
+      const who = el.querySelector('[data-tid="message-author-name"]')?.innerText?.trim();
+      if (who) sender = who;
+      return { el, sender, text: bodyOf(el), id: msgId(el) };
+    });
+  };
+  const sameText = (a, b) => norm(a).slice(0, 80) === norm(b).slice(0, 80);
+  // Le message choisi par l'utilisateur, vérifié par son auteur et son texte : jamais un autre.
+  const findMessage = ({ id, sender, text }) => {
+    const all = thread().filter((m) => m.text);
+    const ok = (m) => sameText(m.text, text) && (!sender || !m.sender || norm(m.sender) === norm(sender));
+    if (id) {
+      const m = all.find((x) => x.id === id);
+      if (m) return ok(m) ? m : null;
+    }
+    for (let i = all.length - 1; i >= 0; i--) if (ok(all[i])) return all[i];
+    return null;
+  };
+  const press = (el) => {
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window, button: 0, isPrimary: true }));
+    }
+  };
+  // Teams n'affiche la barre d'actions d'un message qu'au survol.
+  const hover = (el) => {
+    const target = el.querySelector('[data-tid="chat-pane-message"]') || el;
+    for (const node of [el, target]) {
+      for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"]) {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        node.dispatchEvent(new Ctor(type, { bubbles: type.endsWith("over") || type === "mousemove", view: window }));
+      }
+    }
+  };
+  const ACTIONABLE = 'button, [role="button"], [role="menuitem"]';
+  const actions = () => Array.from(document.querySelectorAll(ACTIONABLE)).filter(visible);
+  // Bouton de la barre d'actions (pas une pastille de réaction déjà posée, qui porte un compteur).
+  const findAction = (match) => actions().find((b) => {
+    const l = label(b) || b.getAttribute("title") || "";
+    return l && !/\d/.test(l) && match(l);
+  });
+  const lookup = async (m) => {
+    const found = findMessage(m);
+    if (!found) return null;
+    found.el.scrollIntoView({ block: "nearest" });
+    hover(found.el);
+    await sleep(250);
+    return found;
+  };
+  const QUOTE_SEL = '[data-tid*="quote" i], [data-tid*="reply" i], blockquote, [class*="quote" i]';
+  const composeArea = (box) =>
+    box.closest('[data-tid="message-compose"], [data-tid*="compose" i], form') || box.parentElement?.parentElement || box;
+  const quoted = (box, text) => {
+    const key = norm(text).slice(0, 24);
+    return Array.from(composeArea(box).querySelectorAll(QUOTE_SEL)).some((q) => norm(q.innerText).includes(key));
+  };
+  // « Répondre » sur le message : dans la barre d'actions, sinon dans « Plus d'options ».
+  const quoteMessage = async (target, box) => {
+    const found = await lookup(target);
+    if (!found) return "message cité introuvable ou différent de celui choisi";
+    const isReply = (l) => /^(reply|repondre|quote|citer)\b/.test(norm(l));
+    let btn = findAction(isReply);
+    if (!btn) {
+      const more = findAction((l) => /^(more options|plus d.options|autres options|more actions|plus d.actions)/.test(norm(l)));
+      if (more) {
+        press(more);
+        await waitFor(() => Boolean(findAction(isReply)), 1500);
+        btn = findAction(isReply);
+      }
+    }
+    if (!btn) return "action « Répondre » introuvable sur ce message";
+    press(btn);
+    if (!(await waitFor(() => quoted(box, target.text), 2500))) return "citation du message non visible dans la zone de saisie";
+    return null;
+  };
+
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     title: () => document.title,
@@ -331,6 +447,8 @@
             who: el.querySelector('[data-tid="message-author-name"]')?.innerText?.trim() || "",
             text,
             at,
+            mid: msgId(el),
+            reactions: myReactions(el),
           };
         })
         // Teams intercale des éléments vides (avatar seul) : sans texte ni identifiant,
@@ -378,19 +496,25 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        out.push({ sender, text: m.text, at: m.at });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, reactions: m.reactions });
       }
       return { messages: out.slice(-last), top };
     },
-    type: async ({ name, text, send }) => {
+    type: async ({ name, text, send, quote }) => {
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
-      const box = editor();
+      let box = editor();
       if (!box) return { ok: false, error: "zone de saisie introuvable" };
       if (box.innerText.trim()) return { ok: false, error: "zone de saisie non vide" };
       const fail = (error) => {
         clear(box);
         return { ok: false, error };
       };
+      if (quote) {
+        const why = await quoteMessage(quote, box);
+        if (why) return fail(why);
+        if (!isOpen(name)) return fail("conversation changée pendant la citation");
+        box = editor() || box;
+      }
       const how = await insert(box, text);
       if (!how) return fail(`texte non inséré (focus : ${document.hasFocus() ? "oui" : "non"})`);
       if (!send) return { ok: true };
@@ -411,6 +535,25 @@
       if (shown) return { ok: true };
       if (box.innerText.trim() || modelText(box)) return fail(`envoi refusé par Teams (${trace})`);
       return { ok: false, uncertain: true, error: `message non visible dans la conversation, vérifie dans Teams (${trace})` };
+    },
+    react: async ({ name, message, reaction }) => {
+      if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+      if (!REACTION_NAMES[reaction]) return { ok: false, error: "réaction inconnue" };
+      const found = await lookup(message);
+      if (!found) return { ok: false, error: "message introuvable ou différent de celui choisi" };
+      // Déjà là : cliquer à nouveau l'enlèverait.
+      if (myReactions(found.el).includes(reaction)) return { ok: true, already: true };
+      const btn = findAction((l) => reactionOf(l) === reaction);
+      if (!btn) return { ok: false, error: "bouton de réaction introuvable sur ce message" };
+      if (!isOpen(name)) return { ok: false, error: "conversation changée avant la réaction" };
+      if (late()) return { ok: false, error: "délai dépassé avant la réaction" };
+      press(btn);
+      // Posée seulement si Teams l'affiche sous le message.
+      const shown = await waitFor(() => {
+        const again = findMessage(message);
+        return Boolean(again && myReactions(again.el).includes(reaction));
+      }, 5000);
+      return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
     },
     diagnose: () => ({
       url: location.href,

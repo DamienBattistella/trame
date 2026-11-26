@@ -4,11 +4,19 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Optional
-from models import IncomingMessage, WatchEntity
+from models import IncomingMessage, MessageRef, WatchEntity
 
 
 class SendUncertain(RuntimeError):
     """Send was pressed but could not be confirmed: the message may have left."""
+
+
+class ReactUncertain(RuntimeError):
+    """The reaction was clicked but Teams did not show it: it may or may not be there."""
+
+
+class NotSupported(RuntimeError):
+    """The active Teams driver cannot do this gesture (reaction, reply to a message)."""
 
 
 @dataclass
@@ -22,8 +30,24 @@ class Focus:
     reason: Optional[str] = None
 
 
+def _flat(s: str) -> str:
+    return " ".join((s or "").replace(" ", " ").split()).casefold()
+
+
+def same_message(ref: MessageRef, sender: str, text: str) -> bool:
+    """The message read in Teams is the one the user picked: same author (when both are
+    known) and same text, compared on its first 80 characters, spaces and case aside."""
+    if ref.sender.strip() and sender.strip() and _flat(ref.sender) != _flat(sender):
+        return False
+    want, got = _flat(ref.text)[:80], _flat(text)[:80]
+    return bool(want) and want == got
+
+
 class TeamsDriver(ABC):
     last_error: Optional[str] = None
+    # Gestes en plus de la saisie : réagir à un message, répondre à un message précis.
+    supports_reactions: bool = False
+    supports_reply: bool = False
     """Abstraction over the Teams client. Implemented by MockTeamsDriver (any OS,
     for development) and WindowsUIADriver (real UIA driving, Windows only)."""
 
@@ -151,12 +175,19 @@ class TeamsDriver(ABC):
         restore=True reopens the previously active conversation afterwards."""
         return self.type_focused(thread_id, text, send, restore).ok
 
-    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool) -> Focus:
-        """Like type_reply but returns the Focus; `ok` is True only if the text was typed."""
+    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
+                     reply_to: Optional[MessageRef] = None) -> Focus:
+        """Like type_reply but returns the Focus; `ok` is True only if the text was typed.
+        reply_to: answer that precise message (Teams « Répondre »), not just the thread."""
+        if reply_to is not None and not self.supports_reply:
+            raise NotSupported("Ce pilote Teams ne sait pas répondre à un message précis.")
         with self.focused(thread_id, restore=restore) as focus:
             if focus.ok:
                 try:
-                    focus.ok = bool(self._type_into_active(thread_id, text, send))
+                    if reply_to is None:
+                        focus.ok = bool(self._type_into_active(thread_id, text, send))
+                    else:
+                        focus.ok = bool(self._reply_in_active(thread_id, reply_to, text, send))
                     if not focus.ok:
                         focus.reason = "texte non saisi dans Teams"
                 except SendUncertain:
@@ -164,6 +195,34 @@ class TeamsDriver(ABC):
                 except Exception as e:
                     focus.ok, focus.reason = False, str(e)
         return focus
+
+    def _reply_in_active(self, thread_id: str, target: MessageRef, text: str, send: bool) -> bool:
+        """Quote target in the compose box of the active conversation (which must still
+        be thread_id), then type text. The driver must first find target and check its
+        sender and text: never quote another message. Empty compose box required."""
+        raise NotSupported("Ce pilote Teams ne sait pas répondre à un message précis.")
+
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
+        """Open thread_id, then put `reaction` on target. `ok` only once Teams shows it.
+        A reaction already there is left alone (clicking it again would remove it)."""
+        if not self.supports_reactions:
+            raise NotSupported("Ce pilote Teams ne sait pas réagir à un message.")
+        with self.focused(thread_id, restore=restore) as focus:
+            if focus.ok:
+                try:
+                    focus.ok = bool(self._react_in_active(thread_id, target, reaction))
+                    if not focus.ok:
+                        focus.reason = "réaction non posée dans Teams"
+                except ReactUncertain:
+                    raise
+                except Exception as e:
+                    focus.ok, focus.reason = False, str(e)
+        return focus
+
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
+        """Put reaction on target in the active conversation (still thread_id). The
+        driver finds target and checks its sender and text before clicking."""
+        raise NotSupported("Ce pilote Teams ne sait pas réagir à un message.")
 
     @abstractmethod
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

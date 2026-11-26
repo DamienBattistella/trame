@@ -7,9 +7,9 @@ from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
 from drivers import rail_label
-from drivers.base import SendUncertain, TeamsDriver
+from drivers.base import ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import IncomingMessage, Surface, WatchEntity
+from models import REACTIONS, IncomingMessage, MessageRef, Surface, WatchEntity
 
 
 class BridgeUnavailable(RuntimeError):
@@ -18,6 +18,8 @@ class BridgeUnavailable(RuntimeError):
 
 class WebBridgeDriver(TeamsDriver):
     waits_for_relay = True
+    supports_reactions = True
+    supports_reply = True
     POLL_WAIT = 20.0
 
     """« Teams intégré » (expérimental) : Teams web (teams.microsoft.com) in a hidden
@@ -225,13 +227,43 @@ class WebBridgeDriver(TeamsDriver):
         res = self._rpc("read", last=last_n, timeout=30) or {}
         raw, top = res.get("messages") or [], bool(res.get("top"))
         msgs = [IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(), text=(m.get("text") or "").strip(),
-                                received_at=m.get("at") or "", surface=surface)
+                                received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
+                                reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS])
                 for m in raw if (m.get("text") or "").strip()]
         return msgs, top
 
+    @staticmethod
+    def _ref(target: MessageRef) -> dict:
+        return {"id": target.id or "", "sender": target.sender, "text": target.text}
+
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
+        return self._type(thread_id, text, send)
+
+    def _reply_in_active(self, thread_id: str, target: MessageRef, text: str, send: bool) -> bool:
+        # The page quotes the message (Teams « Répondre ») and checks the quote is in the
+        # compose box before typing: on any doubt it clears the box and refuses.
+        return self._type(thread_id, text, send, quote=self._ref(target))
+
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
         try:
-            res = self._rpc("type", name=self._name(thread_id), text=text, send=send, timeout=15)
+            res = self._rpc("react", name=self._name(thread_id), message=self._ref(target), reaction=reaction, timeout=12)
+        except BridgeUnavailable as e:
+            # No answer: the click may have happened. Say so rather than « rien n'a été fait ».
+            if "pas de réponse" in str(e):
+                raise ReactUncertain(str(e)) from e
+            raise
+        if res and res.get("uncertain"):
+            raise ReactUncertain(res.get("error") or "réaction non confirmée")
+        if not (res and res.get("ok")):
+            raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'réaction refusée'}")
+        return True
+
+    def _type(self, thread_id: str, text: str, send: bool, quote: Optional[dict] = None) -> bool:
+        args: dict = {"name": self._name(thread_id), "text": text, "send": send}
+        if quote is not None:
+            args["quote"] = quote
+        try:
+            res = self._rpc("type", timeout=18 if quote else 15, **args)
         except BridgeUnavailable as e:
             if send and "pas de réponse" in str(e):
                 raise SendUncertain(str(e)) from e
