@@ -78,6 +78,8 @@ export interface TrameState {
   threadUpdates: Record<string, number>;
   /** Réponses parties seules (mode Auto), encore annulables : Trame les supprime dans Teams. */
   undoable: UndoableSend[];
+  /** Ce que le mode Auto a envoyé seul aujourd'hui. */
+  autoToday: { at: string; threadId: string; conversation: string; text: string }[];
   /** Dernier contrôle des repères de la page Teams ; null tant qu'il n'a pas tourné. */
   teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
@@ -250,6 +252,7 @@ function mapState(s: any): TrameState {
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
     threadUpdates: s.thread_updates ?? {},
+    autoToday: (s.auto_today ?? []).map((a: any) => ({ at: a.at ?? "", threadId: a.thread_id, conversation: a.conversation ?? "", text: a.text ?? "" })),
     undoable: (s.undoable ?? []).map((u: any) => ({
       id: u.id,
       threadId: u.thread_id,
@@ -288,6 +291,11 @@ function mapSettings(s: any): Settings {
         ? f.never_auto_send_if_message_contains
         : [],
       markAutoReplies: f.mark_auto_replies === undefined ? true : Boolean(f.mark_auto_replies),
+      autoMaxPerHour: Number(f.auto_max_per_hour ?? 5),
+      autoQuietHours: Boolean(f.auto_quiet_hours),
+      autoQuietFrom: f.auto_quiet_from ?? "19:00",
+      autoQuietTo: f.auto_quiet_to ?? "08:00",
+      autoWeekends: f.auto_weekends === undefined ? true : Boolean(f.auto_weekends),
     },
     brief: {
       enabled: b.enabled === undefined ? true : Boolean(b.enabled),
@@ -483,6 +491,11 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.safety.neverAutoSendIfMessageContains !== undefined)
       f.never_auto_send_if_message_contains = p.safety.neverAutoSendIfMessageContains;
     if (p.safety.markAutoReplies !== undefined) f.mark_auto_replies = p.safety.markAutoReplies;
+    if (p.safety.autoMaxPerHour !== undefined) f.auto_max_per_hour = p.safety.autoMaxPerHour;
+    if (p.safety.autoQuietHours !== undefined) f.auto_quiet_hours = p.safety.autoQuietHours;
+    if (p.safety.autoQuietFrom !== undefined) f.auto_quiet_from = p.safety.autoQuietFrom;
+    if (p.safety.autoQuietTo !== undefined) f.auto_quiet_to = p.safety.autoQuietTo;
+    if (p.safety.autoWeekends !== undefined) f.auto_weekends = p.safety.autoWeekends;
     out.safety = f;
   }
   if (p.brief) {
@@ -540,7 +553,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], teamsCheck: null, followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [] };
   }
   return {
     paused: false,
@@ -557,6 +570,7 @@ function mockState(): TrameState {
     outbox: [],
     threadUpdates: {},
     undoable: [],
+    autoToday: [],
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
   };
@@ -574,6 +588,11 @@ let localSettings: Settings = {
     countdownSeconds: 5,
     neverAutoSendIfMessageContains: ["RH", "confidentiel", "salaire"],
     markAutoReplies: true,
+    autoMaxPerHour: 5,
+    autoQuietHours: false,
+    autoQuietFrom: "19:00",
+    autoQuietTo: "08:00",
+    autoWeekends: true,
   },
   brief: { enabled: true, lastMessages: 30 },
   followUps: { enabled: true, delayHours: 24 },

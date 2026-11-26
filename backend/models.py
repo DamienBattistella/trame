@@ -167,6 +167,8 @@ class AppState(BaseModel):
     thread_updates: dict[str, int] = Field(default_factory=dict)
     # Réponses envoyées par le mode Auto, encore annulables (supprimées dans Teams).
     undoable: list["UndoableSend"] = Field(default_factory=list)
+    # Ce que le mode Auto a envoyé seul aujourd'hui (heure, conversation, texte).
+    auto_today: list["AutoSent"] = Field(default_factory=list)
     # Dernier contrôle des repères de la page Teams web ; None tant qu'il n'a pas tourné
     # (ou que le pilote ne sait pas le faire).
     teams_check: Optional[TeamsCheck] = None
@@ -184,6 +186,13 @@ class UndoableSend(BaseModel):
     sent_at: str
     # Fin de la fenêtre d'annulation, en millisecondes depuis l'époque (pour le compte à rebours).
     expires_at_ms: int
+
+
+class AutoSent(BaseModel):
+    at: str
+    thread_id: str
+    conversation: str
+    text: str
 
 
 class FollowUp(BaseModel):

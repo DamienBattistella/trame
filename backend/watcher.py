@@ -25,7 +25,7 @@ from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck,
-                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, UndoableSend, WatchEntity)
+                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, UndoableSend, WatchEntity, AutoSent)
 from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
@@ -110,6 +110,8 @@ class Watcher:
         # diffusé à l'interface), et réveil du renvoi.
         self._outbox_payload: dict[str, dict] = {}
         self._outbox_wake = threading.Event()
+        # Réponses envoyées seules (horodatage, conversation, nom, texte) : plafond et « aujourd'hui ».
+        self._auto_sent: list[tuple[float, str, str, str]] = []
         # Un seul passage à la fois sur la file : deux passages simultanés (boucle de fond
         # et nouvel essai demandé) enverraient le même message deux fois.
         self._outbox_flush = threading.Lock()
@@ -633,6 +635,11 @@ class Watcher:
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
             # Sent without a click: the people on the other side see it went out alone.
             outgoing = safety.mark_automatic(proposal) if safety.marks_automatic(cfg) else proposal
+            guard = self._auto_guard(msg.thread_id)
+            if guard:
+                self._queue_draft(msg, proposal, entity.mode, gh_ref)
+                self.log("warn", f"Envoi automatique à {msg.sender} retenu : {guard}. Réponse gardée en brouillon")
+                return "draft"
             when = "tout de suite" if not secs else f"dans {secs} s (la pause l'annule)"
             self.log("info", f"Réponse à {msg.sender} envoyée {when} : « {outgoing} »")
             if not self._countdown_ok(secs):
@@ -642,6 +649,7 @@ class Watcher:
             if self._deliver(msg.thread_id, outgoing, send=True, restore=True, auto=True):
                 self.log("sent", f"Envoyé à {msg.sender} : « {outgoing[:60]} »")
                 self._offer_undo(msg.thread_id, entity.display_name, outgoing)
+                self._record_auto(msg.thread_id, entity.display_name, outgoing)
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
             self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
@@ -649,6 +657,44 @@ class Watcher:
         self._queue_draft(msg, proposal, entity.mode, gh_ref)
         self.log("draft", f"Réponse à relire pour {msg.sender}")
         return "draft"
+
+    # --- Auto mode guards ---
+    def _auto_guard(self, thread_id: str, now: Optional[datetime] = None) -> Optional[str]:
+        """Why an automatic reply must wait for the user now, None when it may leave."""
+        s = self.cfg.get("safety", {})
+        now = now or datetime.now()
+        if not s.get("auto_weekends", True) and now.weekday() >= 5:
+            return "pas d'envoi automatique le week-end"
+        if s.get("auto_quiet_hours", False):
+            def mins(v: str, d: int) -> int:
+                try:
+                    h, m = v.split(":")
+                    return int(h) * 60 + int(m)
+                except Exception:
+                    return d
+            start, end = mins(s.get("auto_quiet_from", "19:00"), 19 * 60), mins(s.get("auto_quiet_to", "08:00"), 8 * 60)
+            t = now.hour * 60 + now.minute
+            if start != end and ((start < end and start <= t < end) or (start > end and (t >= start or t < end))):
+                return f"heures de silence ({s.get('auto_quiet_from', '19:00')} – {s.get('auto_quiet_to', '08:00')})"
+        cap = int(s.get("auto_max_per_hour", 5) or 0)
+        if cap:
+            hour_ago = now.timestamp() - 3600
+            sent = sum(1 for ts, tid, *_ in self._auto_sent if tid == thread_id and ts >= hour_ago)
+            if sent >= cap:
+                return f"plafond atteint ({cap} réponses automatiques en une heure dans cette conversation)"
+        return None
+
+    def _record_auto(self, thread_id: str, conversation: str, text: str) -> None:
+        """Keep the automatic replies of the last day: for the cap, and for « today »."""
+        now = datetime.now()
+        with self._lock:
+            self._auto_sent = [x for x in self._auto_sent if x[0] >= now.timestamp() - 86400]
+            self._auto_sent.append((now.timestamp(), thread_id, conversation, text))
+            today = now.date()
+            self.state.auto_today = [AutoSent(at=datetime.fromtimestamp(ts).strftime("%H:%M"), thread_id=tid,
+                                              conversation=conv, text=txt)
+                                     for ts, tid, conv, txt in self._auto_sent
+                                     if datetime.fromtimestamp(ts).date() == today]
 
     # --- undo an automatic reply ---
     UNDO_WINDOW = 30.0

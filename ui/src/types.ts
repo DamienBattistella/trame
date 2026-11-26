@@ -94,6 +94,13 @@ export interface Settings {
     neverAutoSendIfMessageContains: string[];
     /** 🤖 à la fin de chaque message envoyé sans clic (mode Auto). */
     markAutoReplies: boolean;
+    /** Garde-fous du mode Auto : plafond par heure et par conversation (0 : aucun),
+     *  heures de silence (« HH:MM », peut passer minuit), envois le week-end. */
+    autoMaxPerHour: number;
+    autoQuietHours: boolean;
+    autoQuietFrom: string;
+    autoQuietTo: string;
+    autoWeekends: boolean;
   };
   brief: { enabled: boolean; lastMessages: number };
   /** Relances : proposer de relancer une question restée sans réponse depuis delayHours heures ouvrées. */
