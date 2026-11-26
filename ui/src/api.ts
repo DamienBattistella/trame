@@ -73,6 +73,8 @@ export interface TrameState {
   outbox: QueuedSend[];
   /** threadId -> compteur : change quand un message arrive ou que Trame en envoie un. */
   threadUpdates: Record<string, number>;
+  /** Réponses parties seules (mode Auto), encore annulables : Trame les supprime dans Teams. */
+  undoable: UndoableSend[];
   /** Dernier contrôle des repères de la page Teams ; null tant qu'il n'a pas tourné. */
   teamsCheck: TeamsCheck | null;
   /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
@@ -141,6 +143,16 @@ function mapFollowUp(f: any): FollowUpItem {
 
 /** Un message en file d'envoi. waiting : en attente ; sending : en cours ; failed :
  *  refusé, à ton action ; uncertain : peut-être parti, à vérifier dans Teams. */
+export interface UndoableSend {
+  id: string;
+  threadId: string;
+  conversation: string;
+  text: string;
+  sentAt: string;
+  /** Fin de la fenêtre d'annulation (ms depuis l'époque). */
+  expiresAtMs: number;
+}
+
 export interface QueuedSend {
   id: string;
   threadId: string;
@@ -233,6 +245,14 @@ function mapState(s: any): TrameState {
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
     threadUpdates: s.thread_updates ?? {},
+    undoable: (s.undoable ?? []).map((u: any) => ({
+      id: u.id,
+      threadId: u.thread_id,
+      conversation: u.conversation,
+      text: u.text ?? "",
+      sentAt: u.sent_at ?? "",
+      expiresAtMs: Number(u.expires_at_ms ?? 0),
+    })),
     teamsCheck: mapTeamsCheck(s.teams_check),
     followUps: (s.follow_ups ?? []).map(mapFollowUp),
   };
@@ -515,7 +535,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, teamsCheck: null, followUps: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], teamsCheck: null, followUps: [] };
   }
   return {
     paused: false,
@@ -531,6 +551,7 @@ function mockState(): TrameState {
     myPresence: "available",
     outbox: [],
     threadUpdates: {},
+    undoable: [],
     teamsCheck: null,
     followUps: mockFollowUps.map((f) => ({ ...f })),
   };
@@ -1203,6 +1224,9 @@ export function useTrame() {
     });
     return res.ok ? { ok: true, queued: res.queued ? mapQueued(res.queued) : null } : res;
   };
+  /** Retire une réponse partie seule (mode Auto) : Trame la supprime dans Teams. */
+  const undoAuto = (id: string): Promise<Result> =>
+    connectedRef.current ? request("POST", `/api/undo/${encodeURIComponent(id)}`) : demo(600, {});
   /** File d'envoi : retirer un message, ou le réessayer tout de suite. */
   const cancelQueued = (id: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/cancel`) : demo(200, {});
@@ -1649,6 +1673,7 @@ export function useTrame() {
     markRead,
     clearCompose,
     cancelQueued,
+    undoAuto,
     retryQueued,
     sendFollowUp,
     snoozeFollowUp,

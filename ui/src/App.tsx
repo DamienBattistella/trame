@@ -19,6 +19,7 @@ import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
+import { UndoAutoToasts } from "@/components/UndoAuto";
 
 // Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
 // partent dès le démarrage, pendant l'écran de chargement, pour ne jamais faire attendre.
@@ -255,6 +256,7 @@ export default function App() {
       <TeamsWebRelay />
       <WhatsNew />
       <Toaster richColors position="bottom-right" />
+      <UndoAutoToasts trame={trame} />
       <ShortcutsHelp />
     </TooltipProvider>
     </MotionConfig>

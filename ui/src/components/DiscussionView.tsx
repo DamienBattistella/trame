@@ -17,6 +17,7 @@ import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { ThreadActivity } from "@/components/ThreadActivity";
 import { OutboxItems } from "@/components/OutboxItems";
+import { UndoAutoBar } from "@/components/UndoAuto";
 import { FollowUpCards } from "@/components/FollowUpCard";
 import { JoinMeeting } from "@/components/JoinMeeting";
 import { findFolded, fold } from "@/lib/textSearch";
@@ -953,6 +954,7 @@ export function DiscussionView({
                 );
               })}
               <OutboxItems trame={trame} threadId={c.threadId} />
+              <UndoAutoBar trame={trame} threadId={c.threadId} />
               <FollowUpCards trame={trame} threadId={c.threadId} />
               {messages !== null && <ThreadActivity trame={trame} conversation={c} last={shown[shown.length - 1]} />}
             </>

@@ -24,7 +24,7 @@ from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck,
-                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, WatchEntity)
+                    FactCheckSources, FollowUp, IncomingMessage, LogItem, MessageRef, Notice, QueuedSend, Surface, UndoableSend, WatchEntity)
 from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
@@ -512,6 +512,7 @@ class Watcher:
                 return "draft"
             if self._deliver(msg.thread_id, outgoing, send=True, restore=True, auto=True):
                 self.log("sent", f"Envoyé à {msg.sender} : « {outgoing[:60]} »")
+                self._offer_undo(msg.thread_id, entity.display_name, outgoing)
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
             self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
@@ -519,6 +520,60 @@ class Watcher:
         self._queue_draft(msg, proposal, entity.mode, gh_ref)
         self.log("draft", f"Réponse à relire pour {msg.sender}")
         return "draft"
+
+    # --- undo an automatic reply ---
+    UNDO_WINDOW = 30.0
+
+    def _offer_undo(self, thread_id: str, conversation: str, text: str) -> UndoableSend:
+        """An automatic reply just left: it stays undoable for UNDO_WINDOW seconds."""
+        item = UndoableSend(id=str(uuid.uuid4())[:8], thread_id=thread_id, conversation=conversation, text=text,
+                            sent_at=datetime.now().strftime("%H:%M:%S"),
+                            expires_at_ms=int((time.time() + self.UNDO_WINDOW) * 1000))
+        with self._lock:
+            self.state.undoable = [*self.state.undoable, item]
+        timer = threading.Timer(self.UNDO_WINDOW + 1, self._drop_undo, args=(item.id,))
+        timer.daemon = True
+        timer.start()
+        return item
+
+    def _drop_undo(self, undo_id: str) -> None:
+        with self._lock:
+            self.state.undoable = [u for u in self.state.undoable if u.id != undo_id]
+
+    def undo_auto(self, undo_id: str) -> None:
+        """Take back an automatic reply: Trame deletes it in Teams. Same guards as a
+        delete asked by hand (UI lock, screen share, the message found by its text and
+        checked as the user's own by Teams offering « Modifier »). Only inside the window."""
+        item = next((u for u in self.state.undoable if u.id == undo_id), None)
+        if item is None or time.time() * 1000 > item.expires_at_ms:
+            raise ActionError(410, "Trop tard pour annuler : supprime le message depuis la discussion si besoin.")
+        self._require("delete")
+        excerpt = f"« {item.text[:60]}{'…' if len(item.text) > 60 else ''} »"
+        target = MessageRef(sender="", text=item.text)
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : aucune action dans Teams.")
+            try:
+                focus = self.driver.delete_focused(item.thread_id, target, restore=True)
+            except DeleteUncertain as e:
+                self._drop_undo(undo_id)
+                self._touch(item.thread_id)
+                self.log("warn", f"Annulation non confirmée dans « {item.conversation} » : {excerpt} ({e})")
+                raise ActionError(409, f"Annulation non confirmée : vérifie dans Teams. ({e})")
+            except NotSupported as e:
+                raise ActionError(501, str(e))
+            except Exception as e:
+                self.log("warn", f"Annulation impossible dans « {item.conversation} » : {e}")
+                raise ActionError(409, f"Le message n'a pas été retiré. Raison : {e}.")
+        self._warn_if_not_restored(focus)
+        if not focus.ok:
+            reason = focus.reason or "conversation non confirmée dans Teams"
+            self.log("warn", f"Annulation refusée dans « {item.conversation} » : {reason}")
+            raise ActionError(409, f"Le message n'a pas été retiré. Raison : {reason}.")
+        self._drop_undo(undo_id)
+        self._touch(item.thread_id)
+        self.log("info", f"Réponse automatique retirée dans « {item.conversation} » : {excerpt}")
 
     def _countdown_ok(self, seconds: float) -> bool:
         """Wait the cancelable window. Pausing (or stopping) during it cancels the send."""

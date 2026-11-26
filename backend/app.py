@@ -425,6 +425,12 @@ def create_app(
         watcher.react(thread_id, body.message, body.reaction)
         return {"ok": True}
 
+    @app.post("/api/undo/{undo_id}")
+    def undo_auto(undo_id: str):
+        """Take back an automatic reply (deleted in Teams), within its window."""
+        watcher.undo_auto(undo_id)
+        return {"ok": True}
+
     @app.post("/api/threads/{thread_id:path}/delete")
     def thread_delete(thread_id: str, body: DeleteBody):
         """Delete one of the user's own messages: asked from the discussion view only."""
