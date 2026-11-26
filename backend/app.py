@@ -121,6 +121,10 @@ class SoulPreviewBody(BaseModel):
     content: str = Field(min_length=1, max_length=64 * 1024)
 
 
+class DiagnosticBody(BaseModel):
+    thread_id: Optional[str] = None
+
+
 class ResetBody(BaseModel):
     confirm: Literal["RESET"]
 
@@ -323,6 +327,15 @@ def create_app(
     def reset(body: ResetBody):
         watcher.factory_reset()
         return {"ok": True}
+
+    @app.post("/api/diagnostics/teams")
+    def diagnostics(body: DiagnosticBody):
+        try:
+            report = watcher.driver.diagnose(body.thread_id)
+        except Exception as e:
+            report = {"error": repr(e)}
+        watcher.log("info", "Diagnostic Teams lancé")
+        return {"ok": True, "report": report}
 
     @app.post("/api/selftest")
     def selftest():

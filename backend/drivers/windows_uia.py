@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import time
 from typing import Callable, Iterable, Optional
 from models import IncomingMessage, Surface, WatchEntity
@@ -110,12 +111,36 @@ class WindowsUIADriver(TeamsDriver):
         return by_name[0] if len(by_name) == 1 else None
 
     @staticmethod
-    def _is_selected(item) -> bool:
+    def _selection_signals(item) -> dict:
+        """Every way a WebView2 list item can say "I am the open conversation": UIA
+        SelectionItem, ARIA selected / current, legacy MSAA selected state."""
+        out = {"uia_selected": None, "aria": "", "msaa_selected": None}
         try:
-            pattern = item.GetSelectionItemPattern()  # A CALER: selected state exposed on the rail item.
-            return bool(pattern is not None and pattern.IsSelected)
+            pattern = item.GetSelectionItemPattern()
+            out["uia_selected"] = bool(pattern.IsSelected) if pattern is not None else None
         except Exception:
-            return False
+            pass
+        try:
+            out["aria"] = (getattr(item, "AriaProperties", "") or "").lower()
+        except Exception:
+            pass
+        try:
+            legacy = item.GetLegacyIAccessiblePattern()
+            out["msaa_selected"] = bool(legacy.State & 0x2) if legacy is not None else None
+        except Exception:
+            pass
+        return out
+
+    @classmethod
+    def _is_selected(cls, item) -> bool:
+        sig = cls._selection_signals(item)
+        aria = sig["aria"]
+        return bool(
+            sig["uia_selected"]
+            or "selected=true" in aria
+            or re.search(r"current=(?!false)\w+", aria)
+            or sig["msaa_selected"]
+        )
 
     def active_thread(self) -> Optional[str]:
         try:
@@ -309,6 +334,61 @@ class WindowsUIADriver(TeamsDriver):
             except Exception:
                 pass
             time.sleep(self.poll)
+
+    def diagnose(self, thread_id: Optional[str] = None) -> dict:
+        """Structure of the Teams window for calibration: control types, selection
+        signals, header candidates. Conversation names only, never message text."""
+        report: dict = {"driver": "windows_uia"}
+        try:
+            win = self._window()
+        except Exception as e:
+            return {**report, "window": f"introuvable : {e}"}
+        report["window"] = {"name": win.Name, "class": win.ClassName}
+        rail = self._find_rail(win)
+        compose = self._find_compose(win)
+        msglist = self._find_message_list(win)
+
+        def desc(c):
+            if c is None:
+                return None
+            return {"type": c.ControlTypeName, "class": c.ClassName, "automation_id": (c.AutomationId or "")[:60],
+                    "aria_role": getattr(c, "AriaRole", "") or ""}
+
+        report["rail"], report["compose"], report["message_list"] = desc(rail), desc(compose), desc(msglist)
+        items = self._rail_items(rail) if rail is not None else []
+        report["rail_items"] = len(items)
+        report["rail_sample"] = [
+            {**desc(i), "name": self._display_name_of(i), "signals": self._selection_signals(i)} for i in items[:8]
+        ]
+        selected = [self._display_name_of(i) for i in items if self._is_selected(i)]
+        report["selected_now"] = selected
+
+        def header_candidates():
+            names = set(selected)
+            out = []
+            for c, depth in self.auto.WalkControl(win, includeTop=False, maxDepth=18):
+                if len(out) >= 6:
+                    break
+                n = (c.Name or "").strip()
+                if n and n in names and c.ControlTypeName not in ("TreeItemControl", "ListItemControl"):
+                    out.append({**desc(c), "depth": depth})
+            return out
+
+        report["header_candidates"] = header_candidates()
+        if thread_id:
+            item = self._rail_item_for(rail, thread_id) if rail is not None else None
+            test = {"thread_id": thread_id, "rail_item_found": item is not None}
+            if item is not None:
+                try:
+                    item.Click(simulateMove=False, waitTime=0.1)
+                    time.sleep(1.5)
+                    test["signals_after_click"] = self._selection_signals(item)
+                    test["selected_after_click"] = [self._display_name_of(i) for i in self._rail_items(rail) if self._is_selected(i)]
+                    test["confirmed"] = self._is_active(win, thread_id)
+                except Exception as e:
+                    test["error"] = repr(e)
+            report["open_test"] = test
+        return report
 
     def _poll_new(self) -> list[IncomingMessage]:
         return []  # A CALER: rail badge diff + open-thread fingerprint diff.

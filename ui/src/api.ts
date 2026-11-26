@@ -556,6 +556,16 @@ export function useTrame() {
     return request<{ incoming: string; reply: string }>("POST", "/api/soul/preview", { content });
   };
 
+  /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
+  const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(800);
+      return { ok: true, report: { driver: "démo", note: "Diagnostic disponible avec le moteur sur ton poste." } };
+    }
+    return request<{ report: unknown }>("POST", "/api/diagnostics/teams", { thread_id: threadId ?? null });
+  };
+
   /** Zone de danger : réglages par défaut, plus rien de suivi, configuration à refaire. */
   const factoryReset = async (): Promise<Result> => {
     if (!connectedRef.current) {
@@ -747,6 +757,7 @@ export function useTrame() {
     getSoul,
     getSoulTemplate,
     factoryReset,
+    diagnoseTeams,
     previewSoul,
     getPeople,
     uploadPeople,

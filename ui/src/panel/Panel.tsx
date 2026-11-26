@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { GithubConnect } from "@/components/GithubConnect";
 import { EntourageSection } from "@/components/EntourageSection";
 import { UpdatesRow } from "@/components/UpdatesRow";
+import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -814,6 +815,7 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
               Reprendre
             </Button>
           </div>
+          <DiagnosticRow trame={trame} />
         </GroupList>
       </div>
           <DangerZone trame={trame} onReset={onRestartSetup} />

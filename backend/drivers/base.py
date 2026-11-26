@@ -69,6 +69,10 @@ class TeamsDriver(ABC):
                 except Exception:
                     focus.restored = False
 
+    def diagnose(self, thread_id: Optional[str] = None) -> dict:
+        """Calibration report (structure only, no message text)."""
+        return {"driver": type(self).__name__}
+
     @abstractmethod
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         """Type into the compose box of the active conversation, which must still be

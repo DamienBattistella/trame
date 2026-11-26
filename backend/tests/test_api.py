@@ -371,3 +371,9 @@ def test_get_soul_returns_custom_persona_only(make_client, fresh_home):
     assert client.get("/api/soul").json()["soul"] == {"custom": False, "filename": "SOUL.md", "content": ""}
     client.post("/api/soul", json={"filename": "moi.md", "content": "# Moi\nDirect."})
     assert client.get("/api/soul").json()["soul"] == {"custom": True, "filename": "SOUL.md", "content": "# Moi\nDirect."}
+
+
+def test_diagnostics_endpoint(make_client):
+    client, _w, _d = make_client()
+    r = client.post("/api/diagnostics/teams", json={})
+    assert r.status_code == 200 and r.json()["report"]["driver"] == "MockTeamsDriver"
