@@ -217,22 +217,32 @@ class Watcher:
             self.state.my_presence = got.get("presence")
         return {"presence": got.get("presence"), "message": got.get("message") or ""}
 
-    def set_my_status(self, choice: str, duration: Optional[str] = None) -> dict:
+    def set_my_status(self, choice: str, duration: Optional[str] = None, until: Optional[str] = None) -> dict:
         """Pick a status in Teams' menu, then check Teams shows it: never a false
         success. « reset » lets Teams decide again; whatever it then shows is reported.
-        duration: Teams puts the status back afterwards (« Rétablir le statut après »)."""
+        duration: Teams puts the status back afterwards (« Rétablir le statut après »).
+        until: the same, at a local date and time (« Personnalisé »), "AAAA-MM-JJTHH:MM"."""
         self._require_own_status()
         if choice not in presencemod.CHOICES:
             raise ActionError(422, f"Statut inconnu : {choice}.")
         if duration is not None and (duration not in presencemod.DURATIONS or choice == "reset"):
             raise ActionError(422, "Durée impossible pour ce statut.")
+        end: Optional[datetime] = None
+        if until is not None:
+            if duration is not None or choice == "reset":
+                raise ActionError(422, "Une heure de fin se choisit seule, et pas pour « Réinitialiser ».")
+            try:
+                end = presencemod.parse_until(until, datetime.now())
+            except ValueError as e:
+                raise ActionError(422, str(e))
         wanted = presencemod.LABELS.get(choice, "Réinitialiser")
         with self._ui_lock:
             if self._screen_share_guarded():
                 self.state.screen_sharing = True
                 raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
             try:
-                shown = (self.driver.set_my_status(choice, duration) if duration
+                shown = (self.driver.set_my_status(choice, until=end) if end
+                         else self.driver.set_my_status(choice, duration) if duration
                          else self.driver.set_my_status(choice))
             except Exception as e:
                 self.log("warn", f"Statut « {wanted} » non appliqué : {e}")
@@ -243,9 +253,13 @@ class Watcher:
             seen = presencemod.LABELS.get(shown or "", "aucun statut lisible")
             self.log("warn", f"Statut « {wanted} » demandé, Teams affiche « {seen} »")
             raise ActionError(409, f"Teams affiche « {seen} » au lieu de « {wanted} ». Vérifie dans Teams.")
-        until = f" pour {presencemod.DURATION_LABELS[duration]}" if duration else ""
-        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}{until}")
-        return {"presence": shown, **({"duration": duration} if duration else {})}
+        if end:
+            how = f" jusqu'à {presencemod.until_label(end, datetime.now())}"
+        else:
+            how = f" pour {presencemod.DURATION_LABELS[duration]}" if duration else ""
+        self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}{how}")
+        extra = {"until": end.strftime("%Y-%m-%dT%H:%M")} if end else {"duration": duration} if duration else {}
+        return {"presence": shown, **extra}
 
     def suggest_status_message(self, previous: str = "") -> dict:
         """A status message proposed by the brain, in the user's voice, different each time.

@@ -203,6 +203,7 @@ class MockTeamsDriver(TeamsDriver):
     my_presence: Optional[str] = "available"
     my_message: str = ""
     my_duration: Optional[str] = None
+    my_until: Optional[datetime] = None
 
     def my_status(self, with_message: bool = False) -> dict:
         out: dict = {"presence": self.my_presence}
@@ -210,9 +211,11 @@ class MockTeamsDriver(TeamsDriver):
             out["message"] = self.my_message
         return out
 
-    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
         self.my_presence = "available" if choice == "reset" else choice
         self.my_duration = duration
+        self.my_until = until
         return self.my_presence
 
     def set_status_message(self, text: str) -> str:

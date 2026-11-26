@@ -708,7 +708,12 @@ export function useTrame() {
   };
   /** Change son statut dans Teams ; réussi seulement si Teams affiche ensuite ce statut. */
   /** `duration` : Teams remet le statut d'avant après ce délai ; null : jusqu'à changement. */
-  const setMyStatus = async (choice: StatusChoice, duration: StatusDuration | null = null): Promise<Result<{ presence: Presence | null }>> => {
+  // duration : une durée de Teams ; until : « Personnalisé », "AAAA-MM-JJTHH:MM" local. L'un ou l'autre.
+  const setMyStatus = async (
+    choice: StatusChoice,
+    duration: StatusDuration | null = null,
+    until: string | null = null
+  ): Promise<Result<{ presence: Presence | null }>> => {
     if (!connectedRef.current) {
       const presence: Presence = choice === "reset" ? "available" : choice;
       const res = await demo(500, { presence });
@@ -717,7 +722,7 @@ export function useTrame() {
     }
     const res = await request<{ presence: Presence | null }>("POST", "/api/me/status", {
       presence: choice,
-      ...(duration && choice !== "reset" ? { duration } : {}),
+      ...(until && choice !== "reset" ? { until } : duration && choice !== "reset" ? { duration } : {}),
     });
     if (res.ok) setState((s) => ({ ...s, myPresence: res.presence ?? null }));
     return res;
