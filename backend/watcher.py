@@ -242,6 +242,26 @@ class Watcher:
         self.log("info", f"Statut Teams : {presencemod.LABELS.get(shown or '', 'réinitialisé')}")
         return {"presence": shown}
 
+    def suggest_status_message(self, previous: str = "") -> dict:
+        """A status message proposed by the brain, in the user's voice, different each time.
+        Only a proposal: nothing is sent to Teams. If the brain cannot answer, a short
+        ready-made message is offered instead, and said so."""
+        from brain.status_note import FALLBACK, build_status_prompt, parse_status_note
+        presence = self.state.my_presence
+        label = {"available": "Disponible", "busy": "Occupé", "dnd": "Ne pas déranger", "brb": "De retour bientôt",
+                 "away": "Absent", "offline": "Hors ligne"}.get(presence or "", "")
+        text = ""
+        try:
+            text = parse_status_note(self.brain.complete(build_status_prompt(self.soul, label, previous), timeout=60),
+                                     presencemod.MESSAGE_MAX)
+        except Exception as e:
+            self.log("warn", f"Message de statut : le cerveau n'a pas répondu ({e}), message tout prêt proposé")
+        if text and text != " ".join(previous.split()):
+            return {"text": text, "source": "brain"}
+        import random
+        choices = [m for m in FALLBACK if m != previous.strip()] or list(FALLBACK)
+        return {"text": random.choice(choices), "source": "fallback"}
+
     def set_status_message(self, text: str) -> dict:
         """Set (empty: clear) the status message, then check Teams shows exactly it."""
         self._require_own_status()
