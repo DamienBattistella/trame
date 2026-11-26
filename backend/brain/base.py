@@ -3,18 +3,22 @@ import re
 from abc import ABC, abstractmethod
 
 # A model sometimes announces its answer (« Réponse à Sébastien (pair, tutoiement) : »)
-# before writing it. That line is not part of the message.
+# before writing it, at times after a few lines of reasoning (« Hugo demande… Je ne peux
+# pas… \n\nRéponse suggérée :\n\n… »). The label line and everything before it are not
+# part of the message: the label must start its line and its colon must end it.
 _LABEL_RE = re.compile(
-    r"^\s*(?:\*\*)?(?:voici|r[ée]ponse|reply|message|proposition|brouillon)\b[^\n]{0,120}:\s*(?:\*\*)?[ \t]*\n+",
-    re.IGNORECASE,
+    r"^[ \t]*(?:\*\*)?(?:voici|r[ée]ponse|reply|message|proposition|brouillon)\b[^\n]{0,120}:[ \t]*(?:\*\*)?[ \t]*\n+",
+    re.IGNORECASE | re.MULTILINE,
 )
 _QUOTES = (("«", "»"), ('"', '"'), ("“", "”"))
 
 
 def clean_reply(text: str) -> str:
-    """The message alone: no announcing line, no quotes around the whole text."""
+    """The message alone: no reasoning, no announcing line, no quotes around the whole text."""
     out = text.strip()
-    out = _LABEL_RE.sub("", out, count=1).strip() or out
+    label = _LABEL_RE.search(out)
+    if label and out[label.end():].strip():
+        out = out[label.end():].strip()
     for left, right in _QUOTES:
         inner = out[1:-1]
         if len(out) > 1 and out.startswith(left) and out.endswith(right) and left not in inner and right not in inner:
@@ -30,6 +34,11 @@ class Brain(ABC):
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         """Run a free-form prompt and return the raw text answer."""
         raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
+
+    def correct(self, text: str) -> str:
+        """Spelling, grammar and typography fixed; tone and wording untouched."""
+        from brain.correct import build_correct_prompt, parse_correction
+        return parse_correction(self.complete(build_correct_prompt(text)), text)
 
 
 def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "") -> str:

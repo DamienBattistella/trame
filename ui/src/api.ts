@@ -31,6 +31,7 @@ import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
+import { demoCorrect } from "@/lib/demoCorrect";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
@@ -904,6 +905,14 @@ export function useTrame() {
     });
     return res.ok ? { ok: true, check: mapCheck(res.check) } : res;
   };
+  /** Orthographe, grammaire et typographie du message en cours, par le cerveau choisi. N'envoie rien. */
+  const correctText = async (text: string): Promise<Result<{ text: string; changed: boolean }>> => {
+    if (!connectedRef.current) {
+      const fixed = demoCorrect(text);
+      return demo(900, { text: fixed, changed: fixed !== text.trim() });
+    }
+    return request<{ text: string; changed: boolean }>("POST", "/api/correct", { text });
+  };
   /** Réaction en un clic sur un message précis. Réussie seulement si Teams l'affiche. */
   const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction): Promise<Result> => {
     if (!connectedRef.current) {
@@ -1167,6 +1176,7 @@ export function useTrame() {
     sendInThread,
     suggestInThread,
     checkInThread,
+    correctText,
     showInTeams,
     markRead,
     diagnoseTeams,

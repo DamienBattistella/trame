@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, ExternalLink, ListChecks, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, X } from "lucide-react";
+import { BookOpenText, Check, ExternalLink, ListChecks, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Highlight } from "@/components/MessageSearchResults";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
+import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
@@ -172,7 +173,10 @@ export function DiscussionView({
   const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState(draft?.proposal ?? "");
-  const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss">("idle");
+  const [busy, setBusy] = useState<"idle" | "send" | "suggest" | "dismiss" | "correct">("idle");
+  // Correction proposée, à accepter ou rejeter ; puis de quoi l'annuler tant que le texte n'a pas bougé.
+  const [review, setReview] = useState<{ before: string; after: string } | null>(null);
+  const [undo, setUndo] = useState<{ before: string; after: string } | null>(null);
   const [fresher, setFresher] = useState<string | null>(null);
   // Fil complet : `edge` dit pourquoi on ne remonte plus (début de la conversation, ou
   // limite de ce que Trame peut relire d'un coup), `older` pendant qu'on remonte.
@@ -238,6 +242,8 @@ export function DiscussionView({
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
+    setReview(null);
+    setUndo(null);
     setReplyTo(null);
     setCheck(null);
     setReacting(null);
@@ -314,6 +320,7 @@ export function DiscussionView({
     if (!mentioning || !box) return;
     const next = applyMention(text, box.selectionStart, mentioning.at, name);
     setText(next.text);
+    setReview(null);
     setChosen((list) => (list.includes(name) ? list : [...list, name]));
     setMentioning(null);
     requestAnimationFrame(() => {
@@ -339,7 +346,7 @@ export function DiscussionView({
 
   const send = async () => {
     const body = text.trim();
-    if (!body || busy !== "idle") return;
+    if (!body || busy !== "idle" || review) return;
     setBusy("send");
     const target = replyTo;
     const mentions = caps.mentions ? mentionsUsed(body, chosen) : [];
@@ -354,6 +361,7 @@ export function DiscussionView({
     setReplyTo(null);
     setChosen([]);
     setCheck(null);
+    setUndo(null);
     base.current = "";
   };
 
@@ -406,6 +414,33 @@ export function DiscussionView({
   const applyFix = (claim: FactClaim) => {
     if (!claim.fix || !text.includes(claim.excerpt)) return;
     setText(text.replace(claim.excerpt, claim.fix));
+    setReview(null);
+  };
+
+  // Corrige sans jamais envoyer : le résultat attend ton accord.
+  const correct = async () => {
+    const before = text;
+    if (!before.trim() || busy !== "idle") return;
+    setBusy("correct");
+    const res = await trame.correctText(before);
+    setBusy("idle");
+    if (!res.ok) return fail("Correction impossible", res.error);
+    if (!res.changed) return toast.success("Rien à corriger", { description: "Ton message est déjà propre." });
+    setReview({ before, after: res.text });
+  };
+
+  const acceptCorrection = () => {
+    if (!review) return;
+    setText(review.after);
+    setUndo(review);
+    setReview(null);
+    requestAnimationFrame(() => composer.current?.focus());
+  };
+
+  const undoCorrection = () => {
+    if (!undo) return;
+    setText(undo.before);
+    setUndo(null);
   };
 
   const openInTeams = async () => {
@@ -638,7 +673,55 @@ export function DiscussionView({
                 onClose={() => setCheck(null)}
               />
             )}
+            {review && (
+              <motion.div
+                key="review"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <section aria-label="Correction proposée" className="rounded-xl border border-link/30 bg-link/5 p-3">
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <SpellCheck className="size-3.5" /> Correction proposée
+                    <span className="font-normal">· barré : retiré, souligné : ajouté</span>
+                  </div>
+                  <p data-testid="correction-diff" className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed">
+                    {wordDiff(review.before, review.after).map((p, i) =>
+                      p.kind === "same" ? (
+                        <span key={i}>{p.text}</span>
+                      ) : p.kind === "del" ? (
+                        <del key={i} className="rounded-sm bg-destructive/10 text-destructive decoration-destructive/70">
+                          {p.text}
+                        </del>
+                      ) : (
+                        <ins key={i} title={p.text.includes("\u00a0") ? "Espace insécable ajoutée" : undefined} className="rounded-sm bg-success/15 text-success decoration-success/70 underline-offset-2">
+                          {/* Une espace insécable ajoutée resterait invisible. */}
+                          {p.text.replace(/\u00a0/g, "\u2423")}
+                        </ins>
+                      )
+                    )}
+                  </p>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" className="h-7 rounded-full" onClick={() => setReview(null)}>
+                      <X className="size-3.5" /> Rejeter
+                    </Button>
+                    <Button size="sm" className="h-7 rounded-full" onClick={acceptCorrection}>
+                      <Check className="size-3.5" /> Accepter
+                    </Button>
+                  </div>
+                </section>
+              </motion.div>
+            )}
           </AnimatePresence>
+          {undo && !review && text === undo.after && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <SpellCheck className="size-3.5" /> Correction appliquée
+              <Button variant="ghost" size="sm" className="h-6 rounded-full px-2 text-link" onClick={undoCorrection}>
+                <Undo2 className="size-3.5" /> Annuler
+              </Button>
+            </div>
+          )}
           <div className="relative">
             <AnimatePresence>
               {mentioning && suggestions.length > 0 && (
@@ -680,6 +763,8 @@ export function DiscussionView({
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
+                // Le texte a changé : la correction affichée ne lui correspond plus.
+                setReview(null);
                 followMention(e.target.value, e.target.selectionStart);
               }}
               onClick={(e) => followMention(text, e.currentTarget.selectionStart)}
@@ -694,7 +779,7 @@ export function DiscussionView({
                   setReplyTo(null);
                 }
               }}
-              disabled={busy === "send"}
+              disabled={busy === "send" || busy === "correct"}
               rows={2}
               className={cn(
                 "field-sizing-content max-h-48 min-h-16 resize-none rounded-xl",
@@ -714,6 +799,23 @@ export function DiscussionView({
               )}
               <Tooltip>
                 <TooltipTrigger asChild>
+                  <span tabIndex={!text.trim() ? 0 : undefined}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      disabled={busy !== "idle" || !text.trim() || !!review}
+                      onClick={correct}
+                    >
+                      {busy === "correct" ? <Loader2 className="size-4 animate-spin" /> : <SpellCheck className="size-4" />}
+                      Corriger
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Orthographe, grammaire et typographie, sans changer ton ton ni tes mots</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle" || checking || !text.trim()} onClick={verify}>
                     {checking ? <Loader2 className="size-4 animate-spin" /> : <ListChecks className="size-4" />}
                     Vérifier
@@ -725,7 +827,7 @@ export function DiscussionView({
                 {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
                 {replyTo ? "Proposer une réponse" : draft ? "Autre proposition" : "Proposer"}
               </Button>
-              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim()} onClick={send}>
+              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim() || !!review} onClick={send}>
                 {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Envoyer
               </Button>

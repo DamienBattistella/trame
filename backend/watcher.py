@@ -23,6 +23,7 @@ from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Clai
 from drivers.base import Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
+from brain.correct import MAX_CHARS as CORRECT_MAX_CHARS, CorrectionError
 from brain.factcheck import FactCheckParseError, build_factcheck_prompt, parse_factcheck
 
 _DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
@@ -661,6 +662,24 @@ class Watcher:
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
+
+    def correct_text(self, text: str) -> str:
+        """Spelling, grammar and typography of a message being written, by the chosen
+        brain. Never sends: the user accepts or rejects the result."""
+        if not text.strip():
+            raise ActionError(400, "Rien à corriger : le message est vide.")
+        if len(text) > CORRECT_MAX_CHARS:
+            raise ActionError(413, f"Message trop long pour la correction ({CORRECT_MAX_CHARS} caractères au plus).")
+        brain = self.brain
+        try:
+            fixed = brain.correct(text)
+        except CorrectionError as e:
+            self.log("warn", f"Correction refusée : {e}")
+            raise ActionError(502, f"Correction inutilisable : {e}. Ton message n'a pas changé.")
+        except Exception as e:
+            self.log("warn", f"Correction impossible : le cerveau a échoué ({str(e)[:120]})")
+            raise ActionError(502, f"Le cerveau n'a pas pu corriger le message : {e}. Ton message n'a pas changé.")
+        return fixed
 
     def propose_external_reply(self, thread_id: str, text: str) -> Draft:
         """A reply prepared by an outside assistant (MCP): it waits in « À relire »,
