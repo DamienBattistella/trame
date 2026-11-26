@@ -91,7 +91,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 
 ## Installer
 
-1. Télécharge l'installeur Windows (`.msi` ou `.exe`) depuis le dernier build : onglet **Actions** › *Build desktop (Windows)* › artefact **trame-windows**.
+1. Télécharge l'installeur Windows depuis la [dernière version](https://github.com/DamienBattistella/trame/releases/latest) : `Trame_x.y.z_x64-setup.exe` (recommandé) ou `Trame_x.y.z_x64_en-US.msi`.
 2. Vérifie que la commande `claude` (Claude Code) est installée et connectée sur le poste — ou `gh` avec Copilot si tu choisis ce cerveau.
 3. Ouvre Teams, lance Trame et laisse-toi guider.
 
@@ -138,7 +138,7 @@ npm run dev                              # http://localhost:5173
 npm run tauri dev                        # application de bureau (Windows, Rust requis)
 ```
 
-Sans moteur, l'interface fonctionne avec des données d'exemple. Le build de l'installeur Windows tourne dans GitHub Actions (`build.yml`, sur tag `v*` ou à la demande) ; voir `ui/src-tauri/README.md`.
+Sans moteur, l'interface fonctionne avec des données d'exemple. Le build de l'installeur Windows tourne dans GitHub Actions (`build.yml`) : chaque tag `v*` publie une Release avec l'installeur ; voir `ui/src-tauri/README.md`.
 
 ## État du projet
 
