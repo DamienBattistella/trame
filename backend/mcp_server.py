@@ -348,12 +348,16 @@ def make_router(watcher: Watcher) -> APIRouter:
     # --- envoi ---
     def tool_send_draft(args: dict) -> Any:
         d = watcher._draft(str(args["draft_id"]))
-        watcher.send_draft(d.id, args.get("text"))
+        queued = watcher.send_draft(d.id, args.get("text"))
+        if queued:
+            return {"ok": True, "queued": True, "to": d.from_, "reason": queued.reason}
         return {"ok": True, "sent_to": d.from_}
 
     def tool_send_message(args: dict) -> Any:
         tid = resolve(args)
-        watcher.send_manual(tid, str(args["text"]))
+        queued = watcher.send_manual(tid, str(args["text"]))
+        if queued:
+            return {"ok": True, "queued": True, "to": name_of(tid), "reason": queued.reason}
         return {"ok": True, "sent_to": name_of(tid)}
 
     handlers: dict[str, Callable[[dict], Any]] = {

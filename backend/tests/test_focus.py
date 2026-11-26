@@ -232,10 +232,13 @@ def test_manual_mode_read_suggest_send(make_client):
     assert driver.typed[-1] == (DM_DRAFT, "C'est noté.", True) and driver.active_thread() == USER_VIEW
 
 
-def test_manual_send_blocked_during_screen_share(make_client):
-    client, _watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
+def test_manual_send_waits_during_screen_share(make_client):
+    # Nothing is typed while the screen is shared: the message waits in the outbox.
+    client, watcher, driver = make_client(driver=_looking_at(ScreenShareDriver(interval=9999)))
     r = client.post("/api/threads/19%3Abb22%40thread.v2/send", json={"text": "Coucou"})
-    assert r.status_code == 409 and driver.typed == []
+    assert r.status_code == 200 and r.json()["queued"]["text"] == "Coucou" and driver.typed == []
+    watcher.flush_outbox()
+    assert driver.typed == [] and watcher.state.outbox[0].status == "waiting"
 
 
 def test_thread_history_cached_between_clicks(make_client):

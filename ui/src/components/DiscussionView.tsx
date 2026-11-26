@@ -15,6 +15,7 @@ import { MessageText } from "@/components/MessageText";
 import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { ThreadActivity } from "@/components/ThreadActivity";
+import { OutboxItems } from "@/components/OutboxItems";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
@@ -521,8 +522,13 @@ export function DiscussionView({
       return fail(`Envoi impossible à ${c.displayName}`, `${res.error} ${kept}`);
     }
     if (draft) trame.removeDraft(draft.id);
-    const shownText = [body, ...files.map((f) => `Pièce jointe : ${f.name}`)].filter(Boolean).join("\n");
-    setMessages((m) => [...(m ?? []), { sender: "Toi", text: shownText, at: "à l'instant", mine: true, replyTo: target }]);
+    if (res.queued) {
+      // Teams pas prêt : le message attend dans la file (affichée en bas du fil) et partira seul.
+      toast.info("Message en file d'envoi", { description: `${res.queued.reason}. Il partira dès que Teams est prêt.` });
+    } else {
+      const shownText = [body, ...files.map((f) => `Pièce jointe : ${f.name}`)].filter(Boolean).join("\n");
+      setMessages((m) => [...(m ?? []), { sender: "Toi", text: shownText, at: "à l'instant", mine: true, replyTo: target }]);
+    }
     setText("");
     setGhost("");
     setFiles([]);
@@ -810,6 +816,7 @@ export function DiscussionView({
                   </motion.div>
                 );
               })}
+              <OutboxItems trame={trame} threadId={c.threadId} />
               {messages !== null && <ThreadActivity trame={trame} conversation={c} last={shown[shown.length - 1]} />}
             </>
           )}

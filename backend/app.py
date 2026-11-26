@@ -308,9 +308,10 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[SendBody] = None):
-        watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
-                           body.mentions if body else None, _files(body))
-        return {"ok": True}
+        queued = watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
+                                    body.mentions if body else None, _files(body))
+        # Teams pas prêt : le message attend dans la file d'envoi et partira seul.
+        return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/compose")
     def compose_draft(draft_id: str, body: Optional[TextBody] = None):
@@ -373,8 +374,8 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):
-        watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body))
-        return {"ok": True}
+        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body))
+        return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
     @app.get("/api/attachments")
     def attachments_info():
@@ -413,6 +414,16 @@ def create_app(
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):
         watcher.mark_read(thread_id)
+        return {"ok": True}
+
+    @app.post("/api/outbox/{item_id}/cancel")
+    def outbox_cancel(item_id: str):
+        watcher.cancel_queued(item_id)
+        return {"ok": True}
+
+    @app.post("/api/outbox/{item_id}/retry")
+    def outbox_retry(item_id: str):
+        watcher.retry_queued(item_id)
         return {"ok": True}
 
     @app.post("/api/threads/{thread_id:path}/clear-compose")
