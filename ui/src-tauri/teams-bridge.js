@@ -117,11 +117,26 @@
     open: async ({ name }) => {
       if (isOpen(name)) return { ok: true, title: document.title };
       const item = findItem(name);
-      if (!item) return { ok: false, title: document.title, error: "conversation absente de la liste" };
+      if (!item) return { ok: false, title: document.title, error: `« ${name} » absente de la liste (${items().length} éléments)` };
       item.scrollIntoView({ block: "nearest" });
-      item.click();
-      const ok = await waitFor(() => isOpen(name), 3500);
-      return { ok, title: document.title };
+      // Un simple click() ne suffit pas toujours : Teams écoute parfois les événements
+      // pointeur sur l'élément intérieur. On essaie l'un puis l'autre.
+      const inner = item.querySelector('[role="button"], a[href], [tabindex="0"], [data-tid]') || item;
+      const press = (el) => {
+        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+          const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+          el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window, button: 0, isPrimary: true }));
+        }
+      };
+      for (const act of [() => item.click(), () => press(inner), () => press(item)]) {
+        act();
+        if (await waitFor(() => isOpen(name), 1800)) return { ok: true, title: document.title };
+      }
+      return {
+        ok: false,
+        title: document.title,
+        error: `clic sans effet sur « ${label(item).split(" ").slice(0, 4).join(" ")} », Teams affiche « ${titleName() || document.title} »`,
+      };
     },
     read: ({ last = 30 }) => {
       const nodes = Array.from(

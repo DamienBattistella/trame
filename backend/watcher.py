@@ -583,7 +583,7 @@ class Watcher:
                 raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
         self._warn_if_not_restored(focus)
         if not focus.ok:
-            self.log("warn", f"{purpose} impossible pour {name} : conversation non confirmée dans Teams")
+            self.log("warn", f"{purpose} impossible pour {name} : {focus.reason or 'conversation non confirmée dans Teams'}")
             raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams.")
         return msgs
 
