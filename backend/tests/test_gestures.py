@@ -59,6 +59,14 @@ def test_react_unknown_reaction_is_rejected(make_client):
     assert r.status_code == 422 and driver.reactions == {}
 
 
+def test_only_the_one_click_reactions_of_teams(make_client):
+    # La barre de survol de Teams n'offre que 👍 ❤️ 😆 😮 ; le reste passe par un sélecteur.
+    client, _watcher, driver = make_client()
+    for reaction in ("sad", "angry"):
+        assert client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": reaction}).status_code == 422
+    assert driver.reactions == {}
+
+
 def test_react_needs_the_conversation_confirmed(make_client):
     client, _watcher, driver = make_client(driver=RefusingDriver(interval=9999))
     r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "like"})
