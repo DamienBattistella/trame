@@ -7,11 +7,14 @@ the wrapped page driver does it as before. `routes()` tells which path served ea
 Everything not overridden here is the page driver's, untouched (writes stay on the page
 in this first step)."""
 from __future__ import annotations
+import html
+import json
+import re
 import time
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
-from drivers.base import DeleteUncertain, Focus, ReactUncertain, TeamsDriver, same_message
+from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from models import REACTIONS, IncomingMessage, MessageRef, Surface, WatchEntity
 from msgraph import convert
 from msgraph.auth import NotSignedIn
@@ -120,7 +123,7 @@ class GraphDriver:
                 raise uncertain(str(e))
             self._note(action, "page", str(e)[:200])
             return page()
-        except (ReactUncertain, DeleteUncertain, WriteUncertain) as e:  # Graph wrote, without proof
+        except (ReactUncertain, DeleteUncertain, SendUncertain, WriteUncertain) as e:  # Graph wrote, without proof
             self._note(action, "graph", str(e)[:200])
             raise
         except (NotSignedIn, LookupError) as e:
@@ -341,6 +344,111 @@ class GraphDriver:
     def set_status_message(self, text: str) -> str:
         return self._write("set_note", lambda c: self._set_note(c, text),
                            lambda: self._inner.set_status_message(text))
+
+    # --- writes, step 3: sending (text, mentions, quoted reply) and new 1:1 chats ---
+    def _member_ids(self, client: GraphClient, chat: str, names: Sequence[str]) -> dict[str, str]:
+        """Each mentioned name to the one member of the chat with exactly that name."""
+        members = (client.get(f"/chats/{chat}/members") or {}).get("value") or []
+        out = {}
+        for name in names:
+            found = [m.get("userId") for m in members
+                     if " ".join(str(m.get("displayName") or "").split()).casefold() == " ".join(name.split()).casefold()]
+            if len(found) != 1 or not found[0]:
+                raise LookupError(f"« @{name} » : personne de ce nom dans la conversation, ou plusieurs")
+            out[name] = found[0]
+        return out
+
+    @staticmethod
+    def _html(text: str) -> str:
+        return "<br>".join(html.escape(line, quote=False) for line in text.split("\n"))
+
+    def _post(self, client: GraphClient, thread_id: str, text: str, reply_to: Optional[MessageRef],
+              mentions: Sequence[str]) -> Focus:
+        chat = self._chat_id(client, thread_id)
+        content = self._html(text)
+        body: dict = {"body": {"contentType": "html", "content": content}}
+        if mentions:
+            ids = self._member_ids(client, chat, mentions)
+            body["mentions"] = []
+            for n, name in enumerate(ids):
+                tag = f"<at id=\"{n}\">{html.escape(name, quote=False)}</at>"
+                pattern = re.compile(r"@" + re.escape(html.escape(name, quote=False)))
+                if not pattern.search(content):
+                    raise LookupError(f"« @{name} » absent du texte")
+                content = pattern.sub(lambda _m, t=tag: t, content, count=1)
+                body["mentions"].append({"id": n, "mentionText": name, "mentioned": {"user": {
+                    "id": ids[name], "displayName": name, "userIdentityType": "aadUser"}}})
+            body["body"]["content"] = content
+        if reply_to is not None:
+            raw = self._message(client, chat, reply_to)
+            preview, _ = convert.body_text(raw.get("body"))
+            sender = (raw.get("from") or {}).get("user") or {}
+            body["attachments"] = [{"id": raw["id"], "contentType": "messageReference", "content": json.dumps({
+                "messageId": raw["id"], "messagePreview": preview[:200],
+                "messageSender": {"user": {"id": sender.get("id"), "displayName": sender.get("displayName"),
+                                           "userIdentityType": "aadUser"}}})}]
+            body["body"]["content"] = f'<attachment id="{raw["id"]}"></attachment>' + body["body"]["content"]
+        try:
+            created = client.post(f"/chats/{chat}/messages", body) or {}
+        except GraphError as e:
+            if e.status >= 500 or e.status == 429:
+                raise SendUncertain(f"Microsoft Graph : {e}")
+            raise
+        except OSError as e:
+            raise SendUncertain(f"Microsoft Graph sans réponse : {e}")
+        mid = str(created.get("id") or "")
+        # Sent only once Graph shows the message it created, with this text.
+        try:
+            shown = client.get(f"/chats/{chat}/messages/{mid}") if mid else None
+        except (GraphError, OSError) as e:
+            raise SendUncertain(f"message créé mais pas relu : {e}")
+        shown_text, _ = convert.body_text((shown or {}).get("body"))
+        want, _ = convert.body_text(body["body"])
+        if not shown or " ".join(shown_text.split()) != " ".join(want.split()):
+            raise SendUncertain("message créé mais pas retrouvé tel quel dans la conversation")
+        return Focus(ok=True)
+
+    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
+                     reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = (),
+                     files: Sequence[Any] = ()) -> Focus:
+        def page() -> Focus:
+            return self._inner.type_focused(thread_id, text, send, restore, reply_to=reply_to,
+                                            mentions=mentions, files=files)
+        # Graph sends, it never types into Teams' box (send=False), and files stay on the
+        # page until sharing them with the chat members is done (docs/teams-graph.md).
+        if not send or files or not text.strip():
+            self._note("send", "page", "saisie sans envoi" if not send else "pièce jointe" if files else "texte vide")
+            return page()
+        return self._write("send", lambda c: self._post(c, thread_id, text, reply_to, mentions), page, SendUncertain)
+
+    def type_reply(self, thread_id: str, text: str, send: bool, restore: bool = False) -> bool:
+        return self.type_focused(thread_id, text, send, restore).ok
+
+    def _start(self, client: GraphClient, name: str) -> WatchEntity:
+        quoted = name.replace("'", "''")
+        users = (client.get("/users", {"$filter": f"displayName eq '{quoted}'", "$select": "id,displayName"}) or {}).get("value") or []
+        if len(users) != 1:
+            raise LookupError(f"« {name} » : personne ou plusieurs personnes de ce nom dans l'annuaire")
+        me, other = self._me_id(client), users[0]["id"]
+        bind = "https://graph.microsoft.com/v1.0/users('{}')"
+        chat = client.post("/chats", {"chatType": "oneOnOne", "members": [
+            {"@odata.type": "#microsoft.graph.aadUserConversationMember", "roles": ["owner"], "user@odata.bind": bind.format(uid)}
+            for uid in (me, other)]}) or {}
+        if not chat.get("id"):
+            raise LookupError("Graph n'a pas rendu la conversation")
+        shown = " ".join(str(users[0].get("displayName") or name).split())
+        self._chats[chat["id"]] = Surface.dm
+        self._names[shown.casefold()] = chat["id"]
+        self._members[chat["id"]] = other
+        for attr, value in (("_names", shown), ("_kinds", Surface.dm)):
+            known = getattr(self._inner, attr, None)
+            if isinstance(known, dict):
+                known[chat["id"]] = value
+        return WatchEntity(thread_id=chat["id"], display_name=shown, surface=Surface.dm)
+
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        name = " ".join((name or "").split())
+        return self._write("start_chat", lambda c: self._start(c, name), lambda: self._inner.start_chat(name))
 
     # --- people and message search ---
     def _people(self, client: GraphClient, query: str, limit: int) -> list[str]:
