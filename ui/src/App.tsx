@@ -293,7 +293,8 @@ function ConnectionBadge({ connected, demo, lost }: { connected: boolean; demo: 
                 )}
               >
                 {state === "offline" ? <WifiOff className="size-3.5" /> : <FlaskConical className="size-3.5" />}
-                {state === "offline" ? "Hors ligne" : "Données d'exemple"}
+                {/* Sous 1024 px, l'en-tête n'a pas la place : icône seule, libellé en infobulle et pour les lecteurs d'écran. */}
+                <span className="sr-only lg:not-sr-only">{state === "offline" ? "Hors ligne" : "Données d'exemple"}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>

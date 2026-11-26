@@ -18,6 +18,7 @@ const PAGE = 100;
 
 const DOT: Record<LogLevel, string> = { info: "bg-muted-foreground", warn: "bg-warning", sent: "bg-success", draft: "bg-primary" };
 const LEVEL_LABEL: Record<LogLevel, string> = { info: "Infos", warn: "Alertes", sent: "Envois", draft: "Brouillons" };
+const LEVEL_ONE: Record<LogLevel, string> = { info: "Info", warn: "Alerte", sent: "Envoi", draft: "Brouillon" };
 const PERIODS: { value: Period; label: string }[] = [
   { value: "all", label: "Tout" },
   { value: "hour", label: "1 h" },
@@ -93,7 +94,7 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
   const loading = items === null && !error;
 
   return (
-    <div className="flex flex-col gap-3 py-5">
+    <div className="flex h-full min-h-[28rem] flex-col gap-3 py-5">
       <div className="flex items-end justify-between gap-3">
         <SectionLabel>Activité</SectionLabel>
         <div className="mb-2">
@@ -101,7 +102,9 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
         </div>
       </div>
 
-      <div className="relative">
+      {/* Recherche, niveaux et période sur une ligne dès qu'il y a la place (1024 px). */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
+      <div className="relative lg:min-w-64 lg:flex-1">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={q}
@@ -127,6 +130,7 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
         </AnimatePresence>
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Niveaux affichés">
         {LOG_LEVELS.map((l) => {
           const on = levels.includes(l);
@@ -149,9 +153,11 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
             </button>
           );
         })}
+      </div>
         <div className="ml-auto">
           <Segment<Period> label="Période" value={period} onChange={setPeriod} options={PERIODS} />
         </div>
+      </div>
       </div>
 
       <div className="flex min-h-5 items-center justify-between px-1 text-xs text-muted-foreground" aria-live="polite">
@@ -173,8 +179,8 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
         )}
       </div>
 
-      <GroupList>
-        <ScrollArea className="h-[max(16rem,calc(100dvh-18rem))]">
+      <GroupList className="min-h-0 flex-1">
+        <ScrollArea className="h-full">
           {!loading && shown.length === 0 &&
             (filtered ? (
               <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -197,11 +203,13 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
                 initial={{ opacity: 0, y: -6, backgroundColor: "color-mix(in oklch, var(--primary) 12%, transparent)" }}
                 animate={{ opacity: 1, y: 0, backgroundColor: "rgba(0,0,0,0)" }}
                 transition={{ duration: 0.6 }}
-                className="flex items-center gap-3 px-4 py-3 text-sm"
+                className="flex items-start gap-3 px-4 py-2.5 text-sm leading-5"
               >
-                <span className={cn("size-2 shrink-0 rounded-full", DOT[l.level])} title={LEVEL_LABEL[l.level]} />
-                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{when(l)}</span>
-                <span className="flex-1">
+                <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", DOT[l.level])} title={LEVEL_LABEL[l.level]} />
+                <span className="shrink-0 font-mono text-xs leading-5 tabular-nums text-muted-foreground">{when(l)}</span>
+                {/* Fenêtre large : le niveau en clair, en colonne, pour parcourir le journal d'un œil. */}
+                <span className="hidden w-16 shrink-0 text-xs leading-5 text-muted-foreground xl:block">{LEVEL_ONE[l.level]}</span>
+                <span className="min-w-0 flex-1 break-words">
                   <Highlight text={l.text} range={findFolded(l.text, q)} />
                 </span>
               </motion.div>
