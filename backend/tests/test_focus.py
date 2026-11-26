@@ -248,6 +248,45 @@ def test_thread_history_cached_between_clicks(make_client):
     assert driver.opened == [DM_DRAFT, USER_VIEW, DM_DRAFT, USER_VIEW]
 
 
+class LongThreadDriver(MockTeamsDriver):
+    """A conversation of 120 messages, of which Teams can go back as far as asked."""
+
+    def read_context(self, thread_id: str, last_n: int):
+        return [IncomingMessage(thread_id=thread_id, sender="Quelqu'un", text=f"Message {i}", received_at="10:00",
+                                surface=Surface.dm) for i in range(120)][-last_n:]
+
+
+def test_thread_history_goes_back_and_reports_the_start(make_client):
+    client, _watcher, driver = make_client(driver=_looking_at(LongThreadDriver(interval=9999)))
+    t = "19%3Abb22%40thread.v2"
+    first = client.get(f"/api/threads/{t}/messages?last=30").json()
+    assert len(first["messages"]) == 30 and first["messages"][-1]["text"] == "Message 119" and first["top"] is False
+    older = client.get(f"/api/threads/{t}/messages?last=90").json()
+    assert len(older["messages"]) == 90 and older["messages"][0]["text"] == "Message 30" and older["top"] is False
+    # A longer read covers a shorter one: no new trip to Teams.
+    opened = len(driver.opened)
+    again = client.get(f"/api/threads/{t}/messages?last=30").json()
+    assert len(driver.opened) == opened and again["messages"][0]["text"] == "Message 90" and again["top"] is False
+    whole = client.get(f"/api/threads/{t}/messages?last=150").json()
+    assert len(whole["messages"]) == 120 and whole["top"] is True
+    # Start reached: asking for more needs no other read.
+    opened = len(driver.opened)
+    assert client.get(f"/api/threads/{t}/messages?last=300").json()["top"] is True and len(driver.opened) == opened
+
+
+def test_received_message_drops_cached_history_even_unfollowed(make_client):
+    client, watcher, driver = make_client(driver=_looking_at(MockTeamsDriver(interval=9999)))
+    unfollowed = next(w for w in watcher.state.watchlist if not w.watch)
+    t = unfollowed.thread_id.replace(":", "%3A").replace("@", "%40")
+    client.get(f"/api/threads/{t}/messages")
+    opened = len(driver.opened)
+    client.get(f"/api/threads/{t}/messages")
+    assert len(driver.opened) == opened
+    watcher._on_message(_msg(unfollowed.thread_id, "Nouveau message"))
+    client.get(f"/api/threads/{t}/messages")
+    assert len(driver.opened) > opened
+
+
 def test_merge_migrates_unstable_react_ids(make_client):
     from models import WatchEntity, Surface
     _c, watcher, _d = make_client()

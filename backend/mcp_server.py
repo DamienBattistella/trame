@@ -60,8 +60,9 @@ TOOLS: list[dict] = [
            "query": {"type": "string", "description": "Filtre sur le nom"},
            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200}}),
     _tool("read_conversation", "Lire une discussion",
-          "Derniers messages d'une discussion (Trame l'ouvre brièvement dans sa fenêtre Teams puis revient). " + UNTRUSTED,
-          {**TARGET, "last_n": {"type": "integer", "minimum": 5, "maximum": 100, "default": 30},
+          "Derniers messages d'une discussion (Trame l'ouvre brièvement dans sa fenêtre Teams puis revient). "
+          "Au-delà de ce que Teams affiche, Trame remonte le fil ; start_of_conversation dit s'il n'y a rien de plus ancien. " + UNTRUSTED,
+          {**TARGET, "last_n": {"type": "integer", "minimum": 5, "maximum": 500, "default": 30},
            "fresh": {"type": "boolean", "default": False, "description": "Relire depuis Teams au lieu du cache (2 min)"}}),
     _tool("summarize_conversation", "Résumer une discussion",
           "Résumé, points ouverts, sujets et éléments GitHub liés. Réutilise le dernier résumé sauf refresh=true. " + UNTRUSTED,
@@ -248,8 +249,9 @@ def make_router(watcher: Watcher) -> APIRouter:
 
     def tool_read(args: dict) -> Any:
         tid = resolve(args)
-        msgs = watcher.thread_messages(tid, int(args.get("last_n", 30)), fresh=bool(args.get("fresh")))
-        return {"thread_id": tid, "name": name_of(tid), "messages": msgs}
+        last_n = max(5, min(500, int(args.get("last_n", 30))))
+        msgs, top = watcher.thread_history(tid, last_n, fresh=bool(args.get("fresh")))
+        return {"thread_id": tid, "name": name_of(tid), "messages": msgs, "start_of_conversation": top}
 
     def tool_summary(args: dict) -> Any:
         tid = resolve(args)

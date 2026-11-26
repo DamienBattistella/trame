@@ -272,7 +272,9 @@ def create_app(
 
     @app.get("/api/threads/{thread_id:path}/messages")
     def thread_messages(thread_id: str, last: int = 30, fresh: bool = False):
-        return {"ok": True, "messages": watcher.thread_messages(thread_id, max(5, min(100, last)), fresh)}
+        # top: the start of the conversation was reached, there is nothing older to load.
+        messages, top = watcher.thread_history(thread_id, max(5, min(500, last)), fresh)
+        return {"ok": True, "messages": messages, "top": top}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):

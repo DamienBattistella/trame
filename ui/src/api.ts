@@ -667,7 +667,12 @@ export function useTrame() {
   };
 
   /** Mode manuel : historique d'une conversation, réponse tapée à la main, proposition, ouverture dans Teams. */
-  const threadMessages = async (threadId: string, fresh = false): Promise<Result<{ messages: ThreadMessage[] }>> => {
+  /** `last` : combien de messages remonter ; `top` dans la réponse : le début de la conversation est atteint. */
+  const threadMessages = async (
+    threadId: string,
+    fresh = false,
+    last = 30
+  ): Promise<Result<{ messages: ThreadMessage[]; top: boolean }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(700);
@@ -680,12 +685,15 @@ export function useTrame() {
           { sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true },
           { sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false },
         ],
+        top: true,
       };
     }
-    return request<{ messages: ThreadMessage[] }>(
+    const query = new URLSearchParams({ last: String(last), ...(fresh ? { fresh: "true" } : {}) });
+    const res = await request<{ messages: ThreadMessage[]; top?: boolean }>(
       "GET",
-      `/api/threads/${encodeURIComponent(threadId)}/messages${fresh ? "?fresh=true" : ""}`
+      `/api/threads/${encodeURIComponent(threadId)}/messages?${query}`
     );
+    return res.ok ? { ...res, top: Boolean(res.top) } : res;
   };
   const sendInThread = async (threadId: string, text: string): Promise<Result> => {
     if (!connectedRef.current) return demo(800, {});

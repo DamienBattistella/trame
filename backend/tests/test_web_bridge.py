@@ -31,7 +31,7 @@ class FakePage:
             self.title = f"Chat | {a['name']} | Microsoft Teams"
             return {"ok": True, "title": self.title}
         if op == "read":
-            return [{"sender": "Romain CUREAU", "text": "Tu as vu ?", "at": "10:00"}]
+            return {"messages": [{"sender": "Romain CUREAU", "text": "Tu as vu ?", "at": "10:00"}][-a["last"]:], "top": True}
         if op == "type":
             self.typed.append((a["name"], a["text"], a["send"]))
             return {"ok": True}
@@ -58,7 +58,7 @@ def test_bridge_end_to_end(make_client, monkeypatch):
         assert convs[1].surface == Surface.group and convs[1].unread
         watcher.state.watchlist = convs
         msgs = client.get("/api/threads/name%3ARomain%20CUREAU/messages").json()
-        assert msgs["ok"] and msgs["messages"][0]["text"] == "Tu as vu ?"
+        assert msgs["ok"] and msgs["messages"][0]["text"] == "Tu as vu ?" and msgs["top"] is True
         r = client.post("/api/threads/name%3ARomain%20CUREAU/send", json={"text": "Oui je regarde"})
         assert r.json() == {"ok": True}
         assert ("Romain CUREAU", "Oui je regarde", True) in page.typed

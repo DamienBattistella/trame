@@ -58,7 +58,8 @@ class Watcher:
         self._ui_lock = threading.Lock()
         self._briefs: dict[str, Brief] = {}
         self._history: dict[str, tuple[float, str]] = {}
-        self._thread_cache: dict[str, tuple[float, list[dict]]] = {}
+        # thread id -> (read at, messages, how many were asked, start of the conversation reached)
+        self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
 
@@ -123,6 +124,9 @@ class Watcher:
     MAX_NOTICES = 20
 
     def _on_message(self, msg: IncomingMessage) -> None:
+        # Followed or not, an open discussion view rereads the conversation on the
+        # notice: its cached copy lacks this message.
+        self._thread_cache.pop(msg.thread_id, None)
         self._notice(msg)
         self._process(msg)
 
@@ -393,16 +397,23 @@ class Watcher:
         return s in ("you", "vous", "moi") or any(s == n.strip().casefold() for n in names if n.strip())
 
     def thread_messages(self, thread_id: str, last_n: int = 30, fresh: bool = False) -> list[dict]:
-        """History shown in the discussion view. Kept HISTORY_TTL so that clicking
-        around the sidebar does not keep switching the conversation open in Teams."""
+        return self.thread_history(thread_id, last_n, fresh)[0]
+
+    def thread_history(self, thread_id: str, last_n: int = 30, fresh: bool = False) -> tuple[list[dict], bool]:
+        """History shown in the discussion view, and whether it starts at the beginning
+        of the conversation. Kept HISTORY_TTL so that clicking around the sidebar does
+        not keep switching the conversation open in Teams; a longer read covers a
+        shorter one. Dropped whenever a message arrives in the conversation."""
         cached = self._thread_cache.get(thread_id)
         if cached and not fresh and time.monotonic() - cached[0] < self.HISTORY_TTL:
-            return cached[1]
+            _, out, read_n, top = cached
+            if read_n >= last_n or top:
+                return out[-last_n:], top and len(out) <= last_n
         entity = self._conversation(thread_id)
-        msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
+        msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
-        self._thread_cache[thread_id] = (time.monotonic(), out)
-        return out
+        self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
+        return out, top
 
     def send_manual(self, thread_id: str, text: str) -> None:
         entity = self._conversation(thread_id)
@@ -629,18 +640,24 @@ class Watcher:
         return brief
 
     def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé") -> list[IncomingMessage]:
-        """Open the conversation just long enough to read it, then reopen the previous one."""
+        return self._read_history_focused(thread_id, name, last_n, purpose)[0]
+
+    def _read_history_focused(self, thread_id: str, name: str, last_n: int,
+                              purpose: str = "Résumé") -> tuple[list[IncomingMessage], bool]:
+        """Open the conversation just long enough to read it, then reopen the previous one.
+        Also tells whether the start of the conversation was reached."""
         with self._ui_lock:
             if self.driver._current() != thread_id and self._screen_share_guarded():
                 self.state.screen_sharing = True
                 raise ActionError(409, "Partage d'écran en cours : Trame n'ouvre pas d'autre conversation dans Teams.")
             msgs: list[IncomingMessage] = []
+            top = False
             try:
                 with telemetry.span("teams.read", conversation=name, purpose=purpose, last_n=last_n) as sp, \
                         self.driver.focused(thread_id, restore=True) as focus:
                     if focus.ok:
-                        msgs = self.driver.read_context(thread_id, last_n)
-                    telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs))
+                        msgs, top = self.driver.read_history(thread_id, last_n)
+                    telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs), top=top)
             except Exception as e:
                 self.log("warn", f"{purpose} impossible pour {name} : lecture de la conversation échouée ({e})")
                 raise ActionError(502, "Lecture de la conversation impossible dans Teams. Rien n'a été perdu, tu peux réessayer.")
@@ -648,7 +665,7 @@ class Watcher:
         if not focus.ok:
             self.log("warn", f"{purpose} impossible pour {name} : {focus.reason or 'conversation non confirmée dans Teams'}")
             raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams.")
-        return msgs
+        return msgs, top
 
     def cached_brief(self, thread_id: str) -> Optional[Brief]:
         """Last brief of a known conversation, None if none was generated yet."""
