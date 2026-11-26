@@ -284,6 +284,10 @@ def create_app(
     def thread_messages(thread_id: str, last: int = 30, fresh: bool = False):
         return {"ok": True, "messages": watcher.thread_messages(thread_id, max(5, min(100, last)), fresh)}
 
+    @app.get("/api/search")
+    def search_messages(q: str = "", limit: int = 50):
+        return {"ok": True, **watcher.search_messages(q, max(1, min(200, limit)))}
+
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):
         watcher.send_manual(thread_id, body.text or "")

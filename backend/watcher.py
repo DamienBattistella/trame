@@ -12,6 +12,7 @@ import config as cfgmod
 import safety
 import people as peoplemod
 import presence as presencemod
+import search as searchmod
 import telemetry
 from drivers import rail_label
 import settings as settingsmod
@@ -60,6 +61,7 @@ class Watcher:
         self._briefs: dict[str, Brief] = {}
         self._history: dict[str, tuple[float, str]] = {}
         self._thread_cache: dict[str, tuple[float, list[dict]]] = {}
+        self.archive = searchmod.MessageArchive()
         self._in_flight: set[str] = set()
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
@@ -169,6 +171,7 @@ class Watcher:
             pass
 
     def _process(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
+        self.archive.add(msg.thread_id, [msg])
         with telemetry.span("message", conversation=msg.thread_id, surface=msg.surface.value, force_draft=force_draft,
                             text=telemetry.content(msg.text)) as sp:
             outcome = self._process_inner(msg, force_draft)
@@ -430,6 +433,13 @@ class Watcher:
         out = [{"sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender)} for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out)
         return out
+
+    def search_messages(self, query: str, limit: int = 50) -> dict:
+        """Messages already read by Trame that contain `query` (case and accents ignored).
+        Reads nothing in Teams: only what the engine has seen since it started."""
+        names = {w.thread_id: w.display_name for w in self.state.watchlist}
+        results = self.archive.search(query, names, self._is_mine, limit)
+        return {"results": results, "scope": self.archive.scope()}
 
     def send_manual(self, thread_id: str, text: str) -> None:
         entity = self._conversation(thread_id)
@@ -739,6 +749,7 @@ class Watcher:
                         self.driver.focused(thread_id, restore=True) as focus:
                     if focus.ok:
                         msgs = self.driver.read_context(thread_id, last_n)
+                        self.archive.add(thread_id, msgs)
                     telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs))
             except Exception as e:
                 self.log("warn", f"{purpose} impossible pour {name} : lecture de la conversation échouée ({e})")
@@ -856,6 +867,7 @@ class Watcher:
             self._briefs.clear()
             self._history.clear()
             self._thread_cache.clear()
+            self.archive.clear()
             self._sent_recent.clear()
             self.state.drafts = []
             self.state.notices = []
@@ -908,6 +920,7 @@ class Watcher:
                     self._warn_if_not_restored(focus)
         except Exception:
             return ""
+        self.archive.add(thread_id, msgs)
         text = "\n".join(f"{m.sender}: {m.text}" for m in msgs)
         if text:
             self._history[thread_id] = (time.monotonic(), text)

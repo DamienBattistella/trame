@@ -9,9 +9,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { InitialsAvatar, spring } from "@/components/kit";
 import { DiscussionView } from "@/components/DiscussionView";
 import { NewConversation } from "@/components/NewConversation";
+import { MessageSearchResults } from "@/components/MessageSearchResults";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { DraftItem, WatchEntity } from "@/types";
+import { DraftItem, MessageHit, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
@@ -36,6 +37,12 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   const { watchlist, drafts } = trame.state;
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  // Message trouvé par la recherche : la discussion s'ouvre dessus.
+  const [found, setFound] = useState<MessageHit | null>(null);
+  const select = (threadId: string, hit: MessageHit | null = null) => {
+    setSelected(threadId);
+    setFound(hit);
+  };
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
@@ -76,7 +83,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
 
   // Première ouverture : la première réponse à relire, sinon rien de choisi.
   useEffect(() => {
-    if (!selected && groups.review[0]) setSelected(groups.review[0].threadId);
+    if (!selected && groups.review[0]) select(groups.review[0].threadId);
   }, [groups.review.length]);
 
   const catchUp = async () => {
@@ -98,7 +105,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Rechercher"
-              aria-label="Rechercher une discussion"
+              aria-label="Rechercher une discussion ou un message"
               className="h-9 rounded-full pl-9"
             />
             {query && (
@@ -168,7 +175,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                       >
                         {list.map((c) => (
                           <li key={c.threadId} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]">
-                            <SidebarItem c={c} draft={draftOf.get(c.threadId) ?? null} active={c.threadId === current?.threadId} onClick={() => setSelected(c.threadId)} />
+                            <SidebarItem c={c} draft={draftOf.get(c.threadId) ?? null} active={c.threadId === current?.threadId} onClick={() => select(c.threadId)} />
                           </li>
                         ))}
                       </motion.ul>
@@ -177,7 +184,10 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                 </section>
               );
             })}
-            {all.length === 0 && <p className="px-3 py-8 text-center text-sm text-muted-foreground">Aucune discussion.</p>}
+            {all.length === 0 && (
+              <p className="px-3 py-8 text-center text-sm text-muted-foreground">{query ? "Aucune discussion à ce nom." : "Aucune discussion."}</p>
+            )}
+            <MessageSearchResults trame={trame} query={query} onOpen={(h) => select(h.threadId, h)} />
           </nav>
         </ScrollArea>
       </aside>
@@ -189,6 +199,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             trame={trame}
             conversation={current}
             draft={draftOf.get(current.threadId) ?? null}
+            found={found?.threadId === current.threadId ? found : null}
             onBrief={(t) => (wide ? setBriefOpen((o) => !o) : onBrief(t))}
           />
         ) : (
