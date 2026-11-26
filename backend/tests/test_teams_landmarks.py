@@ -14,18 +14,16 @@ import teams_check
 
 BRIDGE = Path(__file__).resolve().parents[2] / "ui" / "src-tauri" / "teams-bridge.js"
 PAGE = Path(__file__).resolve().parent / "fixtures" / "teams" / "page.html"
+NEW_CHAT = Path(__file__).resolve().parent / "fixtures" / "teams" / "newchat.html"
 SOURCE = BRIDGE.read_text(encoding="utf-8")
 
 _BLOCK = SOURCE[SOURCE.index("const LANDMARKS = ["):SOURCE.index("];", SOURCE.index("const LANDMARKS = ["))]
 TABLE = re.findall(r'\[\s*"(\w+)",\s*"(\w+)",\s*\'([^\']*)\'\s*\]', _BLOCK)
 SCOPES = {"page", "chat", "thread", "hover", "unread", "menu"}
 
-# Absents de la page relevée le 26/11/2026 : Teams les a déjà changés. Le contrôle les signale ;
-# le jour où le pont les retrouve, les retirer d'ici (le test le rappelle).
-KNOWN_ABSENT = {
-    "new_chat": "le bouton s'appelle désormais « Nouveau message », sans data-tid",
-    "main_pane": "plus aucun [role=main] : l'indicateur de frappe de la conversation ouverte est muet",
-}
+# Repères que Teams a changés et que le pont ne retrouve pas encore (vide : tous retrouvés).
+# Un repère ajouté ici doit manquer à la page relevée ; retrouvé, le test demande de l'ôter.
+KNOWN_ABSENT: dict[str, str] = {}
 
 # data-tid cités dans le pont sans être des repères contrôlés, et pourquoi.
 NOT_WATCHED = {
@@ -90,13 +88,32 @@ def test_selector_finds_the_real_page(key, scope, selector):
         assert found, f"« {key} » ({selector}) ne trouve plus rien dans la page relevée"
 
 
-def test_page_is_structure_only():
-    html = PAGE.read_text(encoding="utf-8")
+def test_new_chat_screen():
+    # Écran « Nouveau message » : le champ « À » et ses suggestions, pas la recherche du haut
+    # (elle aussi une liste déroulante, plus haut dans la page : l'ancien repli tombait dessus).
+    soup = BeautifulSoup(NEW_CHAT.read_text(encoding="utf-8"), "html.parser")
+    sel = dict((k, s) for k, _, s in TABLE)
+    picked = soup.select(sel["people_picker"])
+    assert [el.get("id") for el in picked] == ["people-picker-input"]
+    assert soup.select_one(sel["search_input"]) not in picked
+    options = soup.select(sel["people_list"])
+    assert len(options) == 2
+    # La liste suggérée est celle que le champ désigne (aria-controls), lue par le pont.
+    listbox = soup.find(id=picked[0]["aria-controls"])
+    assert listbox is not None and all(listbox in o.parents for o in options)
+    assert soup.select_one(sel["new_chat"]) is not None
+
+
+@pytest.mark.parametrize("fixture", [PAGE, NEW_CHAT], ids=["page", "newchat"])
+def test_page_is_structure_only(fixture):
+    html = fixture.read_text(encoding="utf-8")
     body = html[html.index("<body"):]
     assert re.sub(r"<[^>]*>|\s", "", body) == "", "texte de page dans le fragment"
     assert not re.search(r"[\w.-]+@(?!thread\.v2)[\w-]+\.\w+", body), "adresse dans le fragment"
     labels = set(re.findall(r'aria-label="([^"]*)"', body))
-    assert labels <= {"Conversation", "Joindre", "Envoyer", "Non lu"}
+    # Les deux suggestions du champ « À » portent des noms fictifs, mis au relevé.
+    assert labels <= {"Conversation", "Joindre", "Envoyer", "Non lu", "Nouveau message",
+                      "Ana Lopez (Vous), Ingénierie", "Ana et Marc"}
 
 
 def test_send_button_uses_the_current_data_tid():
