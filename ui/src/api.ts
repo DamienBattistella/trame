@@ -1246,12 +1246,21 @@ export function useTrame() {
       },
     };
   };
-  /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis). */
-  const suggestInThread = async (threadId: string, target?: MessageRef | null): Promise<Result<{ text: string }>> => {
+  /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis ;
+   *  `mine` : un de tes messages, à relancer ou compléter). N'envoie jamais rien. */
+  const suggestInThread = async (
+    threadId: string,
+    target?: MessageRef | null,
+    opts: { mine?: boolean } = {}
+  ): Promise<Result<{ text: string }>> => {
     if (!connectedRef.current) {
-      const text = target
-        ? `Bien vu pour « ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} » : je m'en occupe et je te dis.`
-        : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const quoted = target ? `« ${target.text.length > 40 ? target.text.slice(0, 40) + "…" : target.text} »` : "";
+      const text = target && opts.mine
+        ? `Petite relance sur ${quoted} : tu as pu regarder ? Je peux t'en dire plus si besoin.`
+        : target
+          ? `Bien vu pour ${quoted} : je m'en occupe et je te dis.`
+          : "Oui, je la relis cet après-midi et je te fais un retour avant 17 h.";
       const who = conversationName(threadId) ?? "ton interlocuteur";
       return demoReflect(
         {
@@ -1259,7 +1268,9 @@ export function useTrame() {
           threadId,
           conversation: conversationName(threadId),
           before: ["Lecture du fil (15 derniers messages au plus)", "Contexte rassemblé : fil (3 messages), entourage (1 fiche), GitHub (non utilisé pour une proposition)"],
-          thinking: target
+          thinking: target && opts.mine
+            ? `Le message choisi est le tien, pas celui de ${who} : je ne me réponds pas, je propose une relance courte qui rappelle le point et laisse la porte ouverte. Ton direct, tutoiement comme dans le fil.`
+            : target
             ? `${who} attend une réponse à un message précis, pas au dernier du fil. Je le cite et je réponds sur ce point seulement. Ton direct, tutoiement comme dans le fil, une phrase et un engagement.`
             : `${who} demande une relecture de la PR #214 avant ce soir. Le fil montre que c'est attendu aujourd'hui : je m'engage sur un créneau précis plutôt qu'un « je regarde ». Ton direct, tutoiement, une phrase.`,
           after: `Réponse reçue et nettoyée (${text.length} caractères)`,
