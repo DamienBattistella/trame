@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 import re
 from contextlib import asynccontextmanager
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -154,6 +154,19 @@ class SkillDirsBody(BaseModel):
 class SkillRepoBody(BaseModel):
     url: str = Field(max_length=300)
     branch: str = Field(default="", max_length=100)
+
+
+class ReportStartBody(BaseModel):
+    thread_id: str = Field(default="", max_length=300)
+    mid: str = Field(default="", max_length=100)
+    title: str = Field(default="", max_length=300)
+    date: Optional[str] = Field(default=None, max_length=10)
+    skill: str = Field(default="meeting-report", max_length=64)
+    path: Optional[str] = Field(default=None, max_length=500)
+
+
+class ReportAnswerBody(BaseModel):
+    text: str = Field(max_length=4000)
 
 
 class FollowUpSendBody(BaseModel):
@@ -566,6 +579,37 @@ def create_app(
     @app.post("/api/skills/{name}")
     def toggle_skill(name: str, body: SkillToggleBody):
         return {"ok": True, **watcher.set_skill_enabled(name, body.enabled)}
+
+    @app.post("/api/reports")
+    def start_report(body: ReportStartBody):
+        """Meeting report: a skill applied to the meeting's .vtt (fetched first if needed)."""
+        return {"ok": True, "report": watcher.start_meeting_report(body.thread_id, body.mid, body.title, body.date,
+                                                                   body.skill, body.path)}
+
+    @app.get("/api/reports")
+    def list_reports():
+        return {"ok": True, "reports": watcher.reports.list()}
+
+    @app.get("/api/reports/{report_id}")
+    def get_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.snapshot, report_id)}
+
+    @app.post("/api/reports/{report_id}/answer")
+    def answer_report(report_id: str, body: ReportAnswerBody):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.answer, report_id, body.text)}
+
+    @app.post("/api/reports/{report_id}/cancel")
+    def cancel_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.cancel, report_id)}
+
+    @app.post("/api/reports/{report_id}/save")
+    def save_report(report_id: str):
+        return {"ok": True, "report": watcher.report_call(watcher.reports.save, report_id)}
+
+    @app.post("/api/reports/{report_id}/open-folder")
+    def open_report_folder(report_id: str):
+        report = watcher.report_call(watcher.reports.snapshot, report_id)
+        return {"ok": True, **watcher.open_transcripts_folder(str(Path(report["vttPath"]).parent))}
 
     @app.get("/api/reflections")
     def get_reflections():
