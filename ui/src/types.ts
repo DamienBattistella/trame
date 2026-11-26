@@ -258,3 +258,24 @@ export interface FactCheck {
   claims: FactClaim[];
   sources: { messages: number; people: number; github: number };
 }
+
+/** Ce que le pilote Teams permet pour les pièces jointes, et les limites affichées. */
+export interface AttachmentLimits {
+  canAttach: boolean;
+  /** Pourquoi « Joindre » est désactivé (pilote sans pièces jointes). */
+  unsupported: string | null;
+  maxFiles: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  /** Extensions autorisées, sans le point, en minuscules. */
+  extensions: string[];
+}
+
+/** Un fichier choisi par l'utilisateur, prêt à partir avec le message (contenu en base64). */
+export interface PendingFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  data: string;
+}

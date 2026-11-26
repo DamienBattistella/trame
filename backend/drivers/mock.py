@@ -157,6 +157,7 @@ class MockTeamsDriver(TeamsDriver):
         self._convs = [c.model_copy() for c in _SEED]
         self._active: Optional[str] = None
         self.typed: list[tuple[str, str, bool]] = []
+        self.sent_files: list[tuple[str, str, list[tuple[str, int]]]] = []
         self.opened: list[str] = []
         self.marked_read: list[str] = []
         # Teams resolves anyone in the organization: the entourage is part of it.
@@ -258,6 +259,15 @@ class MockTeamsDriver(TeamsDriver):
         self.typed.append((thread_id, text, send))
         action = "ENVOYÉ" if send else "SAISI"
         _say(f"[mock] {action} -> {thread_id}: {text[:80]}")
+        return True
+
+    can_attach = True
+
+    def _send_files_into_active(self, thread_id, text, files, reply_to=None) -> bool:
+        if self._active != thread_id:
+            return False
+        self.sent_files.append((thread_id, text, [(f.name, f.size) for f in files]))
+        print(f"[mock] ENVOYÉ + {len(files)} fichier(s) -> {thread_id}: {text[:80]}")
         return True
 
     def mark_read(self, thread_id: str) -> bool:

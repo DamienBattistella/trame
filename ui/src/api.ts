@@ -26,10 +26,13 @@ import {
   SettingsPatch,
   Surface,
   WatchEntity,
+  AttachmentLimits,
+  PendingFile,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
+import { DEFAULT_LIMITS } from "@/lib/attachments";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
 
@@ -456,6 +459,9 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
   }
 }
 
+/** Seuls le nom, le type et le contenu partent : jamais un chemin sur le disque. */
+const wireFiles = (files: PendingFile[]) => files.map(({ name, type, data }) => ({ name, type, data }));
+
 const OFFLINE = "Le moteur Trame est injoignable : rien n'a été fait. Réessaie dans un instant.";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -597,11 +603,17 @@ export function useTrame() {
   };
 
   /** Le retrait de la carte est fait par l'UI après l'animation « Envoyé » (removeDraft). */
-  /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams. */
-  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = []): Promise<Result> =>
+  /** `mentions` : noms écrits « @Nom » dans le texte, à transformer en vraies mentions Teams.
+   *  `files` : fichiers choisis par l'utilisateur, envoyés avec le message. */
+  const sendDraft = (id: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result> =>
     connectedRef.current
-      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null, mentions })
-      : demo(700, {});
+      ? request("POST", `/api/drafts/${encodeURIComponent(id)}/send`, {
+          text,
+          reply_to: replyTo ? messageRef(replyTo) : null,
+          mentions,
+          attachments: wireFiles(files),
+        })
+      : demo(files.length ? 1500 : 700, {});
   /** Ouvre la conversation dans Teams et tape le texte, sans envoyer. */
   const composeDraft = (id: string, text: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/drafts/${encodeURIComponent(id)}/compose`, { text }) : demo(900, {});
@@ -881,9 +893,42 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, results: res.results.map(mapHit) };
   };
-  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = []): Promise<Result> => {
-    if (!connectedRef.current) return demo(800, {});
-    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, { text, reply_to: replyTo ? messageRef(replyTo) : null, mentions });
+  /** Envoi à la main, avec les fichiers choisis par l'utilisateur (jamais en mode Auto). */
+  const sendInThread = async (threadId: string, text: string, replyTo?: MessageRef | null, mentions: string[] = [], files: PendingFile[] = []): Promise<Result> => {
+    if (!connectedRef.current) return demo(files.length ? 1500 : 800, {});
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/send`, {
+      text,
+      reply_to: replyTo ? messageRef(replyTo) : null,
+      mentions,
+      attachments: wireFiles(files),
+    });
+  };
+  /** Le pilote Teams sait-il joindre un fichier, et dans quelles limites. */
+  const attachmentLimits = async (): Promise<Result<{ limits: AttachmentLimits }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, limits: DEFAULT_LIMITS };
+    }
+    const res = await request<{
+      can_attach: boolean;
+      unsupported: string | null;
+      max_files: number;
+      max_file_bytes: number;
+      max_total_bytes: number;
+      extensions: string[];
+    }>("GET", "/api/attachments");
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      limits: {
+        canAttach: Boolean(res.can_attach),
+        unsupported: res.unsupported ?? null,
+        maxFiles: res.max_files,
+        maxFileBytes: res.max_file_bytes,
+        maxTotalBytes: res.max_total_bytes,
+        extensions: res.extensions,
+      },
+    };
   };
   /** Propose une réponse au dernier message reçu, ou à `target` (réponse à un message précis). */
   const suggestInThread = async (threadId: string, target?: MessageRef | null): Promise<Result<{ text: string }>> => {
@@ -1177,6 +1222,7 @@ export function useTrame() {
     searchTeams,
     reactInThread,
     sendInThread,
+    attachmentLimits,
     suggestInThread,
     checkInThread,
     correctText,

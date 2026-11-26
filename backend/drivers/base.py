@@ -3,8 +3,11 @@ from abc import ABC, abstractmethod
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Optional, Sequence
 from models import IncomingMessage, MessageRef, WatchEntity
+
+if TYPE_CHECKING:
+    from attachments import Attachment
 
 
 class SendUncertain(RuntimeError):
@@ -181,6 +184,18 @@ class TeamsDriver(ABC):
         """Type into the compose box of the active conversation, which must still be
         thread_id (re-checked by the driver). False if it cannot confirm it."""
 
+    # --- attachments: files the user chose in the Trame UI, sent by their click only ---
+    can_attach: bool = False
+    """True when the driver can attach a file to a message in Teams."""
+    attach_unsupported = "ce pilote Teams ne sait pas joindre de fichier"
+
+    def _send_files_into_active(self, thread_id: str, text: str, files: "Sequence[Attachment]",
+                                reply_to: Optional[MessageRef] = None) -> bool:
+        """Attach files, then type text (may be empty), in the compose box of the active
+        conversation (still thread_id), quoting reply_to first if given, and send. True only
+        once Teams shows the message; SendUncertain when it may have left unconfirmed."""
+        raise NotSupported(self.attach_unsupported)
+
     def type_reply(self, thread_id: str, text: str, send: bool, restore: bool = False) -> bool:
         """Open thread_id, then type text (send=True also presses Enter). Refuses (False)
         whenever the target conversation cannot be confirmed: never types blind.
@@ -188,25 +203,35 @@ class TeamsDriver(ABC):
         return self.type_focused(thread_id, text, send, restore).ok
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
-                     reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = ()) -> Focus:
+                     reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = (),
+                     files: "Sequence[Attachment]" = ()) -> Focus:
         """Like type_reply but returns the Focus; `ok` is True only if the text was typed.
         reply_to: answer that precise message (Teams « Répondre »), not just the thread.
-        mentions: names written « @Nom » in text that Teams must turn into real mentions."""
+        mentions: names written « @Nom » in text that Teams must turn into real mentions.
+        files: attached and sent with the text (send only, never typed and left there)."""
         if reply_to is not None and not self.supports_reply:
             raise NotSupported("Ce pilote Teams ne sait pas répondre à un message précis.")
         if mentions and not self.supports_mentions:
             raise NotSupported("Ce pilote Teams ne sait pas mentionner quelqu'un.")
+        if files and not send:
+            raise NotSupported("Une pièce jointe part seulement avec un envoi.")
+        if files and not self.can_attach:
+            raise NotSupported(self.attach_unsupported)
+        if files and mentions:
+            raise NotSupported("Pièce jointe et mention dans le même message : pas encore pris en charge.")
         with self.focused(thread_id, restore=restore) as focus:
             if focus.ok:
                 try:
-                    if mentions:
+                    if files:
+                        focus.ok = bool(self._send_files_into_active(thread_id, text, files, reply_to))
+                    elif mentions:
                         focus.ok = bool(self._type_with_mentions(thread_id, text, send, list(mentions), reply_to))
                     elif reply_to is None:
                         focus.ok = bool(self._type_into_active(thread_id, text, send))
                     else:
                         focus.ok = bool(self._reply_in_active(thread_id, reply_to, text, send))
                     if not focus.ok:
-                        focus.reason = "texte non saisi dans Teams"
+                        focus.reason = "pièce jointe non envoyée dans Teams" if files else "texte non saisi dans Teams"
                 except SendUncertain:
                     raise
                 except Exception as e:
