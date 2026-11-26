@@ -167,6 +167,8 @@ class SnoozeBody(BaseModel):
 class SendBody(TextBody):
     """A send clicked in the conversation view: text, plus files the user chose there."""
     attachments: list[attachmod.AttachmentIn] = Field(default_factory=list, max_length=attachmod.MAX_FILES)
+    # Envoyer même si le même contenu, resté « non confirmé », semble déjà dans le fil.
+    force: bool = False
 
 
 def _files(body: Optional[SendBody]) -> list[attachmod.Attachment]:
@@ -281,8 +283,8 @@ class SoulBody(BaseModel):
     content: str
 
 
-def _error(status: int, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"ok": False, "error": message})
+def _error(status: int, message: str, code: Optional[str] = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"ok": False, "error": message, **({"code": code} if code else {})})
 
 
 def create_app(
@@ -321,7 +323,7 @@ def create_app(
 
     @app.exception_handler(ActionError)
     async def _action_error(_req: Request, exc: ActionError):
-        return _error(exc.status, exc.message)
+        return _error(exc.status, exc.message, exc.code)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_req: Request, exc: RequestValidationError):
@@ -384,7 +386,7 @@ def create_app(
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[SendBody] = None):
         queued = watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
-                                    body.mentions if body else None, _files(body))
+                                    body.mentions if body else None, _files(body), force=bool(body and body.force))
         # Teams pas prêt : le message attend dans la file d'envoi et partira seul.
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
@@ -503,7 +505,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):
-        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body))
+        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body), force=body.force)
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
     @app.get("/api/attachments")

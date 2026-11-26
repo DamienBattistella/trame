@@ -770,6 +770,19 @@
   };
   const MSGS = LM.messages;
   const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
+  // Messages du fil apparus depuis cet instant : ni leur identifiant ni (sans identifiant)
+  // leur élément n'étaient là. Un message déjà affiché, même redessiné, n'en fait pas partie.
+  const newMessages = () => {
+    const els = new Set(document.querySelectorAll(MSGS));
+    const ids = new Set(Array.from(els, (el) => msgId(el)).filter(Boolean));
+    return () =>
+      Array.from(document.querySelectorAll(MSGS))
+        .slice(-6)
+        .filter((el) => {
+          const id = msgId(el);
+          return id ? !ids.has(id) : !els.has(el);
+        });
+  };
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
@@ -988,20 +1001,76 @@
     return { ...parts, text: parts.text.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim() };
   };
 
-  // --- Pièces jointes reçues (lecture seule) ---
+  // --- Pièces jointes d'un message du fil (lecture, et preuve d'envoi) ---
   // Fichier : une carte de « file-attachment-grid », nommée par son aria-label ; son titre
-  // porte « nom + lien » (SharePoint / OneDrive). Trame n'en lit que le nom et le lien.
-  const filesOf = (el) =>
-    Array.from(el.querySelectorAll('[data-tid="file-attachment-grid"] [role="group"][aria-label]')).map((card) => {
-      const title = card.querySelector('[data-testid="content-card-custom-title"]')?.getAttribute("aria-label") || "";
-      const url = (title.match(/https:\/\/\S+/) || [""])[0];
-      return { name: card.getAttribute("aria-label").trim(), url };
-    });
-  // Image : celles du corps du message (les émojis n'ont pas de data-gallery-src).
-  const imagesOf = (el) =>
-    Array.from(el.querySelectorAll('[data-tid="chat-pane-message"] img')).filter(
-      (img) => img.getAttribute("data-gallery-src") || img.getAttribute("data-orig-src")
-    );
+  // porte « nom + lien » (SharePoint / OneDrive). Image : celles du corps du message (les
+  // émojis n'ont pas de data-gallery-src). Une image jointe s'affiche en vignette : son nom
+  // n'est jamais dans le texte visible, seulement dans ces attributs. N'utilise que nodeType /
+  // tagName / childNodes / getAttribute : ui/tests/sentFiles.test.ts l'exécute tel quel.
+  // >>> message-files
+  const messageFiles = (() => {
+    const attr = (el, k) => (el && el.getAttribute && el.getAttribute(k)) || "";
+    const elements = (el) => Array.from((el && el.childNodes) || []).filter((n) => n.nodeType === 1);
+    const all = (el, test, out = []) => {
+      for (const c of elements(el)) {
+        if (test(c)) out.push(c);
+        all(c, test, out);
+      }
+      return out;
+    };
+    const fold = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+    const isGrid = (el) => attr(el, "data-tid") === "file-attachment-grid";
+    const isBody = (el) => attr(el, "data-tid") === "chat-pane-message";
+    const filesOf = (root) => {
+      const cards = all(root, isGrid).flatMap((grid) => all(grid, (el) => attr(el, "role") === "group" && attr(el, "aria-label").trim()));
+      return Array.from(new Set(cards)).map((card) => {
+        const title = attr(all(card, (el) => attr(el, "data-testid") === "content-card-custom-title")[0], "aria-label");
+        const url = (title.match(/https:\/\/\S+/) || [""])[0];
+        return { name: attr(card, "aria-label").trim(), url, labels: [attr(card, "aria-label"), attr(card, "title"), title].filter(Boolean) };
+      });
+    };
+    const imagesOf = (root) =>
+      all(root, isBody).flatMap((body) =>
+        all(body, (el) => String(el.tagName || "").toUpperCase() === "IMG" && Boolean(attr(el, "data-gallery-src") || attr(el, "data-orig-src")))
+      );
+    const imageLabels = (img) => ["alt", "title", "aria-label"].map((k) => attr(img, k)).filter(Boolean);
+    // Même fichier, au renommage près d'un doublon par Teams / OneDrive : « nom 1.png »,
+    // « nom (1).png ». Le libellé peut entourer le nom (« Image capture.png, 102 Ko »).
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const sameFile = (wanted, label) => {
+      const n = fold(wanted);
+      const dot = n.lastIndexOf(".");
+      const [stem, ext] = dot > 0 ? [n.slice(0, dot), n.slice(dot)] : [n, ""];
+      const re = String.raw`(^|[\s,:;«"'(])` + esc(stem) + String.raw`(?: \d{1,3}| ?\(\d{1,3}\))?` + esc(ext) + String.raw`(?=$|[\s,:;»"')])`;
+      return new RegExp(re).test(fold(label));
+    };
+    const IMAGE = /\.(png|jpe?g|gif|bmp|webp|heic|heif)$/i;
+    // Fichiers voulus que ces messages ne montrent pas. Chaque carte ou image ne vaut que pour
+    // un fichier. Une image affichée sans son nom (collée dans le corps par Teams) vaut pour
+    // une image voulue que rien d'autre ne montre.
+    const missing = (wanted, roots) => {
+      const cards = roots.flatMap(filesOf).map((f) => f.labels);
+      const imgs = roots.flatMap(imagesOf).map(imageLabels);
+      const left = [];
+      for (const name of wanted) {
+        const take = (pool) => {
+          const i = pool.findIndex((labels) => labels.some((l) => sameFile(name, l)));
+          return i >= 0 && pool.splice(i, 1).length > 0;
+        };
+        if (take(cards) || take(imgs)) continue;
+        left.push(name);
+      }
+      return left.filter((name) => {
+        if (!IMAGE.test(name)) return true;
+        const i = imgs.findIndex((labels) => !labels.some((l) => wanted.some((w) => sameFile(w, l))));
+        return !(i >= 0 && imgs.splice(i, 1).length > 0);
+      });
+    };
+    return { filesOf: (root) => filesOf(root).map(({ name, url }) => ({ name, url })), imagesOf, missing, sameFile };
+  })();
+  // <<< message-files
+  const filesOf = messageFiles.filesOf;
+  const imagesOf = messageFiles.imagesOf;
   const THUMBS = { max: 8, width: 1024, budget: 3_000_000 };
   // Miniature JPEG d'une image déjà affichée par Teams (adresse blob: de la page) ;
   // null si elle n'est pas chargée ou pas lisible.
@@ -1961,9 +2030,17 @@
       if (!send) return { ok: true };
       if (!isOpen(name)) return fail("conversation changée avant l'envoi");
       if (late()) return fail("délai dépassé avant l'envoi");
-      // Un message sans texte se reconnaît au nom de son premier fichier.
-      const key = text ? flat(how === "code" ? shownOf(text) : text).slice(0, 40) : flat(files[0].name);
+      const key = text ? flat(how === "code" ? shownOf(text) : text).slice(0, 40) : "";
       const before = lastMessages(3).filter((t) => t.includes(key)).length;
+      // Avec des fichiers : preuve = messages apparus après le clic (ils n'étaient pas dans le
+      // fil avant) qui montrent le texte et chaque fichier, lus comme la lecture les lit.
+      const fresh = withFiles ? newMessages() : null;
+      const names = withFiles ? files.map((f) => f.name) : [];
+      const proof = () => {
+        const els = fresh();
+        const textShown = !key || els.some((el) => flat(el.innerText).includes(key));
+        return { textShown: textShown && els.length > 0, missing: messageFiles.missing(names, els) };
+      };
       // Teams active Envoyer une fois le texte pris en compte : lui laisser le temps.
       await waitFor(sendReady, 1500);
       const btn = sendButton();
@@ -1973,16 +2050,20 @@
       const trace = `saisie : ${how}${joined}, envoi : ${via}`;
       // Envoyé seulement si le message apparaît dans la conversation : une zone de saisie
       // vidée ne prouve rien (page gelée, éditeur réinitialisé).
-      const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, withFiles ? 15000 : 6000);
-      if (shown && withFiles) {
+      const shown = withFiles
+        ? await waitFor(() => {
+            const p = proof();
+            return p.textShown && !p.missing.length;
+          }, 15000)
+        : await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, 6000);
+      if (shown) return { ok: true };
+      if (withFiles) {
         // Le message est là : ses fichiers doivent l'être aussi, sinon pas de « envoyé ».
-        const seen = norm(lastMessages(3).join(" "));
-        const missing = files.filter((f) => !seen.includes(norm(f.name))).map((f) => f.name);
-        if (missing.length) {
-          return { ok: false, uncertain: true, error: `message visible, pièce jointe non visible (${missing.join(", ")}) : vérifie dans Teams (${trace})` };
+        const p = proof();
+        if (p.textShown) {
+          return { ok: false, uncertain: true, error: `message visible, pièce jointe non visible (${p.missing.join(", ")}) : vérifie dans Teams (${trace})` };
         }
       }
-      if (shown) return { ok: true };
       if (box.innerText.trim() || modelText(box)) return fail(`envoi refusé par Teams (${trace})`);
       return { ok: false, uncertain: true, error: `message non visible dans la conversation, vérifie dans Teams (${trace})` };
     },
