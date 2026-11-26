@@ -158,7 +158,8 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              // Entrée envoie, Maj+Entrée va à la ligne (pas pendant une saisie IME).
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
               }
@@ -168,8 +169,8 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
             className="field-sizing-content max-h-40 min-h-16 resize-none rounded-xl"
           />
           <div className="flex items-center gap-2">
-            <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
-              <Kbd>Ctrl</Kbd>+<Kbd>Entrée</Kbd>
+            <span className="hidden items-center gap-1 whitespace-nowrap text-xs text-muted-foreground sm:flex" title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne">
+              <Kbd>Entrée</Kbd> envoyer
             </span>
             <div className="ml-auto flex gap-2">
               <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle" || !messages?.length} onClick={suggest}>
