@@ -90,7 +90,7 @@ function mapSettings(s: any): Settings {
     onboarded: Boolean(s?.onboarded),
     brain: s?.brain === "copilot" ? "copilot" : "claude",
     models: {
-      claudeModel: String(s?.models?.claude_model ?? ""),
+      claudeModel: String(s?.models?.claude_model ?? "haiku"),
       claudeEffort: (s?.models?.claude_effort ?? "") as Effort,
       copilotModel: String(s?.models?.copilot_model ?? ""),
     },
@@ -263,7 +263,7 @@ function mockState(): TrameState {
 let localSettings: Settings = {
   onboarded: false,
   brain: "claude",
-  models: { claudeModel: "", claudeEffort: "", copilotModel: "" },
+  models: { claudeModel: "haiku", claudeEffort: "", copilotModel: "" },
   github: { enabled: true, allRepos: true },
   safety: {
     autoPauseOnScreenShare: true,

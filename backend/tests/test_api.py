@@ -146,7 +146,7 @@ def test_settings_get(make_client):
     assert r["settings"] == {
         "onboarded": False,
         "brain": "claude",
-        "models": {"claude_model": "", "claude_effort": "", "copilot_model": ""},
+        "models": {"claude_model": "haiku", "claude_effort": "", "copilot_model": ""},
         "github": {"enabled": True, "all_repos": True},
         "safety": {
             "auto_pause_on_screen_share": True,
@@ -417,3 +417,11 @@ def test_model_cannot_inject_options(make_client):
         r = client.put("/api/settings", json={"models": {"claude_model": bad}})
         assert r.status_code == 422, bad
     assert client.put("/api/settings", json={"models": {"claude_effort": "turbo"}}).status_code == 422
+
+
+def test_claude_defaults_to_haiku():
+    from app import make_brain
+    b = make_brain({"brain": {"provider": "claude"}})
+    assert b.args[b.args.index("--model") + 1] == "haiku" and "--effort" not in b.args
+    b = make_brain({"brain": {"provider": "claude", "claude": {"model": ""}}})
+    assert "--model" not in b.args

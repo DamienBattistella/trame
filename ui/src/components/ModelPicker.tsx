@@ -4,11 +4,11 @@ import { GroupList, Segment } from "@/components/kit";
 import { Brain, Effort, Settings } from "@/types";
 
 const CLAUDE_MODELS = [
-  { value: "", label: "Par défaut" },
-  { value: "fable", label: "Fable" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
   { value: "haiku", label: "Haiku" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "opus", label: "Opus" },
+  { value: "fable", label: "Fable" },
+  { value: "", label: "Claude Code" },
   { value: "custom", label: "Autre" },
 ] as const;
 
@@ -104,7 +104,8 @@ export function ModelPicker({
           <ModelInput value={PRESETS.includes(value.claudeModel) ? "" : value.claudeModel} placeholder="Nom complet, ex. claude-opus-5-5" onCommit={(claudeModel) => onChange({ claudeModel })} />
         )}
         <span className="text-xs text-muted-foreground">
-          Les alias suivent toujours la dernière version. « Par défaut » reprend le modèle de ton Claude Code.
+          Haiku par défaut : rapide, suffisant pour des réponses courtes. Les alias suivent la dernière version ;
+          « Claude Code » reprend le modèle réglé dans ton Claude Code.
         </span>
       </div>
       <div className="flex flex-col gap-2.5 px-4 py-3">

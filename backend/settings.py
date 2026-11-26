@@ -20,8 +20,9 @@ def _model(v: object) -> str:
 
 
 class ModelSettings(BaseModel):
-    """Empty values keep the CLI's own default (the user's Claude Code / Copilot setting)."""
-    claude_model: str = ""
+    """Haiku by default for Claude: fast and enough for short Teams replies. Empty keeps
+    the CLI's own default (the user's Claude Code / Copilot setting)."""
+    claude_model: str = "haiku"
     claude_effort: Effort = ""
     copilot_model: str = ""
 
@@ -160,7 +161,7 @@ def _models(brain: dict) -> ModelSettings:
     claude, copilot = brain.get("claude", {}) or {}, brain.get("copilot", {}) or {}
     effort = claude.get("effort", "")
     try:
-        return ModelSettings(claude_model=claude.get("model", ""), copilot_model=copilot.get("model", ""),
+        return ModelSettings(claude_model=claude.get("model", "haiku"), copilot_model=copilot.get("model", ""),
                              claude_effort=effort if effort in ("low", "medium", "high", "xhigh", "max") else "")
     except ValueError:
         return ModelSettings()
