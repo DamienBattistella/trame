@@ -480,3 +480,63 @@ def test_search_looks_up_link_even_without_account_repos(monkeypatch):
     monkeypatch.setattr(gh, "_gh", ViewGh(["Dedalus-ERP-PAS/alliage"]))
     hits = gh.search([], [], [], True, HUGO)
     assert [(h.repo, h.number, h.why) for h in hits] == [("Dedalus-ERP-PAS/alliage", 4812, "#4812 lié dans la conversation")]
+
+
+# ── Liens GitHub affichés dans les messages : titre et état ────────────────────
+
+
+class LinkGh:
+    def __init__(self, state="OPEN"):
+        self.state = state
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, timeout=20):
+        self.calls.append(list(args))
+        kind, num, repo = args[0], args[2], args[4]
+        path = "pull" if kind == "pr" else "issues"
+        return json.dumps({"number": int(num), "title": f"Titre {num}", "state": self.state,
+                           "url": f"https://github.com/{repo}/{path}/{num}"})
+
+
+def test_link_info_reads_title_and_state_once(monkeypatch):
+    stub = LinkGh("MERGED")
+    monkeypatch.setattr(gh, "_gh", stub)
+    monkeypatch.setattr(gh, "_link_cache", {})
+    hit = gh.link_info("pr", "Dedalus-ERP-PAS/alliage", 4271)
+    assert (hit.title, hit.state, hit.url) == ("Titre 4271", "merged", "https://github.com/Dedalus-ERP-PAS/alliage/pull/4271")
+    assert gh.link_info("pr", "dedalus-erp-pas/alliage", 4271) == hit
+    assert stub.calls == [["pr", "view", "4271", "--repo", "Dedalus-ERP-PAS/alliage", "--json", "number,title,state,url"]]
+
+
+def test_link_info_rejects_odd_input(monkeypatch):
+    stub = LinkGh()
+    monkeypatch.setattr(gh, "_gh", stub)
+    monkeypatch.setattr(gh, "_link_cache", {})
+    assert gh.link_info("commit", "acme/portail", 1) is None
+    assert gh.link_info("pr", "acme/portail --web", 1) is None
+    assert gh.link_info("pr", "acme", 1) is None
+    assert gh.link_info("pr", "acme/portail", 0) is None
+    assert stub.calls == []
+
+
+def test_link_info_unreadable_is_cached_none(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: calls.append(args) or "")
+    monkeypatch.setattr(gh, "_link_cache", {})
+    assert gh.link_info("issue", "acme/prive", 3) is None
+    assert gh.link_info("issue", "acme/prive", 3) is None
+    assert len(calls) == 1
+
+
+def test_link_endpoint_follows_github_setting(make_client, monkeypatch):
+    stub = LinkGh()
+    monkeypatch.setattr(gh, "_gh", stub)
+    monkeypatch.setattr(gh, "_link_cache", {})
+    client, _watcher, _driver = make_client()
+    r = client.get("/api/github/link", params={"kind": "issue", "repo": "acme/portail", "number": 12}).json()
+    assert r["ok"] is True
+    assert r["link"]["title"] == "Titre 12" and r["link"]["state"] == "open"
+    client.put("/api/settings", json={"github": {"enabled": False}})
+    r = client.get("/api/github/link", params={"kind": "pr", "repo": "acme/portail", "number": 13}).json()
+    assert r == {"ok": True, "link": None}
+    assert [c[2] for c in stub.calls] == ["12"]

@@ -14,6 +14,7 @@ import { ReflectionPanel } from "@/components/ReflectionPanel";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
+import { MessageText } from "@/components/MessageText";
 import { DraftItem, MessageHit, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -297,7 +298,9 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
           {c.lastActivity && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{c.lastActivity}</span>}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{preview}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            <MessageText text={preview} interactive={false} />
+          </span>
           {c.watch && c.mode === "auto" && <Timer className="size-3 shrink-0 text-warning" aria-label="Envoi auto" />}
           {draft ? (
             <span className="size-2 shrink-0 rounded-full bg-warning" aria-label="Réponse à relire" />

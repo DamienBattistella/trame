@@ -105,6 +105,33 @@ def _local(iso: str) -> str:
         return str(iso)
 
 
+LINK_TTL = 300.0
+LINK_CACHE_MAX = 200
+_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+_link_cache: dict[tuple[str, str, int], tuple[float, Optional[GithubHit]]] = {}
+_link_lock = threading.Lock()
+
+
+def link_info(kind: str, repo: str, num: int) -> Optional[GithubHit]:
+    """Title and state of a PR / issue whose link is shown in a message, cached 5 min:
+    the conversation view asks for each GitHub link it draws. None when gh cannot read it."""
+    if kind not in ("pr", "issue") or not _REPO_RE.match(repo) or num <= 0:
+        return None
+    key = (kind, repo.lower(), num)
+    now = time.monotonic()
+    with _link_lock:
+        cached = _link_cache.get(key)
+        if cached and now - cached[0] < LINK_TTL:
+            return cached[1]
+    data = _json(_gh([kind, "view", str(num), "--repo", repo, "--json", "number,title,state,url"], timeout=CALL_TIMEOUT))
+    hit = _hit(kind, repo, data, "Lien dans la conversation") if isinstance(data, dict) and data.get("url") else None
+    with _link_lock:
+        if len(_link_cache) >= LINK_CACHE_MAX:
+            _link_cache.pop(next(iter(_link_cache)))
+        _link_cache[key] = (now, hit)
+    return hit
+
+
 REPOS_TTL = 600.0
 _repos_cache: tuple[float, list[str]] | None = None
 

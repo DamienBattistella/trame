@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
+import { MessageText } from "@/components/MessageText";
 import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { ThreadActivity } from "@/components/ThreadActivity";
@@ -73,8 +74,6 @@ const EMOJI = Object.fromEntries(REACTIONS.map((r) => [r.key, r.emoji])) as Reco
 const refOf = (m: ThreadMessage): MessageRef => ({ id: m.id ?? null, sender: m.sender, text: m.text, at: m.at });
 const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
   Boolean(a) && (a!.id && b.id ? a!.id === b.id : a!.text === b.text && a!.sender === b.sender);
-const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
-
 /** Citation d'un message, dans le fil ou au-dessus de la zone de saisie (comme une réponse Teams). */
 function Quote({ target, className, children }: { target: MessageRef; className?: string; children?: React.ReactNode }) {
   return (
@@ -82,7 +81,9 @@ function Quote({ target, className, children }: { target: MessageRef; className?
       <div className="min-w-0 flex-1">
         <span className="font-medium">{target.sender || "Message"}</span>
         {target.at && <span className="ml-1.5 text-muted-foreground tabular-nums">{target.at}</span>}
-        <p className="line-clamp-2 text-muted-foreground">{excerpt(target.text, 160)}</p>
+        <p className="line-clamp-2 text-muted-foreground">
+          <MessageText text={target.text} interactive={false} />
+        </p>
       </div>
       {children}
     </div>
@@ -784,7 +785,7 @@ export function DiscussionView({
                       )}
                     >
                       {m.replyTo && <Quote target={m.replyTo} />}
-                      {i === foundIndex ? <Highlight text={m.text} range={findFolded(m.text, foundQuery)} /> : m.text}
+                      <MessageText text={m.text} range={i === foundIndex ? findFolded(m.text, foundQuery) : null} github={trame.githubLink} />
                       <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
                     </div>
                     {(m.at || (m.reactions?.length ?? 0) > 0) && (

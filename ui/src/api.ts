@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   Brief,
+  BriefGithubItem,
+  GithubState,
   FactCheck,
   DraftItem,
   Effort,
@@ -36,6 +38,7 @@ import {
 import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
+import type { GithubRef } from "@/lib/linkify";
 import { DEFAULT_LIMITS } from "@/lib/attachments";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
@@ -208,18 +211,22 @@ function mapBrief(b: any): Brief {
     openPoints: b.open_points ?? [],
     topics: b.topics ?? [],
     githubEnabled: Boolean(b.github_enabled),
-    github: (b.github ?? []).map((g: any) => ({
-      kind: g.kind,
-      repo: g.repo,
-      number: g.number ?? null,
-      title: g.title,
-      state: g.state ?? null,
-      url: g.url,
-      why: g.why ?? "",
-    })),
+    github: (b.github ?? []).map(mapGithub),
     sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
+function mapGithub(g: any): BriefGithubItem {
+  return {
+    kind: g.kind,
+    repo: g.repo,
+    number: g.number ?? null,
+    title: g.title,
+    state: g.state ?? null,
+    url: g.url,
+    why: g.why ?? "",
+  };
+}
+const DEMO_LINK_STATES: GithubState[] = ["open", "merged", "closed"];
 function mapHit(h: any): MessageHit {
   return {
     threadId: h.thread_id ?? null,
@@ -940,6 +947,15 @@ export function useTrame() {
       const messages: ThreadMessage[] = [
         { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
         { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
+        {
+          id: "d4",
+          sender: who,
+          text:
+            "Les PR à relire :\nhttps://github.com/Wifsimster/passerelle/pull/214\nhttps://github.com/Wifsimster/passerelle/pull/215\nhttps://github.com/Wifsimster/passerelle/issues/198\nEt la doc (voir https://fr.wikipedia.org/wiki/Health_Level_7_(norme)), section « https://www.hl7.org/fhir/réponse.html ».",
+          at: "09:40",
+          mine: false,
+          reactions: demoReactions.get(`${threadId}/d4`) ?? [],
+        },
         { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);
@@ -962,6 +978,26 @@ export function useTrame() {
     );
     if (!res.ok) return res;
     return { ok: true, typing: Boolean(res.typing), typingText: res.typing_text || null, seen: typeof res.seen === "boolean" ? res.seen : null };
+  };
+  /** Titre et état d'une PR / issue GitHub dont le lien est affiché dans un message (null : GitHub coupé ou illisible). */
+  const githubLink = async (ref: GithubRef): Promise<BriefGithubItem | null> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current || !localSettings.github.enabled) return null;
+      await wait(300);
+      const path = ref.kind === "pr" ? "pull" : "issues";
+      return {
+        kind: ref.kind,
+        repo: `${ref.owner}/${ref.repo}`,
+        number: ref.number,
+        title: `${ref.kind === "pr" ? "Correctif" : "Anomalie"} de démonstration n° ${ref.number}`,
+        state: DEMO_LINK_STATES[ref.number % DEMO_LINK_STATES.length],
+        url: `https://github.com/${ref.owner}/${ref.repo}/${path}/${ref.number}`,
+        why: "Lien dans la conversation",
+      };
+    }
+    const query = new URLSearchParams({ kind: ref.kind, repo: `${ref.owner}/${ref.repo}`, number: String(ref.number) });
+    const res = await request<{ link: any }>("GET", `/api/github/link?${query}`);
+    return res.ok && res.link ? mapGithub(res.link) : null;
   };
   /** Recherche dans les messages déjà lus par le moteur (rien n'est relu dans Teams). */
   const searchMessages = async (q: string): Promise<Result<{ results: MessageHit[]; scope: SearchScope }>> => {
@@ -1359,6 +1395,7 @@ export function useTrame() {
     factoryReset,
     threadMessages,
     threadActivity,
+    githubLink,
     searchMessages,
     searchTeams,
     reactInThread,
