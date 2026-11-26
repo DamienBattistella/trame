@@ -47,6 +47,12 @@ class MockBrain(Brain):
             # Démo : un message différent selon l'angle demandé.
             angle = next((l.split(":", 1)[1].strip() for l in prompt.splitlines() if l.startswith("Angle à prendre")), "")
             return f"🎧 {angle[:1].upper()}{angle[1:60]}" if angle else "🎧 Concentré, je réponds dès que possible"
+        from follow_ups import MARKER as FOLLOW_UP
+        if FOLLOW_UP in prompt:
+            # Démo : relance courte, sans recopier la question.
+            return json.dumps({"en_attente": True,
+                               "relance": "Petite relance sur ma question : tu as pu y jeter un œil ? "
+                                          "Dis-moi si tu as besoin de plus de contexte."}, ensure_ascii=False)
         if "Message à vérifier :" in prompt:
             _think(
                 "Je relève les heures, les jours et les numéros cités dans le message, puis je cherche dans le fil "

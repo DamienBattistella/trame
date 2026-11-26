@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronRight, History, Inbox as InboxIcon, Loader2, Search, SquarePen, Timer, X } from "lucide-react";
+import { BellRing, ChevronRight, History, Inbox as InboxIcon, Loader2, Search, SquarePen, Timer, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +23,10 @@ import type { BriefTarget } from "@/components/BriefSheet";
 const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
 const BRIEF_WIDTH = 420;
 
-type GroupId = "review" | "unread" | "followed" | "others";
+type GroupId = "review" | "followUp" | "unread" | "followed" | "others";
 const GROUPS: { id: GroupId; label: string }[] = [
   { id: "review", label: "À relire" },
+  { id: "followUp", label: "À relancer" },
   { id: "unread", label: "Non lus" },
   { id: "followed", label: "Suivies" },
   { id: "others", label: "Autres" },
@@ -39,7 +40,7 @@ const byRecent = (a: WatchEntity, b: WatchEntity) =>
 
 /** Discussions : barre latérale regroupée par statut, discussion choisie à droite. */
 export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarget) => void }) {
-  const { watchlist, drafts } = trame.state;
+  const { watchlist, drafts, followUps } = trame.state;
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   // Message trouvé par la recherche : la discussion s'ouvre dessus.
@@ -48,7 +49,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     setSelected(threadId);
     setFound(hit);
   };
-  const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
+  const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, followUp: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
   // Panneau ancré à droite : le résumé, ou la réflexion du modèle pendant une action.
   const [dock, setDock] = useState<"brief" | "reflection" | null>(null);
@@ -61,36 +62,67 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     for (const d of drafts) if (!m.has(d.threadId)) m.set(d.threadId, d);
     return m;
   }, [drafts]);
+  // Relances proposées : la plus ancienne question par conversation.
+  const followUpOf = useMemo(() => {
+    const m = new Map<string, (typeof followUps)[number]>();
+    for (const f of followUps) if (!m.has(f.threadId)) m.set(f.threadId, f);
+    return m;
+  }, [followUps]);
 
   const items = useMemo<WatchEntity[]>(() => {
     const known = new Set(watchlist.map((w) => w.threadId));
-    return [
+    const base: WatchEntity[] = [
       ...watchlist,
       ...[...draftOf.values()]
         .filter((d) => !known.has(d.threadId))
         .map((d) => ({ threadId: d.threadId, displayName: d.from, surface: d.surface, watch: true, mode: d.mode, namedPeople: [] })),
     ];
-  }, [watchlist, draftOf]);
+    const listed = new Set(base.map((c) => c.threadId));
+    return [
+      ...base,
+      ...[...followUpOf.values()]
+        .filter((f) => !listed.has(f.threadId))
+        .map((f) => ({ threadId: f.threadId, displayName: f.conversation, surface: "dm" as const, watch: false, mode: "draft" as const, namedPeople: [] })),
+    ];
+  }, [watchlist, draftOf, followUpOf]);
 
-  const groupOf = (c: WatchEntity): GroupId => (draftOf.has(c.threadId) ? "review" : c.unread ? "unread" : c.watch ? "followed" : "others");
+  const groupOf = (c: WatchEntity): GroupId =>
+    draftOf.has(c.threadId)
+      ? "review"
+      : followUpOf.has(c.threadId)
+        ? "followUp"
+        : c.unread
+          ? "unread"
+          : c.watch
+            ? "followed"
+            : "others";
 
   const grouped = useMemo(() => {
-    const out: Record<GroupId, WatchEntity[]> = { review: [], unread: [], followed: [], others: [] };
+    const out: Record<GroupId, WatchEntity[]> = { review: [], followUp: [], unread: [], followed: [], others: [] };
     for (const c of items) out[groupOf(c)].push(c);
     for (const g of Object.values(out)) g.sort(byRecent);
     return out;
-  }, [items, draftOf]);
+  }, [items, draftOf, followUpOf]);
 
   const groups = useMemo(() => {
     if (!query) return grouped;
     const q = norm(query);
     const keep = (list: WatchEntity[]) => list.filter((c) => norm(c.displayName).includes(q));
-    return { review: keep(grouped.review), unread: keep(grouped.unread), followed: keep(grouped.followed), others: keep(grouped.others) };
+    return {
+      review: keep(grouped.review),
+      followUp: keep(grouped.followUp),
+      unread: keep(grouped.unread),
+      followed: keep(grouped.followed),
+      others: keep(grouped.others),
+    };
   }, [grouped, query]);
 
-  const all = [...groups.review, ...groups.unread, ...groups.followed, ...groups.others];
+  const all = [...groups.review, ...groups.followUp, ...groups.unread, ...groups.followed, ...groups.others];
   // Pour Ctrl+K : toutes les conversations, même celles qu'une recherche cache.
-  const everything = useMemo(() => [...grouped.review, ...grouped.unread, ...grouped.followed, ...grouped.others], [grouped]);
+  const everything = useMemo(
+    () => [...grouped.review, ...grouped.followUp, ...grouped.unread, ...grouped.followed, ...grouped.others],
+    [grouped],
+  );
   // From every conversation, not the filtered ones: searching must not close the
   // open discussion and lose a reply being written.
   const current = items.find((c) => c.threadId === selected) ?? null;
@@ -254,7 +286,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             onOpened={(threadId) => {
               // La conversation peut tomber dans un groupe replié (« Autres ») : on l'ouvre.
               setQuery("");
-              setCollapsed({ review: false, unread: false, followed: false, others: false });
+              setCollapsed({ review: false, followUp: false, unread: false, followed: false, others: false });
               setSelected(threadId);
             }}
           />
@@ -287,7 +319,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
                       >
                         {list.map((c) => (
                           <li key={c.threadId} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]">
-                            <SidebarItem c={c} draft={draftOf.get(c.threadId) ?? null} active={c.threadId === current?.threadId} onClick={() => select(c.threadId)} />
+                            <SidebarItem c={c} draft={draftOf.get(c.threadId) ?? null} followUp={followUpOf.get(c.threadId)?.question ?? null} active={c.threadId === current?.threadId} onClick={() => select(c.threadId)} />
                           </li>
                         ))}
                       </motion.ul>
@@ -384,8 +416,8 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   );
 }
 
-function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: DraftItem | null; active: boolean; onClick: () => void }) {
-  const preview = draft ? draft.incoming : c.namedPeople.length ? `réagit à ${c.namedPeople.join(", ")}` : KIND[c.surface];
+function SidebarItem({ c, draft, followUp, active, onClick }: { c: WatchEntity; draft: DraftItem | null; followUp: string | null; active: boolean; onClick: () => void }) {
+  const preview = draft ? draft.incoming : followUp ? `Toi : ${followUp}` : c.namedPeople.length ? `réagit à ${c.namedPeople.join(", ")}` : KIND[c.surface];
   // Ouverte au clavier (Alt+↓, Ctrl+K), la conversation peut être hors de vue : on l'y ramène.
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -407,7 +439,7 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
       <InitialsAvatar name={c.displayName} presence={c.presence} className="relative size-8" />
       <span className="relative flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
-          <span className={cn("min-w-0 flex-1 truncate text-sm", (c.unread || draft) && "font-semibold", !c.watch && !draft && !c.unread && "text-muted-foreground")}>
+          <span className={cn("min-w-0 flex-1 truncate text-sm", (c.unread || draft || followUp) && "font-semibold", !c.watch && !draft && !followUp && !c.unread && "text-muted-foreground")}>
             {c.displayName}
           </span>
           {c.lastActivity && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{c.lastActivity}</span>}
@@ -419,6 +451,8 @@ function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: Dra
           {c.watch && c.mode === "auto" && <Timer className="size-3 shrink-0 text-warning" aria-label="Envoi auto" />}
           {draft ? (
             <span className="size-2 shrink-0 rounded-full bg-warning" aria-label="Réponse à relire" />
+          ) : followUp ? (
+            <BellRing className="size-3 shrink-0 text-warning" aria-label="Relance proposée" />
           ) : c.unread ? (
             <span className="size-2 shrink-0 rounded-full bg-link" aria-label="Non lu" />
           ) : null}

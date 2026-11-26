@@ -57,6 +57,17 @@ class BriefSettings(BaseModel):
     last_messages: int = Field(ge=10, le=100)
 
 
+class FollowUpSettings(BaseModel):
+    """Relances : proposer de relancer une question restée sans réponse depuis
+    delay_hours heures ouvrées (samedi et dimanche non comptés)."""
+    enabled: bool = True
+    delay_hours: int = Field(default=24, ge=1, le=168)
+
+
+def follow_up_delay(f: dict) -> int:
+    return _int((f or {}).get("delay_hours", 24), 24, 1, 168)
+
+
 class TelemetrySettings(BaseModel):
     enabled: bool = False
     endpoint: str = Field(default="", max_length=300)
@@ -88,6 +99,7 @@ class Settings(BaseModel):
     github: GithubSettings
     safety: SafetySettings
     brief: BriefSettings
+    follow_ups: FollowUpSettings = FollowUpSettings()
     telemetry: TelemetrySettings = TelemetrySettings()
     mcp: McpSettings = McpSettings()
     teams_web: TeamsWebSettings = TeamsWebSettings()
@@ -127,6 +139,11 @@ class BriefPatch(_Patch):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
 
+class FollowUpPatch(_Patch):
+    enabled: Optional[bool] = None
+    delay_hours: Optional[int] = Field(default=None, ge=1, le=168)
+
+
 class TelemetryPatch(_Patch):
     enabled: Optional[bool] = None
     endpoint: Optional[str] = Field(default=None, max_length=300)
@@ -150,6 +167,7 @@ class SettingsPatch(_Patch):
     github: Optional[GithubPatch] = None
     safety: Optional[SafetyPatch] = None
     brief: Optional[BriefPatch] = None
+    follow_ups: Optional[FollowUpPatch] = None
     telemetry: Optional[TelemetryPatch] = None
     mcp: Optional[McpPatch] = None
     teams_web: Optional[TeamsWebPatch] = None
@@ -199,6 +217,8 @@ def from_config(cfg: dict) -> Settings:
             enabled=bool(brief.get("enabled", True)),
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
         ),
+        follow_ups=FollowUpSettings(enabled=bool((cfg.get("follow_ups") or {}).get("enabled", True)),
+                                    delay_hours=follow_up_delay(cfg.get("follow_ups") or {})),
         telemetry=_telemetry(cfg.get("telemetry", {})),
         teams_web=TeamsWebSettings(enabled=True),
         mcp=McpSettings(enabled=bool(cfg.get("mcp", {}).get("enabled", False)), token=str(cfg.get("mcp", {}).get("token", "") or ""),
@@ -248,6 +268,7 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["never_auto_send_if_message_contains"] = merged.safety.never_auto_send_if_message_contains
     safety["mark_auto_replies"] = merged.safety.mark_auto_replies
     out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
+    out["follow_ups"] = merged.follow_ups.model_dump()
     out["telemetry"] = merged.telemetry.model_dump()
     out["mcp"] = merged.mcp.model_dump()
     out["teams_web"] = merged.teams_web.model_dump()

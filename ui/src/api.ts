@@ -36,7 +36,7 @@ import {
   StatusChoice, StatusDuration,
   ReflectionRun,
 } from "@/types";
-import { mockBrief, mockConversations, mockDrafts, mockLogs } from "@/mockData";
+import { mockBrief, mockConversations, mockDrafts, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import type { GithubRef } from "@/lib/linkify";
@@ -70,6 +70,30 @@ export interface TrameState {
   myPresence: Presence | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
+  /** Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule). */
+  followUps: FollowUpItem[];
+}
+
+/** Une relance proposée : ta question restée sans réponse, depuis quand (ISO, heure
+ *  locale), et le texte proposé, modifiable avant envoi. */
+export interface FollowUpItem {
+  id: string;
+  threadId: string;
+  conversation: string;
+  question: string;
+  askedAt: string;
+  proposal: string;
+}
+
+function mapFollowUp(f: any): FollowUpItem {
+  return {
+    id: f.id,
+    threadId: f.thread_id,
+    conversation: f.conversation ?? "",
+    question: f.question ?? "",
+    askedAt: f.asked_at ?? "",
+    proposal: f.proposal ?? "",
+  };
 }
 
 /** Un message en file d'envoi. waiting : en attente ; sending : en cours ; failed :
@@ -165,6 +189,7 @@ function mapState(s: any): TrameState {
     },
     myPresence: s.my_presence ?? null,
     outbox: (s.outbox ?? []).map(mapQueued),
+    followUps: (s.follow_ups ?? []).map(mapFollowUp),
   };
 }
 /** Un message précis, tel que le moteur le vérifie dans Teams (auteur et texte). */
@@ -197,6 +222,10 @@ function mapSettings(s: any): Settings {
     brief: {
       enabled: b.enabled === undefined ? true : Boolean(b.enabled),
       lastMessages: Number(b.last_messages ?? 30),
+    },
+    followUps: {
+      enabled: s?.follow_ups?.enabled === undefined ? true : Boolean(s.follow_ups.enabled),
+      delayHours: Number(s?.follow_ups?.delay_hours ?? 24),
     },
     telemetry: {
       enabled: Boolean(s?.telemetry?.enabled),
@@ -390,6 +419,12 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.brief.lastMessages !== undefined) b.last_messages = p.brief.lastMessages;
     out.brief = b;
   }
+  if (p.followUps) {
+    const f: Record<string, unknown> = {};
+    if (p.followUps.enabled !== undefined) f.enabled = p.followUps.enabled;
+    if (p.followUps.delayHours !== undefined) f.delay_hours = p.followUps.delayHours;
+    out.follow_ups = f;
+  }
   if (p.telemetry) {
     const t: Record<string, unknown> = {};
     if (p.telemetry.enabled !== undefined) t.enabled = p.telemetry.enabled;
@@ -416,6 +451,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     github: { ...s.github, ...p.github },
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
+    followUps: { ...s.followUps, ...p.followUps },
     telemetry: { ...s.telemetry, ...p.telemetry },
     teamsWeb: { enabled: p.teamsWeb?.enabled ?? s.teamsWeb.enabled },
     mcp: {
@@ -430,7 +466,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [] };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], followUps: [] };
   }
   return {
     paused: false,
@@ -445,6 +481,7 @@ function mockState(): TrameState {
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
     outbox: [],
+    followUps: mockFollowUps.map((f) => ({ ...f })),
   };
 }
 
@@ -462,6 +499,7 @@ let localSettings: Settings = {
     markAutoReplies: true,
   },
   brief: { enabled: true, lastMessages: 30 },
+  followUps: { enabled: true, delayHours: 24 },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
@@ -1107,6 +1145,34 @@ export function useTrame() {
     connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/cancel`) : demo(200, {});
   const retryQueued = (id: string): Promise<Result> =>
     connectedRef.current ? request("POST", `/api/outbox/${encodeURIComponent(id)}/retry`) : demo(200, {});
+  /** Relances : envoyer (sur ton clic, par le même chemin qu'un envoi à la main),
+   *  reporter ou ignorer. `queued` : Teams n'était pas prêt, la relance attend dans la file d'envoi. */
+  const dropFollowUp = (id: string) => setState((s) => ({ ...s, followUps: s.followUps.filter((f) => f.id !== id) }));
+  const followUpAction = async (id: string, what: "snooze" | "ignore", body?: unknown): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(250);
+      dropFollowUp(id);
+      return { ok: true };
+    }
+    const res = await request("POST", `/api/follow-ups/${encodeURIComponent(id)}/${what}`, body);
+    if (res.ok || res.status === 404) dropFollowUp(id);
+    return res.ok || res.status === 404 ? { ok: true } : res;
+  };
+  const sendFollowUp = async (id: string, text: string): Promise<Result<{ queued: QueuedSend | null }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(800);
+      dropFollowUp(id);
+      return { ok: true, queued: null };
+    }
+    const res = await request<{ queued?: any }>("POST", `/api/follow-ups/${encodeURIComponent(id)}/send`, { text });
+    if (!res.ok) return res;
+    dropFollowUp(id);
+    return { ok: true, queued: res.queued ? mapQueued(res.queued) : null };
+  };
+  const snoozeFollowUp = (id: string, hours = 24) => followUpAction(id, "snooze", { hours });
+  const ignoreFollowUp = (id: string) => followUpAction(id, "ignore");
   /** Le pilote Teams sait-il joindre un fichier, et dans quelles limites. */
   const attachmentLimits = async (): Promise<Result<{ limits: AttachmentLimits }>> => {
     if (!connectedRef.current) {
@@ -1498,6 +1564,9 @@ export function useTrame() {
     clearCompose,
     cancelQueued,
     retryQueued,
+    sendFollowUp,
+    snoozeFollowUp,
+    ignoreFollowUp,
     diagnoseTeams,
     teamsWebStatus,
     exportLogs,
