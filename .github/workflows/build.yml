@@ -83,6 +83,7 @@ jobs:
             --collect-submodules comtypes `
             --add-data "..\config.json;." `
             --add-data "..\SOUL.md;." `
+            --add-data "..\ENTOURAGE.json;." `
             run.py
           New-Item -ItemType Directory -Force -Path ..\ui\src-tauri\binaries | Out-Null
           Copy-Item dist\trame-backend.exe ..\ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe

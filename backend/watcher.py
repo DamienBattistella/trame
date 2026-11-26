@@ -702,7 +702,7 @@ class Watcher:
 
     def factory_reset(self) -> None:
         """Danger zone: default settings, nothing followed, no draft, default persona,
-        no entourage; the wizard runs again. Claude / GitHub sign-ins are untouched."""
+        shipped org chart; the wizard runs again. Claude / GitHub sign-ins are untouched."""
         try:
             cfg = cfgmod.factory_reset()
         except Exception as e:
@@ -719,7 +719,7 @@ class Watcher:
             if new_brain is not None:
                 self.brain = new_brain
             self.soul = cfgmod.load_soul()
-            self.people = peoplemod.remove()
+            self.people = peoplemod.restore_default()
             self._briefs.clear()
             self._history.clear()
             self._thread_cache.clear()

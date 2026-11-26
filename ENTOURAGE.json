@@ -1,0 +1,782 @@
+{
+  "version": 1,
+  "source": "Orbite",
+  "generated_at": "2026-11-26T04:37:39Z",
+  "people": [
+    {
+      "name": "Didier Bertaux",
+      "role": "Manager R&D PAS/ERP",
+      "team": "PAS/ERP",
+      "manager": "Christophe Francis"
+    },
+    {
+      "name": "Christophe Francis",
+      "role": "Directeur PBU",
+      "manager": "Amel Mokrani Bois"
+    },
+    {
+      "name": "Amel Mokrani Bois",
+      "aliases": [
+        "Amel Mokrani"
+      ],
+      "role": "DG France",
+      "manager": "Alberto Calcagno"
+    },
+    {
+      "name": "Alberto Calcagno",
+      "role": "Group CEO"
+    },
+    {
+      "name": "Gilles Hortion",
+      "role": "Resp. qualité & méthodes",
+      "team": "Foundation"
+    },
+    {
+      "name": "Isabelle Ravet",
+      "role": "Analyste programmeur",
+      "team": "Foundation"
+    },
+    {
+      "name": "Victor Dumont",
+      "role": "Dév. fullstack",
+      "team": "Foundation"
+    },
+    {
+      "name": "Mohammed Belhaj",
+      "role": "DevOps & BDD",
+      "team": "Foundation"
+    },
+    {
+      "name": "Hugo Lannes",
+      "role": "Dév. fullstack",
+      "team": "Foundation"
+    },
+    {
+      "name": "Marion Guernoté",
+      "aliases": [
+        "Marion Guernot"
+      ],
+      "role": "SE Senior Associate",
+      "team": "Foundation"
+    },
+    {
+      "name": "Estelle Guillard",
+      "role": "Tech Lead BI",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Santiago Monteagudo",
+      "role": "Product Owner"
+    },
+    {
+      "name": "Sébastien Hug de Larauze",
+      "aliases": [
+        "MokoGuy",
+        "Sébastien Hug"
+      ],
+      "role": "Dév."
+    },
+    {
+      "name": "Stéphane Dubos",
+      "role": "Resp. unité dév.",
+      "team": "Product Engineering"
+    },
+    {
+      "name": "Luc Akbal",
+      "role": "Tech Lead OnePMSI",
+      "team": "OnePMSI"
+    },
+    {
+      "name": "Patrick Guenand",
+      "role": "Team Lead · Poitiers",
+      "team": "ERP France"
+    },
+    {
+      "name": "Romain Cureau",
+      "role": "Senior Specialist Geofac",
+      "team": "Geofac"
+    },
+    {
+      "name": "Raphaël Garnier",
+      "role": "Expert OS · Dijon",
+      "team": "HIS/SRD"
+    },
+    {
+      "name": "Erwan Becquet",
+      "role": "Ing. dév. · Antony",
+      "team": "PAS / Facturation Public Export"
+    },
+    {
+      "name": "Bruno Casagrande",
+      "role": "Pôle tech. · Bidart",
+      "team": "PAS / Santé 400 Pharmacie"
+    },
+    {
+      "name": "Julien Goyheneix",
+      "role": "Scrum Master"
+    },
+    {
+      "name": "Nicolas Pascaud",
+      "role": "Team Lead",
+      "team": "ERP France"
+    },
+    {
+      "name": "Naoufal Mahfoudi",
+      "role": "AI Leader ERP",
+      "team": "PBU"
+    },
+    {
+      "name": "Nicolas Bestieu",
+      "role": "TL test & qualif",
+      "team": "PBU"
+    },
+    {
+      "name": "Edouard Caumont",
+      "role": "Dir. PM&E Social & CC",
+      "team": "PBU"
+    },
+    {
+      "name": "Maxime Vannier",
+      "role": "PM GAP · Clarity GAP",
+      "team": "PBU"
+    },
+    {
+      "name": "Adrien Marcos",
+      "role": "Product Owner",
+      "team": "PBU"
+    },
+    {
+      "name": "Anne-Laure Soufflet",
+      "role": "Agile PO Specialist",
+      "team": "PBU"
+    },
+    {
+      "name": "Céline Leleux",
+      "role": "PM · Clarity GEF/GRH/GTT",
+      "team": "PBU"
+    },
+    {
+      "name": "Charlotte Brossard",
+      "role": "Doc & localisation",
+      "team": "PBU"
+    },
+    {
+      "name": "Chloé Nion",
+      "role": "Product Owner",
+      "team": "PBU"
+    },
+    {
+      "name": "Didier Roblot",
+      "role": "Resp. unité dév. · Dijon",
+      "team": "PBU"
+    },
+    {
+      "name": "Emmanuelle Bagui",
+      "role": "Agile PO · Casablanca",
+      "team": "PBU"
+    },
+    {
+      "name": "François Grambin",
+      "role": "Product Owner",
+      "team": "PBU"
+    },
+    {
+      "name": "Latifa Mahfoudi",
+      "role": "Product manager",
+      "team": "PBU"
+    },
+    {
+      "name": "Myriam Fatoux",
+      "role": "PO Hexagone GAP",
+      "team": "PBU",
+      "manager": "Christophe Francis"
+    },
+    {
+      "name": "Yves Poirier",
+      "role": "Chef de produit",
+      "team": "PBU"
+    },
+    {
+      "name": "Chloé Julenon",
+      "role": "UX & front · équipe GAP",
+      "team": "PBU"
+    },
+    {
+      "name": "Peter Baumgarten"
+    },
+    {
+      "name": "Richard Gill"
+    },
+    {
+      "name": "Sébastien Duc"
+    },
+    {
+      "name": "Thibault Etienne",
+      "role": "terrain La Réunion"
+    },
+    {
+      "name": "Olivier Ars"
+    },
+    {
+      "name": "Jean-François Poupard",
+      "role": "interop / reprises"
+    },
+    {
+      "name": "Christophe Martin",
+      "role": "projet Réunion/Guyane"
+    },
+    {
+      "name": "Laurent Graziani"
+    },
+    {
+      "name": "Driss Makhout",
+      "role": "Client CH Cahors"
+    },
+    {
+      "name": "Alexis Parin",
+      "team": "Product Engineering",
+      "manager": "Stéphane Dubos"
+    },
+    {
+      "name": "Eric Alphand",
+      "team": "Product Engineering",
+      "manager": "Stéphane Dubos"
+    },
+    {
+      "name": "Laëtitia Guillot",
+      "role": "PO",
+      "team": "Product Engineering",
+      "manager": "Stéphane Dubos"
+    },
+    {
+      "name": "Lounis Haddache",
+      "team": "Product Engineering",
+      "manager": "Stéphane Dubos"
+    },
+    {
+      "name": "Xavier Deloire",
+      "role": "chef de projet",
+      "team": "Product Engineering",
+      "manager": "Stéphane Dubos"
+    },
+    {
+      "name": "Corinne Alphand",
+      "role": "PO",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Dawie Syly",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Jean-baptiste Pons",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Laurence Perdriaud",
+      "role": "concepteur décisionnel",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Nathalie Colin",
+      "team": "ERP France",
+      "manager": "Nicolas Pascaud"
+    },
+    {
+      "name": "Alexis Devillez",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Arnaud Meriguet",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Gwendoline Lesvier",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Jonathan Viault",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Muriel Morandeau",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Oussama Eddahri",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Philippe Grangeray",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Sebastien Tan",
+      "role": "Bordeaux",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Vincent Rouget",
+      "team": "ERP France",
+      "manager": "Patrick Guenand"
+    },
+    {
+      "name": "Eric Douget",
+      "role": "chef de projet",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Juliette Palluel",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Marco Lusignan",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Mohammed Bohi",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Rémi Tuyen Henri Feydit",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Valentin Gay",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Yannick Sibilly",
+      "team": "Geofac",
+      "manager": "Romain Cureau"
+    },
+    {
+      "name": "Elie Cheret",
+      "team": "HIS/SRD",
+      "manager": "Raphaël Garnier"
+    },
+    {
+      "name": "Franck Cabrol",
+      "team": "HIS/SRD",
+      "manager": "Raphaël Garnier"
+    },
+    {
+      "name": "Jeremy Baudson",
+      "team": "HIS/SRD",
+      "manager": "Raphaël Garnier"
+    },
+    {
+      "name": "Sylvain Guillebault",
+      "team": "HIS/SRD",
+      "manager": "Raphaël Garnier"
+    },
+    {
+      "name": "Thomas Berthaud",
+      "team": "HIS/SRD",
+      "manager": "Raphaël Garnier"
+    },
+    {
+      "name": "Ayoub Debbagh",
+      "role": "Casablanca",
+      "team": "OnePMSI",
+      "manager": "Luc Akbal"
+    },
+    {
+      "name": "Nabil Assouli",
+      "role": "Bordeaux",
+      "team": "OnePMSI",
+      "manager": "Luc Akbal"
+    },
+    {
+      "name": "Eric Mourougandy",
+      "team": "PAS / Facturation Public Export",
+      "manager": "Erwan Becquet"
+    },
+    {
+      "name": "Samuel Bellon",
+      "team": "PAS / Facturation Public Export",
+      "manager": "Erwan Becquet"
+    },
+    {
+      "name": "Thomas Puthon",
+      "team": "PAS / Facturation Public Export",
+      "manager": "Erwan Becquet"
+    },
+    {
+      "name": "Frédéric Trougnac",
+      "team": "PAS / Santé 400 Pharmacie",
+      "manager": "Bruno Casagrande"
+    },
+    {
+      "name": "Thierry Daguerre",
+      "team": "PAS / Santé 400 Pharmacie",
+      "manager": "Bruno Casagrande"
+    },
+    {
+      "name": "Anthony Hebig",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Benoit Blondel",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Clément Frederic",
+      "role": "Scrum Master",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "David Fournier",
+      "role": "Bordeaux",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Didier Lesage",
+      "role": "PM · Antony",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Eric Meunier",
+      "role": "contractor",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Guillaume Pelicant",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Julie Baret",
+      "role": "Solution manager · Lyon",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Lucie Bonnelle",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Ludovic Houpert",
+      "role": "Strasbourg",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Pauline Andrzejewski",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Philippe Thareaut-Vigny",
+      "role": "PO · Bordeaux",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Pierre Tisserand",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Rémi Delhermet",
+      "role": "Lille",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Meriem Batnini",
+      "role": "contractor",
+      "team": "S&CC direct",
+      "manager": "Edouard Caumont"
+    },
+    {
+      "name": "Florian Gosselin",
+      "role": "Responsable d'équipe",
+      "team": "S&CC Architecture"
+    },
+    {
+      "name": "Guillaume Perlein",
+      "role": "Front lead",
+      "team": "S&CC Architecture",
+      "manager": "Florian Gosselin"
+    },
+    {
+      "name": "Louis Rolland",
+      "role": "Tech lead back",
+      "team": "S&CC Architecture",
+      "manager": "Florian Gosselin"
+    },
+    {
+      "name": "Thomas Détée",
+      "role": "Architect DevOps",
+      "team": "S&CC Architecture",
+      "manager": "Florian Gosselin"
+    },
+    {
+      "name": "Frédéric Casanova",
+      "role": "Responsable d'équipe",
+      "team": "S&CC Tests"
+    },
+    {
+      "name": "Samuel Vermeulen",
+      "role": "Lille",
+      "team": "S&CC Tests",
+      "manager": "Frédéric Casanova"
+    },
+    {
+      "name": "Joanna Limier",
+      "role": "Responsable d'équipe",
+      "team": "S&CC UX Design"
+    },
+    {
+      "name": "Denis Roisin",
+      "role": "Lille",
+      "team": "S&CC UX Design",
+      "manager": "Joanna Limier"
+    },
+    {
+      "name": "Jun Dai",
+      "role": "Responsable d'équipe",
+      "team": "Connected Care / Box"
+    },
+    {
+      "name": "Guillaume Degraeve",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Johanna Ozannat",
+      "role": "PO · Valence",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Olivier Ducrot",
+      "role": "consultant",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Axel Fromentin",
+      "role": "Valence",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Baptiste Bertrand-Rapello",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Vincent Thuillier",
+      "role": "contractor",
+      "team": "Connected Care / Box",
+      "manager": "Jun Dai"
+    },
+    {
+      "name": "Amale Rabhi",
+      "role": "Casablanca",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Céline Meignant",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Fatima Ez Zahrae Hmami",
+      "role": "Casablanca",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Hippolyte Kengni",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Laurence Blanchet",
+      "role": "Dijon",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Laurence Scagliarini",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Lise Poumarede",
+      "role": "chef de projet",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Mariem Halli",
+      "role": "Casablanca",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Melanie Rivault",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Mélissa Bouzon",
+      "role": "Valence",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Mina Fali",
+      "team": "Test & qualif",
+      "manager": "Nicolas Bestieu"
+    },
+    {
+      "name": "Sylvain Buscato",
+      "team": "Hexaflux"
+    },
+    {
+      "name": "Hugo Chabert",
+      "team": "Hexaflux"
+    },
+    {
+      "name": "Philomène Bassahag",
+      "role": "Project Manager"
+    },
+    {
+      "name": "Charles Beraha",
+      "role": "Service Delivery Manager"
+    },
+    {
+      "name": "Bruno Hickel",
+      "role": "R&D Director Healthcare IT"
+    },
+    {
+      "name": "Benoit Lotz",
+      "role": "Directeur de projets"
+    },
+    {
+      "name": "Gilles Peyrot",
+      "role": "Directeur Support IVD France"
+    },
+    {
+      "name": "Laetitia Esteves",
+      "role": "Responsable Paie et ADP"
+    },
+    {
+      "name": "Jean-Philippe Bonichon",
+      "role": "R&D Site Manager"
+    },
+    {
+      "name": "Daniéline Ngasseu",
+      "role": "Ingénieure Test & Qualification logiciels"
+    },
+    {
+      "name": "Océane Gobert",
+      "role": "Consultante support logiciel"
+    },
+    {
+      "name": "Omer Al-amodi",
+      "role": "Full Stack developer"
+    },
+    {
+      "name": "Nicolas Masson",
+      "role": "Team Lead R&D / Agile Manager"
+    },
+    {
+      "name": "José Xavier",
+      "role": "Resources Manager"
+    },
+    {
+      "name": "Berivan Bal",
+      "role": "Gestionnaire de contrats"
+    },
+    {
+      "name": "Marie Aubry",
+      "role": "Consultant Support Web Applicatif"
+    },
+    {
+      "name": "Younes Mahfoudi",
+      "role": "Research Development Team Lead"
+    },
+    {
+      "name": "François Rossard",
+      "role": "Team Lead R&D"
+    },
+    {
+      "name": "Corentin Blanc",
+      "role": "Chef de projet interopérabilité PAS / ERP"
+    },
+    {
+      "name": "Isabelle Pommereul",
+      "role": "Analyste fonctionnel"
+    },
+    {
+      "name": "Michel Thabaraud",
+      "role": "Chef de projet"
+    },
+    {
+      "name": "Isabelle Heitzmann",
+      "role": "Technicien support technique"
+    },
+    {
+      "name": "Celine Girardet",
+      "role": "Chef de projet"
+    },
+    {
+      "name": "Julien Fuseau",
+      "role": "Project Management Officer"
+    },
+    {
+      "name": "Céline Coutant",
+      "role": "HIS Consulting Manager"
+    },
+    {
+      "name": "Elise Marroig",
+      "role": "Customer Success Manager"
+    },
+    {
+      "name": "Coralie Castanares",
+      "role": "Customer Success Manager"
+    },
+    {
+      "name": "Julien Séjourné",
+      "role": "Product Owner, Healthcare Software Solutions"
+    }
+  ]
+}

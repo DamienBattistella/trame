@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+import shutil
 import unicodedata
 from typing import Iterable, Optional
 
@@ -19,6 +20,7 @@ class Person(BaseModel):
     email: Optional[str] = Field(default=None, max_length=200)
     role: Optional[str] = Field(default=None, max_length=120)
     team: Optional[str] = Field(default=None, max_length=120)
+    manager: Optional[str] = Field(default=None, max_length=120)
     relation: Optional[str] = Field(default=None, max_length=80)
     tone: Optional[str] = Field(default=None, max_length=200)
     note: Optional[str] = Field(default=None, max_length=300)
@@ -103,7 +105,8 @@ class Directory:
 
     @staticmethod
     def card(p: Person) -> str:
-        bits = [x for x in (p.role, p.team and f"équipe {p.team}", p.relation) if x]
+        bits = [x for x in (p.role, p.team and f"équipe {p.team}", p.manager and f"rattaché à {p.manager}",
+                            p.relation) if x]
         line = f"- {p.name}" + (f" : {', '.join(bits)}" if bits else "")
         if p.tone:
             line += f". Ton : {p.tone}"
@@ -130,6 +133,16 @@ def save(content: str) -> Directory:
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
     return Directory(data)
+
+
+def restore_default() -> Directory:
+    """Back to the org chart shipped with the app, or to no entourage if none is."""
+    source, target = cfgmod.BUNDLE / FILENAME, cfgmod.HOME / FILENAME
+    if not source.exists():
+        return remove()
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    return Directory.load()
 
 
 def remove() -> Directory:

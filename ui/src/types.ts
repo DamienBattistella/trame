@@ -106,6 +106,7 @@ export interface Person {
   aliases: string[];
   role: string | null;
   team: string | null;
+  manager: string | null;
   relation: string | null;
   tone: string | null;
   note: string | null;

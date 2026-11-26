@@ -4,6 +4,7 @@ import json
 import pytest
 
 from conftest import FakeBrain, RefusingDriver
+import config as cfgmod
 from models import IncomingMessage, Surface, WatchEntity
 
 DM_DRAFT = "19:bb22@thread.v2"
@@ -365,7 +366,9 @@ def test_factory_reset(make_client, fresh_home):
     s = client.get("/api/settings").json()["settings"]
     assert s["onboarded"] is False and s["safety"]["countdown_seconds"] == 5
     assert not any(w.watch for w in watcher.state.watchlist) and watcher.state.drafts == []
-    assert watcher.soul != "# Moi" and not (fresh_home / "ENTOURAGE.json").exists()
+    assert watcher.soul != "# Moi"
+    shipped = json.loads((cfgmod.ROOT / "ENTOURAGE.json").read_text(encoding="utf-8"))
+    assert client.get("/api/people").json()["people"]["count"] == len(shipped["people"]) > 1
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["watchlist"] == [] and saved["onboarded"] is False
 

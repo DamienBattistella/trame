@@ -31,7 +31,7 @@ def test_list_gives_each_person_without_email(make_client, fresh_home):
     people = client.get("/api/people/list").json()["people"]
     assert [p["name"] for p in people] == ["Lucas Bernard", "Sofia Marino"]
     assert people[1] == {"name": "Sofia Marino", "aliases": ["S. Marino"], "role": "Cheffe de projet", "team": "Interop",
-                         "relation": "N+1", "tone": "vouvoiement", "note": None}
+                         "manager": None, "relation": "N+1", "tone": "vouvoiement", "note": None}
 
 
 def test_matching_ignores_order_case_accents_and_email():
@@ -79,3 +79,33 @@ def test_remove(make_client, fresh_home):
 def test_prompt_section_only_when_known():
     assert "interlocuteurs" not in build_prompt("soul", "", "salut", "")
     assert "- Lucas" in build_prompt("soul", "", "salut", "", "- Lucas Bernard : dev")
+
+
+def test_shipped_org_chart_is_valid_and_neutral():
+    """ENTOURAGE.json ships with the app: an org chart (roles, teams, who reports to whom),
+    nothing about how its exporter relates to or talks with each person."""
+    import config as cfgmod
+    content = (cfgmod.ROOT / "ENTOURAGE.json").read_text(encoding="utf-8")
+    d = Directory(Directory.parse(content))
+    names = {p.name for p in d.data.people}
+    assert len(names) == len(d.data.people) > 100
+    assert all(p.relation is None and p.tone is None and p.note is None and p.email is None for p in d.data.people)
+    assert all(p.manager in names for p in d.data.people if p.manager)
+    for k in ("relation", "tone", "note", "email"):
+        assert f'"{k}"' not in content
+
+
+def test_card_names_the_manager():
+    p = Directory(Directory.parse(json.dumps({"people": [
+        {"name": "A B", "role": "Dév.", "team": "Geofac", "manager": "C D"}]}))).find("A B")
+    assert Directory.card(p) == "- A B : Dév., équipe Geofac, rattaché à C D"
+
+
+def test_first_launch_seeds_org_chart_but_a_removed_one_stays_removed(tmp_path, monkeypatch):
+    import config as cfgmod
+    monkeypatch.setattr(cfgmod, "HOME", tmp_path)
+    cfgmod._seed()
+    assert (tmp_path / "ENTOURAGE.json").read_bytes() == (cfgmod.BUNDLE / "ENTOURAGE.json").read_bytes()
+    (tmp_path / "ENTOURAGE.json").unlink()
+    cfgmod._seed()
+    assert not (tmp_path / "ENTOURAGE.json").exists()
