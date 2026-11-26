@@ -100,6 +100,8 @@
     }
     return null;
   };
+  const MSGS = '[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]';
+  const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
   let deadline = 0;
   const late = () => deadline && Date.now() > deadline;
 
@@ -154,11 +156,17 @@
       if (!send) return { ok: true };
       if (!isOpen(name)) return fail("conversation changée avant l'envoi");
       if (late()) return fail("délai dépassé avant l'envoi");
+      const key = flat(text).slice(0, 40);
+      const before = lastMessages(3).filter((t) => t.includes(key)).length;
       const btn = sendButton();
-      if (btn) btn.click();
+      if (btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") btn.click();
       else box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
-      const sent = await waitFor(() => !box.innerText.trim(), 3000);
-      return sent ? { ok: true } : { ok: false, uncertain: true, error: "envoi non confirmé, vérifie dans Teams" };
+      // Envoyé seulement si le message apparaît dans la conversation : une zone de saisie
+      // vidée ne prouve rien (page gelée, éditeur réinitialisé).
+      const shown = await waitFor(() => lastMessages(3).filter((t) => t.includes(key)).length > before, 6000);
+      if (shown) return { ok: true };
+      if (box.innerText.trim()) return fail("envoi refusé par Teams (bouton Envoyer inactif ?)");
+      return { ok: false, uncertain: true, error: "message non visible dans la conversation, vérifie dans Teams" };
     },
     diagnose: () => ({
       url: location.href,

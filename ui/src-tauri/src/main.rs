@@ -189,35 +189,61 @@ const TEAMS_WEB: &str = "teams-web";
 const TEAMS_URL: &str = "https://teams.microsoft.com/v2/";
 const TEAMS_BRIDGE: &str = include_str!("../teams-bridge.js");
 
-/// « Teams intégré » (expérimental) : Teams web in a Trame window, hidden once the
-/// user has signed in. Its page may only call `teams_bridge_reply`.
+/// Teams web runs in its own WebView2 profile, with background throttling and
+/// occlusion detection off: a page Chromium believes hidden is frozen, and Send
+/// then does nothing. "Hidden" therefore means parked off-screen, never hide().
+const TEAMS_ARGS: &str = "--disable-features=CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+
+fn park(w: &tauri::WebviewWindow) {
+    let _ = w.set_skip_taskbar(true);
+    let _ = w.unminimize();
+    let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
+    let _ = w.show();
+}
+
+fn unpark(w: &tauri::WebviewWindow) {
+    let _ = w.set_skip_taskbar(false);
+    let _ = w.unminimize();
+    let _ = w.center();
+    let _ = w.show();
+    let _ = w.set_focus();
+}
+
+/// Teams web in a Trame window, parked off-screen unless the user asks to see it
+/// (sign-in). Its page may only call `teams_bridge_reply`.
 /// Async on purpose: building a window from a synchronous command deadlocks on
 /// Windows (WebView2), and sync commands run on the main thread.
 #[tauri::command]
 async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(TEAMS_WEB) {
         if visible {
-            let _ = w.show();
-            let _ = w.unminimize();
-            let _ = w.set_focus();
+            unpark(&w);
         }
         return Ok(());
     }
     let url = TEAMS_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
-    tauri::WebviewWindowBuilder::new(&app, TEAMS_WEB, tauri::WebviewUrl::External(url))
+    let profile = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("teams-web");
+    let w = tauri::WebviewWindowBuilder::new(&app, TEAMS_WEB, tauri::WebviewUrl::External(url))
         .title("Teams · Trame")
         .inner_size(1100.0, 760.0)
-        .visible(visible)
+        .visible(false)
+        .data_directory(profile)
+        .additional_browser_args(TEAMS_ARGS)
         .initialization_script(TEAMS_BRIDGE)
         .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if visible {
+        unpark(&w);
+    } else {
+        park(&w);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn teams_web_hide(app: AppHandle) {
     if let Some(w) = app.get_webview_window(TEAMS_WEB) {
-        let _ = w.hide();
+        park(&w);
     }
 }
 
@@ -326,6 +352,12 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                if window.label() == TEAMS_WEB {
+                    if let Some(w) = window.app_handle().get_webview_window(TEAMS_WEB) {
+                        park(&w);
+                    }
+                    return;
+                }
                 let _ = window.app_handle().save_window_state(StateFlags::all());
                 let _ = window.hide();
             }
