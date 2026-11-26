@@ -98,6 +98,32 @@ class Directory:
                 return self._index[k]
         return None
 
+    def search(self, query: str, limit: int = 8) -> list[Person]:
+        """People whose name or alias starts with every word typed ("luc ber", "bernard"),
+        names before aliases, then those whose role or team words start the same way."""
+        words = _key(query).split()
+        if not words or not self.data:
+            return []
+
+        def by_words(text: str) -> bool:
+            tokens = _key(text).split()
+            return all(any(t.startswith(w) for t in tokens) for w in words)
+
+        joined = " ".join(words)
+        ranked: list[tuple[int, str, Person]] = []
+        for p in self.data.people:
+            if by_words(p.name):
+                rank = 0 if _key(p.name).startswith(joined) else 1
+            elif any(by_words(a) for a in p.aliases):
+                rank = 2
+            elif any(by_words(x or "") for x in (p.role, p.team)):
+                rank = 3
+            else:
+                continue
+            ranked.append((rank, _key(p.name), p))
+        ranked.sort(key=lambda r: (r[0], r[1]))
+        return [p for _, _, p in ranked[:limit]]
+
     @staticmethod
     def label(p: Person) -> str:
         """Short line under a name in the UI: « Développeur interop · Hexagone »."""

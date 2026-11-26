@@ -127,6 +127,27 @@ export interface Person {
   note: string | null;
 }
 
+/** Une suggestion de « Nouvelle conversation » : l'entourage d'abord, puis la recherche de Teams. */
+export interface PersonSuggestion {
+  name: string;
+  role: string | null;
+  team: string | null;
+  manager: string | null;
+  source: "entourage" | "teams";
+  /** Conversation privée déjà dans la liste, s'il y en a une. */
+  threadId: string | null;
+}
+
+export interface PeopleSearch {
+  people: PersonSuggestion[];
+  /** Le pilote Teams sait démarrer une conversation. */
+  canStart: boolean;
+  /** Le pilote Teams sait chercher des personnes au-delà de l'entourage. */
+  teamsSearch: boolean;
+  /** Pourquoi le pilote ne peut pas démarrer de conversation. */
+  unsupported: string | null;
+}
+
 export interface PeopleSummary {
   loaded: boolean;
   count: number;
