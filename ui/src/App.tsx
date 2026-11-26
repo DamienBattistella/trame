@@ -77,7 +77,7 @@ export default function App() {
   togglePauseRef.current = togglePause;
   useEffect(() => onTrayTogglePause(() => togglePauseRef.current(!pausedRef.current)), []);
   // Mise à jour au lancement (faite par l'application de bureau) : on prévient, sans rien demander.
-  // Celles trouvées ensuite (toutes les 15 min) allument la LED de l'en-tête (UpdateLed).
+  // Celles trouvées ensuite (toutes les 15 min) allument l'icône de mise à jour de l'en-tête (UpdateLed).
   useEffect(() => {
     const offAvailable = onDesktopEvent<string>("update-available", (version) =>
       toast.info(`Mise à jour vers la version ${version}`, { description: "Téléchargement en cours. Trame redémarrera tout seul." })
