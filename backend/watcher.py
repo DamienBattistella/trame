@@ -765,6 +765,14 @@ class Watcher:
             "## Journal",
         ]
         out += [f"{l.at}  {l.level:<5}  {telemetry.redact(l.text)}" for l in reversed(self.state.logs)] or ["(vide)"]
+        try:
+            with self._ui_lock:
+                diag = self.driver.diagnose(None)
+            teams = {k: diag.get(k) for k in ("driver", "window", "title_conversation", "rail_items", "selected_now")}
+            teams["compose_found"] = bool(diag.get("compose")) if "compose" in diag else None
+            out += ["", "## Teams (diagnostic court)", json.dumps(teams, ensure_ascii=False)]
+        except Exception as e:
+            out += ["", "## Teams (diagnostic court)", f"indisponible : {e!r}"]
         backend_log = tail(cfgmod.HOME / "backend.log", tail_lines)
         out += ["", "## backend.log (fin)"] + ([l.rstrip("\n") for l in backend_log] or ["(absent)"])
         telemetry.flush()
