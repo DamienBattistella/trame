@@ -18,11 +18,21 @@ import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Draft, IncomingMessage, LogItem,
-                    MessageRef, Notice, Surface, WatchEntity)
+from models import (REACTIONS, AppState, Brief, BriefSources, Capabilities, Claim, Draft, FactCheck, FactCheckSources,
+                    IncomingMessage, LogItem, MessageRef, Notice, Surface, WatchEntity)
 from drivers.base import Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
+from brain.factcheck import FactCheckParseError, build_factcheck_prompt, parse_factcheck
+
+_DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+           "novembre", "décembre")
+
+
+def _today() -> str:
+    d = datetime.now()
+    return f"{_DAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]} {d.year}"
 
 
 class ActionError(Exception):
@@ -249,6 +259,14 @@ class Watcher:
             mode = "draft"
 
         gh_ref = gh_ctx.splitlines()[0] if gh_ctx else None
+
+        if mode == "auto" and cfg.get("reply", {}).get("fact_check_before_auto_send", True):
+            contradicted = self._auto_fact_check(msg, proposal, summary, gh_ctx)
+            if contradicted is not None:
+                self._queue_draft(msg, proposal, entity.mode, gh_ref)
+                self.log("warn", f"Envoi automatique à {msg.sender} suspendu : « {contradicted.excerpt[:60]} » "
+                                 "est contredit par la conversation. Réponse gardée en brouillon")
+                return "draft"
 
         if mode == "auto":
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
@@ -897,6 +915,86 @@ class Watcher:
         gh_part = f", {len(hits)} élément(s) GitHub" if prefs.github.enabled else ""
         self.log("info", f"Résumé généré pour {name} ({len(msgs)} message(s){gh_part})")
         return brief
+
+    # --- fact check of a message about to be sent ---
+    FACT_CHECK_MESSAGES = 30
+
+    def _people_cards(self, names: Iterable[str], text: str) -> list[str]:
+        """Cards of the people speaking, then of those named in full in the message."""
+        found: list[peoplemod.Person] = []
+        for p in [self.people.find(n) for n in names if n.strip()] + self.people.mentioned(text):
+            if p and p not in found:
+                found.append(p)
+        return [peoplemod.Directory.card(p) for p in found[:12]]
+
+    def _github_facts(self, text: str) -> str:
+        """State of the PR / issues the message names, read-only; "" when GitHub is off."""
+        prefs = self.get_settings()
+        if not prefs.github.enabled or not gh.is_relevant(text):
+            return ""
+        try:
+            repos = gh.scope(prefs.github.all_repos, self.cfg.get("context", {}).get("github", {}).get("repos_allowlist", []))
+            with telemetry.span("github.fetch", repos=len(repos), purpose="Vérification"):
+                return gh.fetch(text, repos, True)
+        except Exception as e:
+            self.log("warn", f"GitHub illisible pour la vérification : {e}")
+            return ""
+
+    def _check_claims(self, text: str, transcript: str, people: str, github: str) -> list[Claim]:
+        """One brain call; raises on failure or unusable answer. Never sends anything."""
+        timeout = max(self.BRIEF_TIMEOUT, 2 * float(getattr(self.brain, "timeout", 0) or 0))
+        with telemetry.span("brain.factcheck", provider=self.state.brain, history_chars=len(transcript),
+                            github=bool(github)):
+            raw = self.brain.complete(build_factcheck_prompt(text, transcript, people, github, _today()), timeout=timeout)
+        return parse_factcheck(raw)
+
+    def fact_check(self, thread_id: str, text: str, target: Optional[MessageRef] = None) -> FactCheck:
+        """Check a message against what Trame already knows: the thread, the entourage
+        and, when connected, GitHub. Read-only: never blocks nor sends anything."""
+        entity = self._conversation(thread_id)
+        body = (text or "").strip()
+        if not body:
+            raise ActionError(422, "Le message à vérifier est vide.")
+        name = entity.display_name
+        msgs, _top = self.thread_history(thread_id, self.FACT_CHECK_MESSAGES)
+        lines = [f"[{m['at']}] {m['sender']}: {m['text']}" if m.get("at") else f"{m['sender']}: {m['text']}" for m in msgs]
+        if target is not None:
+            when = f" ({target.at})" if target.at else ""
+            lines.append(f"(Le message à vérifier répond à {target.sender or 'ce message'}{when} : « {target.text} »)")
+        senders = [m["sender"] for m in msgs if not m.get("mine")]
+        if entity.surface == Surface.dm:
+            senders.insert(0, name)
+        cards = self._people_cards(senders, body)
+        github = self._github_facts(body)
+        try:
+            claims = self._check_claims(body, "\n".join(lines), "\n".join(cards), github)
+        except FactCheckParseError as e:
+            self.log("warn", f"Vérification impossible pour {name} : {e}")
+            raise ActionError(502, "Réponse du cerveau inexploitable pour la vérification. Ton message est intact, tu peux réessayer.")
+        except Exception as e:
+            self.log("warn", f"Vérification impossible pour {name} : le cerveau a échoué ({str(e)[:120]})")
+            raise ActionError(502, "Le cerveau n'a pas pu vérifier le message. Ton message est intact, tu peux réessayer.")
+        bad = sum(c.verdict == "contredit" for c in claims)
+        verdict = f"{bad} affirmation(s) contredite(s)" if bad else "rien de contredit"
+        self.log("info", f"Message vérifié pour {name} : {verdict}")
+        return FactCheck(
+            thread_id=thread_id,
+            checked_at=datetime.now().strftime("%H:%M"),
+            claims=claims,
+            sources=FactCheckSources(messages=len(msgs), people=len(cards), github=len(github.splitlines()) if github else 0),
+        )
+
+    def _auto_fact_check(self, msg: IncomingMessage, proposal: str, summary: str, gh_ctx: str) -> Optional[Claim]:
+        """Before an automatic send: the first contradicted claim, if any. A failed check
+        changes nothing (the send goes on as before): it only ever holds a send back."""
+        senders = [msg.sender] + [line.split(":", 1)[0] for line in summary.splitlines() if ":" in line]
+        transcript = summary if msg.text in summary else "\n".join(p for p in (summary, f"{msg.sender}: {msg.text}") if p)
+        try:
+            claims = self._check_claims(proposal, transcript, "\n".join(self._people_cards(senders, proposal)), gh_ctx)
+        except Exception as e:
+            self.log("info", f"Vérification avant envoi automatique impossible ({str(e)[:80]}) : envoi maintenu")
+            return None
+        return next((c for c in claims if c.verdict == "contredit"), None)
 
     def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé") -> list[IncomingMessage]:
         return self._read_history_focused(thread_id, name, last_n, purpose)[0]

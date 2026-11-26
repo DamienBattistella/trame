@@ -129,6 +129,12 @@ class SuggestBody(BaseModel):
     message: Optional[MessageRef] = None
 
 
+class CheckBody(BaseModel):
+    text: str = Field(max_length=4000)
+    # La réponse cite ce message : la vérification le prend comme contexte.
+    message: Optional[MessageRef] = None
+
+
 class WatchlistItem(BaseModel):
     thread_id: str = Field(min_length=1)
     watch: Optional[bool] = None
@@ -326,6 +332,10 @@ def create_app(
     @app.post("/api/threads/{thread_id:path}/suggest")
     def thread_suggest(thread_id: str, body: Optional[SuggestBody] = None):
         return {"ok": True, "text": watcher.suggest_reply(thread_id, target=body.message if body else None)}
+
+    @app.post("/api/threads/{thread_id:path}/check")
+    def thread_check(thread_id: str, body: CheckBody):
+        return {"ok": True, "check": watcher.fact_check(thread_id, body.text, body.message).model_dump()}
 
     @app.post("/api/threads/{thread_id:path}/read")
     def mark_thread_read(thread_id: str):
