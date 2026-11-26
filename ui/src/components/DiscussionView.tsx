@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import { Highlight } from "@/components/MessageSearchResults";
 import { LinkCards } from "@/components/LinkCards";
 import { MessageText } from "@/components/MessageText";
 import { MessageAttachments } from "@/components/MessageAttachments";
+import { ScrollTimeline, type TimelineItem } from "@/components/ScrollTimeline";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { ThreadActivity } from "@/components/ThreadActivity";
 import { OutboxItems } from "@/components/OutboxItems";
@@ -24,6 +25,8 @@ import { JoinMeeting } from "@/components/JoinMeeting";
 import { findFolded, fold } from "@/lib/textSearch";
 import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/mentions";
 import { wordDiff } from "@/lib/wordDiff";
+import { jiraBases } from "@/lib/apps";
+import { layoutThread } from "@/lib/threadLayout";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
@@ -201,8 +204,7 @@ function MessageActions({
       role="toolbar"
       aria-label={`Gestes sur le message de ${message.sender}`}
       className={cn(
-        "absolute -top-4 z-10 flex items-center gap-0.5 rounded-full border bg-popover p-0.5 shadow-sm transition-opacity",
-        message.mine ? "right-2" : "left-2",
+        "absolute -top-4 right-2 z-10 flex items-center gap-0.5 rounded-full border bg-popover p-0.5 shadow-sm transition-opacity",
         pending || propose?.busy ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
       )}
     >
@@ -766,6 +768,35 @@ export function DiscussionView({
   const foundIndex = foundAt(shown, found);
   // La recherche dans l'excerpt surligne la même plage dans le message entier.
   const foundQuery = found?.match ? found.excerpt.slice(found.match[0], found.match[1]) : "";
+  // Séparateurs de jour et séries d'un même auteur (heure Teams telle qu'affichée).
+  const rows = layoutThread(shown);
+  // Projets Jira liés dans le fil : leurs clés seules (« ALL-94 ») deviennent des pastilles.
+  const jira = useMemo(() => {
+    const urls: string[] = [];
+    for (const m of messages ?? []) {
+      urls.push(...(m.text.match(/https?:\/\/\S+/g) ?? []), ...(m.links ?? []).map((l) => l.url), ...(m.cards ?? []).map((c) => c.url));
+    }
+    return jiraBases(urls);
+  }, [messages]);
+  const timeline: TimelineItem[] = shown.map((m, i) => ({
+    key: keys[i],
+    sender: m.sender,
+    mine: m.mine,
+    at: m.at,
+    head: rows[i].head,
+    preview: m.deleted ? DELETED_TEXT : m.text || [...(m.files ?? []).map((f) => f.name), ...(m.images ?? []).map(() => "Image")].join(", "),
+  }));
+  const scrollEl = useCallback(() => scroller.current?.scrollRef.current ?? null, []);
+  // Saut depuis la chronologie : le message au centre, un bref halo pour le retrouver.
+  // Saut immédiat : un défilement animé serait repris par l'accroche en bas du fil.
+  const jump = useCallback((key: string) => {
+    const box = scroller.current?.scrollRef.current;
+    const el = box?.querySelector<HTMLElement>(`[data-msg-key="${CSS.escape(key)}"]`);
+    if (!el) return;
+    scroller.current?.stopScroll();
+    el.scrollIntoView({ block: "center" });
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) el.animate([{ backgroundColor: "color-mix(in oklab, var(--link) 14%, transparent)" }, { backgroundColor: "transparent" }], { duration: 1200, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
+  }, []);
 
   useEffect(() => {
     if (foundIndex < 0) return;
@@ -852,8 +883,9 @@ export function DiscussionView({
         </div>
       )}
 
-      <StickToBottom contextRef={scroller} className="relative min-h-0 flex-1 overflow-y-auto" resize="smooth" initial={found ? false : "instant"}>
-        <StickToBottom.Content className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-5 py-5">
+      <StickToBottom contextRef={scroller} className="relative min-h-0 flex-1" resize="smooth" initial={found ? false : "instant"}>
+        {messages !== null && <ScrollTimeline items={timeline} scrollEl={scrollEl} onJump={jump} className="max-sm:hidden" />}
+        <StickToBottom.Content className="mx-auto flex w-full max-w-3xl flex-col px-5 py-5 sm:px-12">
           {error && !draft ? (
             <div className="flex flex-col items-center gap-3 py-16 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
@@ -892,7 +924,7 @@ export function DiscussionView({
                 </div>
               )}
               {shown.map((m, i) => {
-                const showName = !m.mine && c.surface !== "dm" && shown[i - 1]?.sender !== m.sender;
+                const row = rows[i];
                 // Pas de geste sur un message pas encore relu dans Teams, ni sur ce que tu viens d'envoyer.
                 const live = messages !== null && m.at !== "à l'instant" && !m.deleted;
                 const canReact = live && caps.react && !m.mine;
@@ -901,83 +933,132 @@ export function DiscussionView({
                 const canDelete = live && caps.delete && m.mine && Boolean(m.id);
                 const canPropose = live && Boolean(m.text.trim() || m.files?.length || m.images?.length);
                 const targeted = sameRef(replyTo, m);
+                const isFound = i === foundIndex;
                 const pending = reacting?.index === i ? reacting.reaction : null;
-                return (
-                  <motion.div
-                    key={keys[i]}
-                    ref={i === foundIndex ? foundRef : undefined}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(i, 10) * 0.02 }}
-                    className={cn("group relative flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start", "pt-1")}
-                  >
-                    {showName && <span className="ml-1 text-xs text-muted-foreground">{m.sender}</span>}
-                    <MessageActions
-                      message={m}
-                      canReact={canReact}
-                      canReply={canReply}
-                      canDelete={canDelete}
-                      propose={canPropose ? { busy: busy === "suggest" && sameRef(proposingFor, m), blocked: proposeBlocked } : null}
-                      pending={pending}
-                      onReact={(r) => react(m, i, r)}
-                      onReply={() => replyToMessage(m)}
-                      onPropose={() => proposeOn(m)}
-                      onDelete={() => setToDelete(m)}
+                const body = m.deleted ? (
+                  <span className="flex items-center gap-1.5 text-muted-foreground italic">
+                    <Ban className="size-3.5 shrink-0" />
+                    {DELETED_TEXT}
+                  </span>
+                ) : (
+                  <>
+                    {m.replyTo && <Quote target={m.replyTo} />}
+                    <MessageText
+                      text={m.text}
+                      links={m.links}
+                      jira={jira}
+                      rich
+                      range={isFound ? findFolded(m.text, foundQuery) : null}
+                      github={trame.githubLink}
                     />
-                    <div
-                      aria-current={i === foundIndex ? "true" : undefined}
-                      className={cn(
-                        "flex flex-col gap-1.5 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap transition-shadow",
-                        m.mine ? "rounded-tr-md border border-primary/30 bg-primary/10 dark:bg-primary/15" : "rounded-tl-md bg-muted",
-                        i === foundIndex && "ring-2 ring-warning/70",
-                        targeted && "ring-2 ring-link/50"
-                      )}
-                    >
-                      {m.deleted ? (
-                        <span className="flex items-center gap-1.5 text-muted-foreground italic">
-                          <Ban className="size-3.5 shrink-0" />
-                          {DELETED_TEXT}
-                        </span>
-                      ) : (
-                        <>
-                          {m.replyTo && <Quote target={m.replyTo} />}
-                          <MessageText
-                            text={m.text}
-                            links={m.links}
-                            range={i === foundIndex ? findFolded(m.text, foundQuery) : null}
-                            github={trame.githubLink}
-                          />
-                          <LinkCards cards={m.cards} />
-                        </>
-                      )}
-                      <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
-                    </div>
-                    {(m.at || (m.reactions?.length ?? 0) > 0) && (
-                      <div className={cn("mx-1 flex items-center gap-1.5", m.mine && "flex-row-reverse")}>
-                        {m.at && <span className="text-xs text-muted-foreground tabular-nums">{m.at}</span>}
-                        <AnimatePresence initial={false}>
-                          {(m.reactions ?? []).map((r) => (
-                            <motion.span
-                              key={r}
-                              initial={{ scale: 0.4, opacity: 0 }}
-                              animate={{ scale: 1, opacity: 1 }}
-                              transition={{ type: "spring", stiffness: 500, damping: 22 }}
-                              title={`Tu as réagi : ${REACTIONS.find((x) => x.key === r)?.label ?? r}`}
-                              className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5"
-                            >
-                              {EMOJI[r]}
-                            </motion.span>
-                          ))}
-                        </AnimatePresence>
+                    <LinkCards cards={m.cards} />
+                  </>
+                );
+                const reactions = (m.reactions?.length ?? 0) > 0 && (
+                  <div className={cn("flex items-center gap-1", m.mine && "justify-end")}>
+                    <AnimatePresence initial={false}>
+                      {(m.reactions ?? []).map((r) => (
+                        <motion.span
+                          key={r}
+                          initial={{ scale: 0.4, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 500, damping: 22 }}
+                          title={`Tu as réagi : ${REACTIONS.find((x) => x.key === r)?.label ?? r}`}
+                          className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5"
+                        >
+                          {EMOJI[r]}
+                        </motion.span>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                );
+                return (
+                  <Fragment key={keys[i]}>
+                    {row.day && (
+                      <div role="separator" aria-label={row.day} className="flex items-center gap-3 pt-6 pb-1 text-xs font-medium text-muted-foreground first:pt-2">
+                        <span aria-hidden className="h-px flex-1 bg-border" />
+                        <span aria-hidden>{row.day}</span>
+                        <span aria-hidden className="h-px flex-1 bg-border" />
                       </div>
                     )}
-                  </motion.div>
+                    <motion.div
+                      data-msg-key={keys[i]}
+                      ref={isFound ? foundRef : undefined}
+                      aria-current={isFound ? "true" : undefined}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i, 10) * 0.02 }}
+                      className={cn(
+                        "group relative rounded-xl",
+                        row.head ? (row.day ? "mt-2" : "mt-4") : "mt-0.5",
+                        m.mine ? "flex flex-col items-end gap-1 pl-[20%]" : "-mx-2 grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3 px-2 py-0.5",
+                        !m.mine && isFound && "bg-warning/10 ring-1 ring-warning/50",
+                        !m.mine && targeted && "bg-link/5 ring-1 ring-link/40"
+                      )}
+                    >
+                      <MessageActions
+                        message={m}
+                        canReact={canReact}
+                        canReply={canReply}
+                        canDelete={canDelete}
+                        propose={canPropose ? { busy: busy === "suggest" && sameRef(proposingFor, m), blocked: proposeBlocked } : null}
+                        pending={pending}
+                        onReact={(r) => react(m, i, r)}
+                        onReply={() => replyToMessage(m)}
+                        onPropose={() => proposeOn(m)}
+                        onDelete={() => setToDelete(m)}
+                      />
+                      {m.mine ? (
+                        <>
+                          <div
+                            title={row.tail ? undefined : m.at}
+                            className={cn(
+                              "flex max-w-full flex-col gap-1.5 rounded-2xl bg-muted px-3.5 py-2 text-[0.9375rem] leading-relaxed whitespace-pre-wrap",
+                              isFound && "ring-2 ring-warning/70",
+                              targeted && "ring-2 ring-link/50"
+                            )}
+                          >
+                            {body}
+                            <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
+                          </div>
+                          {reactions}
+                          {row.tail && m.at && <span className="mr-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                        </>
+                      ) : (
+                        <>
+                          {row.head ? (
+                            <InitialsAvatar name={m.sender} className="mt-0.5 size-8" />
+                          ) : (
+                            // Heure d'un message de la série : dans la marge, au survol.
+                            <span className="pt-0.5 text-right text-[0.6875rem] leading-6 text-muted-foreground tabular-nums opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                              {row.time}
+                            </span>
+                          )}
+                          <div className="flex min-w-0 flex-col gap-1.5">
+                            {row.head && (
+                              <div className="flex items-baseline gap-2 leading-tight">
+                                <span className="truncate text-sm font-semibold">{m.sender}</span>
+                                {m.at && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                              </div>
+                            )}
+                            <div className="flex flex-col gap-1.5 text-[0.9375rem] leading-relaxed whitespace-pre-wrap">
+                              {body}
+                              <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
+                            </div>
+                            {reactions}
+                          </div>
+                        </>
+                      )}
+                    </motion.div>
+                  </Fragment>
                 );
               })}
+              <div className="mt-4 flex flex-col gap-2 empty:hidden">
               <OutboxItems trame={trame} threadId={c.threadId} />
               <UndoAutoBar trame={trame} threadId={c.threadId} />
               <FollowUpCards trame={trame} threadId={c.threadId} />
               {messages !== null && <ThreadActivity trame={trame} conversation={c} last={shown[shown.length - 1]} />}
+              </div>
             </>
           )}
         </StickToBottom.Content>

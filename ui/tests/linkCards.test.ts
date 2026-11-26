@@ -15,8 +15,8 @@ const links = (text: string, l = LINKS) =>
 
 test("le texte d'un lien Teams devient cliquable vers sa vraie adresse", () => {
   assert.deepEqual(links(TEXT), [
-    ["[ABC-12] Recherche patient - Jira", JIRA, "[ABC-12] Recherche patient - Jira"],
-    ["[ABC-13] Création patient - Jira", "https://example.atlassian.net/browse/ABC-13", "[ABC-13] Création patient - Jira"],
+    ["[ABC-12] Recherche patient - Jira", JIRA, "ABC-12"],
+    ["[ABC-13] Création patient - Jira", "https://example.atlassian.net/browse/ABC-13", "ABC-13"],
   ]);
   // Le découpage redonne toujours exactement le texte.
   assert.equal(linkify(TEXT, LINKS).map((s) => s.text).join(""), TEXT);

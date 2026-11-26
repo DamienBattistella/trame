@@ -71,6 +71,29 @@ test("libellé court GitHub", () => {
   assert.equal(githubRef("https://github.com/acme/portail/issues/12")?.kind, "issue");
   // Pas une PR : adresse affichée telle quelle.
   assert.equal(linkLabel("https://github.com/acme/portail/pull/12abc"), "https://github.com/acme/portail/pull/12abc");
-  assert.equal(linkLabel("https://github.com/acme/portail"), "https://github.com/acme/portail");
+  assert.equal(linkLabel("https://github.com/acme/portail"), "acme/portail");
   assert.equal(linkLabel("https://evil.com/github.com/a/b/pull/1"), "https://evil.com/github.com/a/b/pull/1");
+});
+
+test("clé Jira seule : seulement pour un projet déjà lié dans le fil", () => {
+  const jira = { ALL: "https://acme.atlassian.net" };
+  const segs = linkify("Voir ALL-94, ALL-125 et UTF-8 ou ISO-8601 ; pas xALL-1 ni ALL-12a.", [], jira);
+  assert.deepEqual(
+    segs.flatMap((s) => (s.type === "link" ? [[s.label, s.url, s.app?.app]] : [])),
+    [
+      ["ALL-94", "https://acme.atlassian.net/browse/ALL-94", "jira"],
+      ["ALL-125", "https://acme.atlassian.net/browse/ALL-125", "jira"],
+    ]
+  );
+  assert.deepEqual(links("ALL-94 sans base connue"), []);
+});
+
+test("lien Jira nommé : la clé en pastille, le résumé à côté", () => {
+  const text = "Fiche : [ALL-141] Recherche identité - Jira";
+  const [, link] = linkify(text, [{ text: "[ALL-141] Recherche identité - Jira", url: "https://acme.atlassian.net/browse/ALL-141" }]);
+  assert.equal(link.type, "link");
+  if (link.type !== "link") return;
+  assert.equal(link.label, "ALL-141");
+  assert.equal(link.title, "Recherche identité");
+  assert.equal(link.app?.app, "jira");
 });

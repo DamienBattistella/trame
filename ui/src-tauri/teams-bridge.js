@@ -867,6 +867,14 @@
         }
         const d = display(n);
         if (d === "none") return;
+        if (t === "TABLE") {
+          const md = tableOf(n);
+          if (md) {
+            if (out && !out.endsWith("\n")) out += "\n";
+            out += `${md}\n`;
+            return;
+          }
+        }
         const cell = d === "table-cell" || t === "TD" || t === "TH";
         const block = !cell && !d.startsWith("inline") && d !== "contents";
         if (block && out && !out.endsWith("\n")) out += "\n";
@@ -876,6 +884,29 @@
       };
       walk(root, false);
       return out.replace(/\u00a0/g, " ").replace(/[\u2060\u200b]/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+    };
+    // Tableau du message en Markdown (« | a | b | », ligne de séparation après la première) :
+    // lisible par le cerveau, rendu en vrai tableau par Trame. Cellules sur une ligne, « | »
+    // échappé ; les tableaux imbriqués restent dans leur cellule. null s'il n'a pas deux colonnes.
+    const rowsOf = (table) => {
+      const rows = [];
+      const walkRows = (el) => {
+        for (const c of elements(el)) {
+          if (tag(c) === "TR") rows.push(c);
+          else if (tag(c) !== "TABLE") walkRows(c);
+        }
+      };
+      walkRows(table);
+      return rows;
+    };
+    const tableOf = (table) => {
+      const rows = rowsOf(table)
+        .map((tr) => elements(tr).filter((c) => tag(c) === "TD" || tag(c) === "TH").map((c) => one(textOf(c)).replace(/\|/g, "\\|")))
+        .filter((r) => r.some(Boolean));
+      const width = Math.max(0, ...rows.map((r) => r.length));
+      if (rows.length < 1 || width < 2) return null;
+      const line = (r) => `| ${Array.from({ length: width }, (_, i) => r[i] || "").join(" | ")} |`;
+      return [line(rows[0]), line(Array(width).fill("---")), ...rows.slice(1).map(line)].join("\n");
     };
     // Liens du corps (hors cartes) : texte affiché et adresse, sans doublon.
     const linksOf = (root) => {
