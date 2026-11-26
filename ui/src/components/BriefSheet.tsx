@@ -69,13 +69,17 @@ export function BriefSheet({
     if (n !== seq.current) return;
     clearTimers();
     if (!res.ok) {
+      // La progression est indicative : l'étape en échec vient de la réponse du moteur.
+      // 409 = conversation non ouverte dans Teams ou partage d'écran : c'est la lecture.
+      const readFailed = res.status === 409 || /lecture|teams/i.test(res.error);
       setSteps((s) => {
-        const i = s.findIndex((x) => x === "run");
-        return s.map((x, j) => (j === (i < 0 ? 0 : i) ? "error" : x));
+        const running = s.findIndex((x) => x === "run");
+        const failed = readFailed ? 0 : running < 0 ? 0 : running;
+        return s.map((x, j) => (j === failed ? "error" : j < failed ? "ok" : "idle"));
       });
       setPhase("error");
       progressCtl.start(shake);
-      toast.error(`Brief impossible pour « ${t.displayName} »`, {
+      toast.error(`Résumé impossible pour « ${t.displayName} »`, {
         description: `${res.error} Rien n'a été perdu${prev ? ", le résumé précédent est conservé" : ""}.`,
       });
       return;
@@ -112,7 +116,7 @@ export function BriefSheet({
         setSteps(["error", "idle", "idle"]);
         setPhase("error");
         progressCtl.start(shake);
-        toast.error(`Brief impossible pour « ${target.displayName} »`, {
+        toast.error(`Résumé impossible pour « ${target.displayName} »`, {
           description: `${res.error} Rien n'a été perdu.`,
         });
       } else {
