@@ -635,8 +635,42 @@
         return l && !/\d/.test(l) && match(l);
       }) || null;
   };
+  // Le défileur du fil de messages (Teams ne dessine que les messages proches de l'écran).
+  const msgScroller = () => {
+    for (let el = document.querySelector(MSGS); el && el !== document.body; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+    }
+    return null;
+  };
+  // Un message plus ancien que ce que Teams a dessiné : on remonte le fil jusqu'à lui,
+  // comme la lecture de l'historique. Trois remontées sans rien de nouveau : il n'y est pas.
+  const findOlder = async (m) => {
+    const box = msgScroller();
+    if (!box) return null;
+    const end = Date.now() + 15000;
+    for (let stalls = 0; Date.now() < end && !late(); ) {
+      const height = box.scrollHeight;
+      const count = document.querySelectorAll(MSGS).length;
+      box.scrollTop = Math.min(200, height);
+      await sleep(50);
+      box.scrollTop = 0;
+      const grew = await waitFor(() => Boolean(findMessage(m)) || box.scrollHeight !== height ||
+        document.querySelectorAll(MSGS).length !== count, 1500);
+      const found = findMessage(m);
+      if (found) return found;
+      if (grew) stalls = 0;
+      else if (++stalls >= 3) break;
+    }
+    return null;
+  };
+  // Après un geste sur un ancien message, le fil revient en bas : c'est là que Teams montre
+  // le message envoyé, et là que l'envoi est vérifié.
+  const toBottom = () => {
+    const box = msgScroller();
+    if (box) box.scrollTop = box.scrollHeight;
+  };
   const lookup = async (m) => {
-    const found = findMessage(m);
+    const found = findMessage(m) || (await findOlder(m));
     if (!found) return null;
     found.el.scrollIntoView({ block: "nearest" });
     hover(found.el);
@@ -682,6 +716,7 @@
     btn.click();
     const shown = await waitFor(() => quoted(box, target.text), 2500);
     unhover();
+    toBottom();
     if (!shown) return "citation du message non visible dans la zone de saisie";
     return null;
   };
@@ -1022,6 +1057,7 @@
         const again = findMessage(message);
         return Boolean(again && myReactions(again.el).includes(reaction));
       }, 5000);
+      toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
     },
     diagnose: () => ({
