@@ -104,6 +104,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   const [probeError, setProbeError] = useState<string | null>(null);
   const webShown = useRef(false);
+  const waiting = useRef(0);
   const advance = async (n: number) => {
     for (let i = probeDone + 1; i <= n; i++) {
       setProbeDone(i);
@@ -129,7 +130,8 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     }
     if (!webShown.current) {
       webShown.current = true;
-      const err = await teamsWebOpen(true);
+      // Cachée par défaut : elle ne s'affiche que si Teams demande de se connecter.
+      const err = await teamsWebOpen(false);
       if (err) {
         setProbe("fail");
         setProbeError(`Ouverture de Teams impossible : ${err}`);
@@ -145,6 +147,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       if (!live || !res.ok) return;
       const st = res.status;
       const done = !st.relay ? 0 : !st.ready ? 1 : 3;
+      if (st.relay && !st.ready && ++waiting.current === 3) await teamsWebOpen(true);
       if (done > probeDone) await advance(done);
       if (st.ready && live) {
         await trame.selftest();
@@ -282,7 +285,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Connexion à Teams",
-      sub: "Connecte-toi une fois dans la fenêtre Teams de Trame. Elle se cache ensuite toute seule.",
+      sub: "Trame utilise sa propre fenêtre Teams, cachée. Si Teams te demande de te connecter, elle s'affiche une fois.",
       body: (
         <div className="flex w-full flex-col items-center gap-4">
           <GroupList>

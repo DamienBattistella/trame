@@ -263,7 +263,9 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The Teams web window is not restored: the plugin would bring it back visible
+        // at every launch. It stays hidden unless the user asks to see it.
+        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[TEAMS_WEB]).build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
