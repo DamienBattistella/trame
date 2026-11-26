@@ -53,6 +53,8 @@
     ["duration_entry", "menu", '[data-tid="set-availability-duration"]'],
     ["duration_panel", "menu", '[data-tid="me-control-set-availability-update-availability-button"]'],
     ["duration_lists", "menu", '#set-availability-choose-availability-dropdown, #set-availability-clear-availability-after-dropdown'],
+    ["expiry_date", "menu", '[data-tid="me-control-set-availability"] input[aria-haspopup="dialog"]'],
+    ["expiry_time", "menu", '[data-tid="custom-expiry-time-picker"]'],
     ["note_edit", "menu", '[data-tid="me-control-menu-status-message-edit-button"], [data-tid="me-control-set-status-message-button"], [data-tid="me-control-menu-set-status-message"]'],
     ["read_entry", "menu", '[data-tid="change-read-status-menu-item"]'],
     ["mention_list", "menu", '[data-tid="AutocompletePopup-Mentions"]'],
@@ -1094,14 +1096,26 @@
     away: /^(apparaitre absent|appear away|absent|away)/,
     offline: /^(apparaitre hors ligne|appear offline|hors ligne|offline)/,
   };
-  const DURATION_ORDER = ["30m", "1h", "2h", "today", "week"];
+  const DURATION_ORDER = ["30m", "1h", "2h", "today", "week", "custom"];
   const DURATION_WORDS = {
     "30m": /^30 min/,
     "1h": /^1 (heure|hour)/,
     "2h": /^2 (heures|hours)/,
     today: /^(aujourd'hui|aujourd’hui|today)/,
     week: /^(cette semaine|this week)/,
+    custom: /^(personnalise|custom)/,
   };
+  // « Personnalisé » : un champ de date en lecture seule qui ouvre un calendrier (jours
+  // nommés « 26, novembre, 2026 »), et une liste native des heures par demi-heure dont
+  // chaque valeur est l'instant visé en millisecondes, recalculée pour le jour choisi.
+  const AVAIL_DATE = LM.expiry_date;
+  const AVAIL_TIME = LM.expiry_time;
+  const MONTHS = [
+    ["janvier", "january"], ["fevrier", "february"], ["mars", "march"], ["avril", "april"],
+    ["mai", "may"], ["juin", "june"], ["juillet", "july"], ["aout", "august"],
+    ["septembre", "september"], ["octobre", "october"], ["novembre", "november"], ["decembre", "december"],
+  ];
+  const monthOf = (word) => MONTHS.findIndex((names) => names.includes(norm(word)));
   const NOTE = '[data-tid="me-control-status-note-container"]';
   const NOTE_EDIT = LM.note_edit;
   const NOTE_CLEAR = '[data-tid="me-control-menu-status-message-clear-button"]';
@@ -1600,10 +1614,24 @@
     // Un statut pour une durée : « Modifier l'état », « Durée », puis dans ce panneau la
     // liste « Statut » et la liste « Rétablir le statut après », chacune vérifiée par son
     // libellé avant « Terminé ». Au moindre doute, « Précédent » : rien n'est changé.
-    setstatusfor: async ({ choice, duration }) => {
+    // « custom » : jusqu'à date (AAAA-MM-JJ) et time (HH:MM, heure locale), saisis puis
+    // relus dans le panneau. dry : essai à blanc, tout est rempli et vérifié, puis
+    // « Précédent » au lieu de « Terminé ».
+    setstatusfor: async ({ choice, duration, date, time, dry }) => {
       const index = STATUS_ORDER.indexOf(choice);
       const d = DURATION_ORDER.indexOf(duration);
       if (index < 0 || d < 0) return { ok: false, error: "statut ou durée inconnus" };
+      let day = null;
+      let at = null;
+      if (duration === "custom") {
+        const [y, m, dd] = String(date || "").split("-").map(Number);
+        const [hh, mm] = String(time || "").split(":").map(Number);
+        at = new Date(y, m - 1, dd, hh, mm);
+        if (Number.isNaN(at.getTime()) || at.getDate() !== dd || at.getHours() !== hh || at.getMinutes() !== mm)
+          return { ok: false, error: "date ou heure de fin invalide" };
+        if (at.getTime() <= Date.now()) return { ok: false, error: "heure de fin déjà passée" };
+        day = new Date(y, m - 1, dd);
+      }
       if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
       const before = myLabels().join("|");
       const back = async (error) => {
@@ -1621,6 +1649,9 @@
         if (!seen("duration_lists", box && visible(box))) return `liste « ${combo} » introuvable`;
         box.click();
         if (!(await waitFor(() => options().length > i, 2000))) return "choix absents de la liste de Teams";
+        // La liste s'ouvre en glissant : un clic pendant l'animation referme tout le menu
+        // (constaté quand la fenêtre de Teams n'a pas le focus).
+        await sleep(400);
         const opt = options()[i];
         if (!expected.test(norm(label(opt)))) {
           box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
@@ -1628,6 +1659,73 @@
         }
         opt.click();
         if (!(await waitFor(() => expected.test(norm(label(document.getElementById(combo)))), 2000))) return "choix non pris en compte par Teams";
+        return null;
+      };
+      // Le jour dans le calendrier (mois suivant / précédent jusqu'au bon), puis l'heure
+      // dans la liste : l'option dont la valeur est exactement l'instant voulu. Les deux
+      // sont relus dans le panneau ; sinon, la raison.
+      const calendar = () =>
+        Array.from(document.querySelectorAll('[role="dialog"]')).filter(visible).find((x) => x.querySelector('[role="grid"]')) || null;
+      const isDay = (b) => {
+        const [n, month, year] = (b.getAttribute("aria-label") || "").split(",").map((s) => s.trim());
+        return Number(n) === day.getDate() && monthOf(month) === day.getMonth() && Number(year) === day.getFullYear();
+      };
+      const pickDay = async () => {
+        if (!seen("expiry_date", await waitFor(() => firstVisible(AVAIL_DATE), 3000))) return "champ de date introuvable";
+        if (firstVisible(AVAIL_DATE).value === day.toDateString()) return null;
+        firstVisible(AVAIL_DATE).click();
+        if (!(await waitFor(calendar, 2000))) return "calendrier de Teams non ouvert";
+        await sleep(400);
+        const target = day.getFullYear() * 12 + day.getMonth();
+        for (let i = 0; i < 14; i++) {
+          const cal = calendar();
+          if (!cal) return "calendrier de Teams refermé";
+          const btn = Array.from(cal.querySelectorAll('tr:not([aria-hidden="true"]) [role="gridcell"] button')).find(isDay);
+          if (btn) {
+            if (btn.disabled || btn.closest('[aria-disabled="true"]')) return "jour refusé par Teams";
+            btn.click();
+            break;
+          }
+          const head = cal.querySelector('[role="grid"]').getAttribute("aria-label") || "";
+          const [month, year] = norm(head).split(",")[0].split(" ");
+          const shown = Number(year) * 12 + monthOf(month);
+          if (Number.isNaN(shown) || monthOf(month) < 0) return "mois du calendrier illisible";
+          const nav = Array.from(cal.querySelectorAll("button[title]")).find((b) =>
+            (target > shown ? /suivant|next/ : /precedent|previous/).test(norm(b.title))
+          );
+          if (!nav || nav.getAttribute("aria-disabled") === "true") return "mois hors du calendrier de Teams";
+          nav.click();
+          // Le calendrier glisse vers l'autre mois : son titre change tout de suite, mais un
+          // clic pendant l'animation se perd.
+          await waitFor(() => (calendar()?.querySelector('[role="grid"]')?.getAttribute("aria-label") || "") !== head, 1500);
+          await sleep(700);
+        }
+        if (!(await waitFor(() => !calendar() && firstVisible(AVAIL_DATE)?.value === day.toDateString(), 2000)))
+          return "jour non pris en compte par Teams";
+        return null;
+      };
+      const pickTime = async () => {
+        const list = () => firstVisible(AVAIL_TIME);
+        const shows = () => Number(list()?.value) === at.getTime();
+        if (!seen("expiry_time", await waitFor(list, 2000))) return "liste des heures introuvable";
+        const opt = Array.from(list().options).find((o) => Number(o.value) === at.getTime());
+        if (!opt) return `heure ${time} absente de la liste de Teams`;
+        if (!shows()) {
+          // Liste pilotée par React : la valeur passe par le setter natif, puis « change ».
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(list(), opt.value);
+          list().dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        await sleep(300);
+        if (!(await waitFor(shows, 2000))) return "heure non prise en compte par Teams";
+        return null;
+      };
+      const expiry = async () => {
+        const why = (await pickDay()) || (await pickTime());
+        if (why) return why;
+        // Relecture des deux après coup : changer le jour redessine la liste des heures.
+        await sleep(300);
+        if (firstVisible(AVAIL_DATE)?.value !== day.toDateString() || Number(firstVisible(AVAIL_TIME)?.value) !== at.getTime())
+          return "date ou heure de fin changée par Teams";
         return null;
       };
       try {
@@ -1641,11 +1739,24 @@
         }
         durationEntry().click();
         if (!seen("duration_panel", await waitFor(() => firstVisible(AVAIL_DONE), 3000))) return { ok: false, error: "panneau « Durée » non ouvert" };
-        const why = (await pick(AVAIL_STATUS, index, STATUS_WORDS[choice])) || (await pick(AVAIL_AFTER, d, DURATION_WORDS[duration]));
+        const why =
+          (await pick(AVAIL_STATUS, index, STATUS_WORDS[choice])) ||
+          (await pick(AVAIL_AFTER, d, DURATION_WORDS[duration])) ||
+          (day ? await expiry() : null);
         if (why) return back(why);
         if (late()) return back("commande expirée");
         const done = firstVisible(AVAIL_DONE);
         if (!done || done.disabled || done.getAttribute("aria-disabled") === "true") return back("bouton « Terminé » inactif");
+        if (dry) {
+          const shown = {
+            status: label(document.getElementById(AVAIL_STATUS)),
+            after: label(document.getElementById(AVAIL_AFTER)),
+            date: firstVisible(AVAIL_DATE)?.value || "",
+            time: firstVisible(AVAIL_TIME)?.selectedOptions[0]?.text || "",
+          };
+          await back("essai à blanc");
+          return { ok: true, dry: true, shown, back: !firstVisible(AVAIL_DONE) };
+        }
         done.click();
         await waitFor(() => !firstVisible(AVAIL_DONE), 4000);
         await waitFor(() => myLabels().join("|") !== before, 4000);

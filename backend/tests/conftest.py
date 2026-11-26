@@ -79,6 +79,7 @@ def fresh_home(monkeypatch):
     (home / "ENTOURAGE.json").unlink(missing_ok=True)
     (home / "journal.jsonl").unlink(missing_ok=True)
     shutil.rmtree(home / "outbox", ignore_errors=True)
+    (home / "follow_ups.json").unlink(missing_ok=True)
     monkeypatch.setattr(gh, "_gh", lambda args, timeout=20: "")
     monkeypatch.setattr(gh, "_run", _no_process)
     gh._sso_blocked.clear()

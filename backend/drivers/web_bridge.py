@@ -4,6 +4,7 @@ import re
 import queue
 import threading
 import time
+from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
@@ -307,10 +308,17 @@ class WebBridgeDriver(TeamsDriver):
             out["message"] = " ".join(str(res.get("message") or "").split())
         return out
 
-    def set_my_status(self, choice: str, duration: Optional[str] = None) -> Optional[str]:
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
         if choice not in presencemod.CHOICES:
             raise ValueError(f"statut inconnu : {choice}")
-        if duration is not None:
+        if until is not None:
+            if duration is not None or choice == "reset":
+                raise ValueError("heure de fin impossible pour ce statut")
+            # « Personnalisé » : le jour et l'heure locale, saisis puis relus dans le panneau.
+            res = self._rpc("setstatusfor", choice=choice, duration="custom", date=f"{until:%Y-%m-%d}",
+                            time=f"{until:%H:%M}", timeout=30) or {}
+        elif duration is not None:
             if duration not in presencemod.DURATIONS or choice == "reset":
                 raise ValueError(f"durée impossible : {duration}")
             res = self._rpc("setstatusfor", choice=choice, duration=duration, timeout=20) or {}

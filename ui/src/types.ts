@@ -92,6 +92,8 @@ export interface Settings {
     markAutoReplies: boolean;
   };
   brief: { enabled: boolean; lastMessages: number };
+  /** Relances : proposer de relancer une question restée sans réponse depuis delayHours heures ouvrées. */
+  followUps: { enabled: boolean; delayHours: number };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
@@ -104,6 +106,7 @@ export interface SettingsPatch {
   github?: Partial<Settings["github"]>;
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;
+  followUps?: Partial<Settings["followUps"]>;
   telemetry?: Partial<Settings["telemetry"]>;
   mcp?: { enabled?: boolean; regenerateToken?: boolean; allowSend?: boolean };
   teamsWeb?: { enabled?: boolean };

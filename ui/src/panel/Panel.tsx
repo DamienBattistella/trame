@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -221,11 +221,13 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   );
 }
 
-type Section = "brain" | "github" | "safety" | "brief" | "telemetry" | "mcp";
+type Section = "brain" | "github" | "safety" | "brief" | "followUps" | "telemetry" | "mcp";
 type SaveState = "idle" | "saving" | "saved";
 
 const COUNTDOWNS = [0, 3, 5, 10];
 const BRIEF_DEPTHS = [20, 30, 50];
+// Délai avant de proposer une relance, en heures ouvrées.
+const FOLLOW_UP_DELAYS = [4, 24, 48];
 
 /** Libellé de section + pastille d'état d'enregistrement (en cours → coche). */
 function SaveIndicator({ state }: { state: SaveState }) {
@@ -255,22 +257,23 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "safety" | "telemetry" | "mcp" | "advanced";
+type SettingsPane = "general" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", telemetry: "idle", mcp: "idle" });
-  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, telemetry: 0, mcp: 0 });
+  const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle", followUps: "idle", telemetry: "idle", mcp: "idle" });
+  const seq = useRef<Record<Section, number>>({ brain: 0, github: 0, safety: 0, brief: 0, followUps: 0, telemetry: 0, mcp: 0 });
   const timers = useRef<Partial<Record<Section, ReturnType<typeof setTimeout>>>>({});
   const brainCtl = useAnimationControls();
   const githubCtl = useAnimationControls();
   const safetyCtl = useAnimationControls();
   const briefCtl = useAnimationControls();
+  const followUpsCtl = useAnimationControls();
   const telemetryCtl = useAnimationControls();
   const mcpCtl = useAnimationControls();
-  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, telemetry: telemetryCtl, mcp: mcpCtl };
+  const ctl = { brain: brainCtl, github: githubCtl, safety: safetyCtl, brief: briefCtl, followUps: followUpsCtl, telemetry: telemetryCtl, mcp: mcpCtl };
 
   const load = async () => {
     setLoadError(null);
@@ -334,9 +337,10 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
     );
   }
 
-  const { github, safety, brief } = settings;
+  const { github, safety, brief, followUps } = settings;
   const countdowns = Array.from(new Set([...COUNTDOWNS, safety.countdownSeconds])).sort((a, b) => a - b);
   const depths = Array.from(new Set([...BRIEF_DEPTHS, brief.lastMessages])).sort((a, b) => a - b);
+  const delays = Array.from(new Set([...FOLLOW_UP_DELAYS, followUps.delayHours])).sort((a, b) => a - b);
 
   const panes: { id: SettingsPane; label: string; icon: React.ElementType; desc: string; state?: SaveState; body: React.ReactNode }[] = [
     {
@@ -461,6 +465,37 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
           </div>
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
             Depuis une réponse à relire (menu …) ou une conversation. GitHub en lecture seule.
+          </div>
+        </GroupList>
+      </motion.div>
+      ),
+    },
+    {
+      id: "followUps",
+      label: "Relances",
+      icon: BellRing,
+      desc: "Ne plus oublier une question restée sans réponse.",
+      state: save.followUps,
+      body: (
+      <motion.div animate={followUpsCtl}>
+        <GroupList>
+          <ToggleRow
+            label="Proposer des relances"
+            checked={followUps.enabled}
+            onChange={(enabled) => update("followUps", { followUps: { ...followUps, enabled } })}
+          />
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className={cn("text-sm transition-colors", !followUps.enabled && "text-muted-foreground")}>Sans réponse depuis</span>
+            <Segment
+              value={String(followUps.delayHours)}
+              disabled={!followUps.enabled}
+              options={delays.map((n) => ({ value: String(n), label: `${n} h` }))}
+              onChange={(v) => update("followUps", { followUps: { ...followUps, delayHours: Number(v) } })}
+            />
+          </div>
+          <div className="px-4 py-2.5 text-xs text-muted-foreground">
+            Heures ouvrées : le week-end ne compte pas, rien n'est proposé la nuit. Trame s'appuie sur les messages
+            qu'il a déjà lus. La relance reste un brouillon : elle ne part que sur ton clic.
           </div>
         </GroupList>
       </motion.div>

@@ -162,6 +162,19 @@ class AppState(BaseModel):
     # Dernier contrôle des repères de la page Teams web ; None tant qu'il n'a pas tourné
     # (ou que le pilote ne sait pas le faire).
     teams_check: Optional[TeamsCheck] = None
+    # Tes questions restées sans réponse, avec la relance proposée (jamais envoyée seule).
+    follow_ups: list["FollowUp"] = Field(default_factory=list)
+
+
+class FollowUp(BaseModel):
+    """Une relance proposée : ta question restée sans réponse, depuis quand (ISO, heure
+    locale), et le texte proposé, modifiable avant envoi."""
+    id: str
+    thread_id: str
+    conversation: str
+    question: str
+    asked_at: str
+    proposal: str
 
 
 class QueuedSend(BaseModel):
