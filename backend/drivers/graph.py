@@ -13,6 +13,7 @@ import html
 import json
 import re
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Sequence
 
@@ -425,11 +426,40 @@ class GraphDriver:
     def _html(text: str) -> str:
         return "<br>".join(html.escape(line, quote=False) for line in text.split("\n"))
 
+    def _share_with(self, client: GraphClient, chat: str) -> list[str]:
+        """E-mail addresses of the other members, checked before anything is uploaded."""
+        me = self._me_id(client)
+        members = (client.get(f"/chats/{chat}/members") or {}).get("value") or []
+        others = [m for m in members if m.get("userId") != me]
+        emails = [str(m.get("email") or "").strip() for m in others]
+        if not others or not all(emails):
+            raise LookupError("membres de la conversation sans adresse : fichier laissé à la page")
+        return emails
+
+    def _upload(self, client: GraphClient, files: Sequence[Any], emails: list[str]) -> list[dict]:
+        """Each file into OneDrive (Microsoft Teams Chat Files), readable by the chat members."""
+        out = []
+        for f in files:
+            name = urllib.parse.quote(f.name, safe="")
+            item = client.request("PUT", f"/me/drive/root:/Microsoft Teams Chat Files/{name}:/content",
+                                  {"@microsoft.graph.conflictBehavior": "rename"}, raw=f.data,
+                                  content_type=f.mime or "application/octet-stream") or {}
+            etag = re.search(r"\{([0-9A-Fa-f-]{36})\}", str(item.get("eTag") or ""))
+            if not (item.get("id") and item.get("webUrl") and etag):
+                raise SendUncertain(f"« {f.name} » déposé sur OneDrive sans réponse claire")
+            client.post(f"/me/drive/items/{item['id']}/invite", {
+                "recipients": [{"email": e} for e in emails], "roles": ["read"],
+                "requireSignIn": True, "sendInvitation": False})
+            out.append({"id": etag.group(1).lower(), "contentType": "reference", "contentUrl": item["webUrl"],
+                        "name": item.get("name") or f.name})
+        return out
+
     def _post(self, client: GraphClient, thread_id: str, text: str, reply_to: Optional[MessageRef],
-              mentions: Sequence[str]) -> Focus:
+              mentions: Sequence[str], files: Sequence[Any] = ()) -> Focus:
         chat = self._chat_id(client, thread_id)
         content = self._html(text)
         body: dict = {"body": {"contentType": "html", "content": content}}
+        emails = self._share_with(client, chat) if files else []
         if mentions:
             ids = self._member_ids(client, chat, mentions)
             body["mentions"] = []
@@ -451,6 +481,10 @@ class GraphDriver:
                 "messageSender": {"user": {"id": sender.get("id"), "displayName": sender.get("displayName"),
                                            "userIdentityType": "aadUser"}}})}]
             body["body"]["content"] = f'<attachment id="{raw["id"]}"></attachment>' + body["body"]["content"]
+        if files:
+            refs = self._upload(client, files, emails)
+            body["attachments"] = body.get("attachments", []) + refs
+            body["body"]["content"] += "".join(f'<attachment id="{r["id"]}"></attachment>' for r in refs)
         try:
             created = client.post(f"/chats/{chat}/messages", body) or {}
         except GraphError as e:
@@ -469,6 +503,10 @@ class GraphDriver:
         want, _ = convert.body_text(body["body"])
         if not shown or " ".join(shown_text.split()) != " ".join(want.split()):
             raise SendUncertain("message créé mais pas retrouvé tel quel dans la conversation")
+        names = {str(a.get("name") or "") for a in (shown or {}).get("attachments") or [] if a.get("contentType") == "reference"}
+        missing = [r["name"] for r in body.get("attachments", []) if r["contentType"] == "reference" and r["name"] not in names]
+        if missing:
+            raise SendUncertain(f"message visible, pièce jointe non visible ({', '.join(missing)})")
         return Focus(ok=True)
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
@@ -477,12 +515,13 @@ class GraphDriver:
         def page() -> Focus:
             return self._inner.type_focused(thread_id, text, send, restore, reply_to=reply_to,
                                             mentions=mentions, files=files)
-        # Graph sends, it never types into Teams' box (send=False), and files stay on the
-        # page until sharing them with the chat members is done (docs/teams-graph.md).
-        if not send or files or not text.strip():
-            self._note("send", "page", "saisie sans envoi" if not send else "pièce jointe" if files else "texte vide")
+        # Graph sends, it never types into Teams' box (send=False). Files go with a send
+        # only, never with mentions (the page refuses that combination too).
+        if not send or (files and mentions) or not (text.strip() or files):
+            self._note("send", "page", "saisie sans envoi" if not send else "pièce jointe et mention" if files else "texte vide")
             return page()
-        return self._write("send", lambda c: self._post(c, thread_id, text, reply_to, mentions), page, SendUncertain)
+        return self._write("send", lambda c: self._post(c, thread_id, text, reply_to, mentions, files), page,
+                           SendUncertain)
 
     def type_reply(self, thread_id: str, text: str, send: bool, restore: bool = False) -> bool:
         return self.type_focused(thread_id, text, send, restore).ok
