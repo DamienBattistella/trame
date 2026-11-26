@@ -132,6 +132,11 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
 
   // « Réglages » (qui marque l'onboarding comme fait) passe en dernier : un échec avant
   // laisse le wizard à refaire, jamais un panneau sans watchlist.
+  // L'auto-test du démarrage peut dater d'avant l'ouverture de Teams : on le refait à l'accueil.
+  useEffect(() => {
+    if (step === 0 && connected) trame.selftest();
+  }, [step, connected]);
+
   const plan = (): ActivationStep[] => [
     { id: "watchlist", label: `${watched.length} conversation${watched.length > 1 ? "s" : ""} suivie${watched.length > 1 ? "s" : ""}`, status: "idle" },
     ...(soul ? [{ id: "soul" as const, label: `Ta voix (${soul.name})`, status: "idle" as Status }] : []),
@@ -205,7 +210,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
           ) : trame.state.selftestOk ? (
             <><Check className="size-4" /> Microsoft Teams détecté</>
           ) : (
-            <>Teams n'est pas encore ouvert</>
+            <>Teams n'est pas encore repéré</>
           )}
         </motion.div>
       ),
@@ -444,7 +449,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             animate="center"
             exit="exit"
             transition={{ duration: 0.22, ease: "easeOut" }}
-            className="flex max-h-full w-full max-w-md flex-col items-center gap-6 overflow-y-auto pt-12 pb-4 text-center"
+            className="flex max-h-full w-full max-w-2xl flex-col items-center gap-6 overflow-y-auto pt-12 pb-4 text-center"
           >
             <div className="flex flex-col gap-2">
               <h1 className="text-3xl font-semibold tracking-tight text-balance">{s.title}</h1>

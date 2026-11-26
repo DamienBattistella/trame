@@ -275,6 +275,21 @@ def create_app(
         watcher.set_soul(body.content)
         return {"ok": True}
 
+    @app.get("/api/people")
+    def get_people():
+        return {"ok": True, "people": watcher.people_summary().model_dump()}
+
+    @app.post("/api/people")
+    def post_people(body: SoulBody):
+        if not PurePath(body.filename.strip()).name.lower().endswith(".json"):
+            raise ActionError(422, "L'entourage doit être un fichier .json exporté d'Orbite.")
+        return {"ok": True, "people": watcher.set_people(body.content).model_dump()}
+
+    @app.delete("/api/people")
+    def delete_people():
+        watcher.clear_people()
+        return {"ok": True}
+
     @app.post("/api/selftest")
     def selftest():
         try:

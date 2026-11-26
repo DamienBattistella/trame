@@ -20,6 +20,7 @@ export interface DraftItem {
   receivedAt: string;
   mode: Mode;
   usedGithub?: string;
+  senderLabel?: string;
 }
 
 export interface LogItem {
@@ -74,6 +75,13 @@ export interface Brief {
   githubEnabled: boolean;
   github: BriefGithubItem[];
   sources: { messages: number; reposSearched: number };
+}
+
+export interface PeopleSummary {
+  loaded: boolean;
+  count: number;
+  source: string | null;
+  generatedAt: string | null;
 }
 
 export interface ClaudeStatus {

@@ -132,7 +132,7 @@ class SummaryBrain(FakeBrain):
         super().__init__()
         self.summaries: list[str] = []
 
-    def draft(self, soul, thread_summary, incoming, github_context=""):
+    def draft(self, soul, thread_summary, incoming, github_context="", people_context=""):
         self.summaries.append(thread_summary)
         return super().draft(soul, thread_summary, incoming, github_context)
 

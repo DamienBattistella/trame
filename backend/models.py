@@ -41,6 +41,7 @@ class Draft(BaseModel):
     received_at: str
     mode: Mode
     used_github: Optional[str] = None
+    sender_label: Optional[str] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

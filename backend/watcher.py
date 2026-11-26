@@ -9,6 +9,7 @@ from typing import Iterator, Callable, Iterable, Optional
 
 import config as cfgmod
 import safety
+import people as peoplemod
 import settings as settingsmod
 from github import context as gh
 from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
@@ -40,6 +41,7 @@ class Watcher:
         self.brain_factory = brain_factory
         self.cfg = cfgmod.load()
         self.soul = cfgmod.load_soul()
+        self.people = peoplemod.Directory.load()
         self.state = AppState(
             onboarded=bool(self.cfg.get("onboarded", False)),
             brain=self.cfg.get("brain", {}).get("provider", "claude"),
@@ -121,7 +123,7 @@ class Watcher:
         gh_ctx = gh_result[0]
 
         try:
-            proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx)
+            proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary))
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -233,7 +235,7 @@ class Watcher:
                 id=draft_id, thread_id=msg.thread_id, **{"from": msg.sender},
                 surface=msg.surface, incoming=msg.text, proposal=proposal,
                 received_at=msg.received_at, mode=mode,  # type: ignore[arg-type]
-                used_github=gh_ref,
+                used_github=gh_ref, sender_label=self._sender_label(msg.sender),
             ))
             self.state.drafts = drafts
 
@@ -483,6 +485,39 @@ class Watcher:
             self.state.brain = merged.brain
             self.state.onboarded = merged.onboarded
             return merged
+
+    # --- entourage (who's who, exported from Orbite) ---
+    def _people_context(self, msg: IncomingMessage, summary: str) -> str:
+        """Cards of the sender, then of the other people speaking in the thread."""
+        names = [msg.sender] + [line.split(":", 1)[0] for line in summary.splitlines() if ":" in line]
+        return self.people.context(n for n in names if n.strip())
+
+    def _sender_label(self, name: str) -> Optional[str]:
+        p = self.people.find(name)
+        return (peoplemod.Directory.label(p) or None) if p else None
+
+    def people_summary(self) -> peoplemod.PeopleSummary:
+        return self.people.summary()
+
+    def set_people(self, content: str) -> peoplemod.PeopleSummary:
+        if len(content.encode("utf-8")) > peoplemod.MAX_BYTES:
+            raise ActionError(413, "Le fichier d'entourage dépasse 512 Ko.")
+        try:
+            directory = peoplemod.save(content)
+        except ValueError as e:
+            raise ActionError(422, str(e))
+        except OSError as e:
+            raise ActionError(500, f"Enregistrement impossible : {e}")
+        with self._lock:
+            self.people = directory
+        summary = directory.summary()
+        self.log("info", f"Entourage importé : {summary.count} personne(s)")
+        return summary
+
+    def clear_people(self) -> None:
+        with self._lock:
+            self.people = peoplemod.remove()
+        self.log("info", "Entourage retiré")
 
     def set_soul(self, content: str) -> None:
         with self._lock:

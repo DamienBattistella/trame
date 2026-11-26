@@ -29,9 +29,11 @@ class FakeBrain(Brain):
         self.completion = completion
         self.calls: list[str] = []
         self.prompts: list[str] = []
+        self.people: list[str] = []
 
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         self.calls.append(incoming)
+        self.people.append(people_context)
         return self.reply
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:

@@ -8,7 +8,7 @@ from brain.base import Brain
 class MockBrain(Brain):
     """Deterministic offline brain (TRAME_BRAIN=mock): no CLI call, no subscription used."""
 
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         low = incoming.lower()
         if "#" in incoming or "pr" in low.split():
             return "Je regarde la PR dans la matinée et je te fais un retour en commentaire."

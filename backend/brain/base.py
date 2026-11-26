@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 class Brain(ABC):
     @abstractmethod
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         """Return the reply text only, in the persona's voice. No preamble, no quotes."""
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
@@ -12,12 +12,17 @@ class Brain(ABC):
         raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
 
 
-def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str) -> str:
+def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "") -> str:
     parts = [
         soul.strip(),
         "\nTu rédiges UNIQUEMENT la réponse à envoyer, dans la voix définie ci-dessus.",
         "Pas de préambule, pas de guillemets, juste le texte du message.",
     ]
+    if people_context:
+        parts.append(
+            "\nQui sont tes interlocuteurs (adapte le ton, le tutoiement et le niveau de détail) :\n"
+            f"{people_context}"
+        )
     if thread_summary:
         parts.append(f"\nContexte du fil (derniers messages) :\n{thread_summary}")
     if github_context:

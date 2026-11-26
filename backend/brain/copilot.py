@@ -17,8 +17,8 @@ class CopilotBrain(Brain):
         self.args = list(args) if args and "suggest" not in args else list(DEFAULT_ARGS)
         self.timeout = timeout
 
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
-        return self.complete(build_prompt(soul, thread_summary, incoming, github_context))
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
+        return self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context))
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         proc = subprocess.run(

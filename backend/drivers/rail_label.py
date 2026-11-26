@@ -1,0 +1,79 @@
+from __future__ import annotations
+import re
+from dataclasses import dataclass
+from typing import Optional
+
+from models import Surface
+
+# Teams v2 exposes each chat-list item as one accessibility label, e.g.
+#   "Chat Bertrand GAUTHIER Offline Last message voir ça demain 25/11"
+#   "Group chat Projet FHIR Has pinned messages Last message Lucas: ok 10:02"
+#   "Chat Damien Battistella (You) You: test 04:49"
+# The display name sits between the kind prefix and the first status / preview marker.
+
+_PREFIXES: list[tuple[str, Surface]] = [
+    ("group chat ", Surface.group),
+    ("meeting chat ", Surface.group),
+    ("conversation de groupe ", Surface.group),
+    ("conversation de réunion ", Surface.group),
+    ("conversation de groupe ", Surface.group),
+    ("channel ", Surface.channel),
+    ("canal ", Surface.channel),
+    ("chat ", Surface.dm),
+    ("conversation ", Surface.dm),
+]
+
+_MARKERS = [
+    # presence
+    "Available", "Away", "Busy", "Offline", "Do not disturb", "Be right back", "Appear away",
+    "Out of office", "In a call", "In a meeting", "Presenting", "Focusing", "Status unknown",
+    "Disponible", "Absent", "Occupé", "Hors connexion", "Ne pas déranger", "De retour bientôt",
+    "Absent du bureau", "En communication", "En réunion", "En présentation", "Statut inconnu",
+    # flags and preview
+    "Has pinned messages", "Pinned", "Muted", "Unread", "Has unread messages", "Draft",
+    "Contient des messages épinglés", "Épinglé", "Muet", "Non lu", "Messages non lus", "Brouillon",
+    "Last message", "Dernier message", "You:", "Vous :", "Vous:",
+]
+_MARKER_RE = re.compile(r"\s(?:" + "|".join(re.escape(m) for m in sorted(_MARKERS, key=len, reverse=True)) + r")(?=\s|$)")
+_UNREAD_RE = re.compile(r"\b(?:unread|non lus?)\b", re.IGNORECASE)
+_PREVIEW_RE = re.compile(r"\b(?:Last message|Dernier message)\s+(.*)$")
+_TRAILING_TIME_RE = re.compile(r"\s+(?:\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|yesterday|hier|[A-Z][a-z]{2,8})\s*$")
+_SELF_RE = re.compile(r"\s*\((?:You|Vous|Moi)\)\s*$")
+
+
+@dataclass
+class RailLabel:
+    name: str
+    surface: Surface
+    unread: bool
+    is_self: bool
+    preview_sender: Optional[str]
+    preview: Optional[str]
+
+
+def parse(label: str) -> RailLabel:
+    text = " ".join((label or "").split())
+    surface = Surface.dm
+    low = text.lower()
+    for prefix, kind in _PREFIXES:
+        if low.startswith(prefix):
+            text, surface = text[len(prefix):], kind
+            break
+    m = _MARKER_RE.search(text)
+    name, rest = (text[: m.start()], text[m.start():]) if m else (text, "")
+    is_self = bool(_SELF_RE.search(name))
+    name = _SELF_RE.sub("", name).strip() or text.strip()
+
+    preview_sender, preview = None, None
+    p = _PREVIEW_RE.search(rest)
+    if p:
+        body = _TRAILING_TIME_RE.sub("", p.group(1)).strip()
+        who, sep, said = body.partition(": ")
+        if sep and len(who) <= 60 and " " not in who.strip(" ").replace(" ", "", 2):
+            preview_sender, preview = who.strip(), said.strip()
+        elif sep and who.strip() in ("You", "Vous"):
+            preview_sender, preview = "You", said.strip()
+        else:
+            preview_sender, preview = (name if surface == Surface.dm else None), body
+    return RailLabel(name=name, surface=surface, unread=bool(_UNREAD_RE.search(rest)), is_self=is_self,
+                     preview_sender=preview_sender, preview=preview or None)

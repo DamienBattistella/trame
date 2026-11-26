@@ -48,6 +48,7 @@ export const mockDrafts: DraftItem[] = [
     id: "d1",
     threadId: "19:bb22@thread.v2",
     from: "Lucas Bernard",
+    senderLabel: "Développeur interop · Hexagone",
     surface: "dm",
     incoming: "Tu peux relire la PR #214 sur le mapping HL7 ? Je bloque sur le segment OBX.",
     proposal:
@@ -60,6 +61,7 @@ export const mockDrafts: DraftItem[] = [
     id: "d2",
     threadId: "19:cc33@thread.v2",
     from: "Sofia Marino",
+    senderLabel: "Cheffe de projet · Interop",
     surface: "group",
     incoming: "@Damien dispo pour un point interop demain 10h ?",
     proposal: "Ça marche pour moi demain 10h, j'envoie l'invit.",

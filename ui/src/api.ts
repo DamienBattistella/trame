@@ -6,6 +6,7 @@ import {
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
+  PeopleSummary,
   LogItem,
   Mode,
   Settings,
@@ -61,6 +62,7 @@ function mapDraft(d: any): DraftItem {
     receivedAt: d.received_at,
     mode: d.mode,
     usedGithub: d.used_github ?? undefined,
+    senderLabel: d.sender_label ?? undefined,
   };
 }
 function mapState(s: any): TrameState {
@@ -118,6 +120,16 @@ function mapBrief(b: any): Brief {
     sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
   };
 }
+function mapPeople(p: any): PeopleSummary {
+  return {
+    loaded: Boolean(p?.loaded),
+    count: Number(p?.count ?? 0),
+    source: typeof p?.source === "string" ? p.source : null,
+    generatedAt: typeof p?.generated_at === "string" ? p.generated_at : null,
+  };
+}
+let demoPeople: PeopleSummary = { loaded: false, count: 0, source: null, generatedAt: null };
+
 function mapClaudeStatus(c: any): ClaudeStatus {
   return {
     installed: Boolean(c?.installed),
@@ -467,6 +479,42 @@ export function useTrame() {
     return { ok: true, count: res.count };
   };
 
+  /** Entourage (ENTOURAGE.json exporté d'Orbite) : qui est qui, pour adapter les réponses. */
+  const getPeople = async (): Promise<Result<{ people: PeopleSummary }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, people: { ...demoPeople } };
+    }
+    const res = await request<{ people: any }>("GET", "/api/people");
+    if (!res.ok) return res;
+    return { ok: true, people: mapPeople(res.people) };
+  };
+  const uploadPeople = async (filename: string, content: string): Promise<Result<{ people: PeopleSummary }>> => {
+    if (!/\.json$/i.test(filename)) return { ok: false, error: "Le fichier doit être un .json exporté d'Orbite." };
+    if (new Blob([content]).size > 512 * 1024) return { ok: false, error: "Le fichier dépasse 512 Ko." };
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(400);
+      try {
+        const n = (JSON.parse(content)?.people ?? []).length;
+        demoPeople = { loaded: true, count: n, source: "Orbite", generatedAt: new Date().toISOString() };
+      } catch {
+        return { ok: false, error: "Fichier illisible : JSON invalide." };
+      }
+      return { ok: true, people: { ...demoPeople } };
+    }
+    const res = await request<{ people: any }>("POST", "/api/people", { filename, content });
+    return res.ok ? { ok: true, people: mapPeople(res.people) } : res;
+  };
+  const removePeople = async (): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      demoPeople = { loaded: false, count: 0, source: null, generatedAt: null };
+      return { ok: true };
+    }
+    return request("DELETE", "/api/people");
+  };
+
   const uploadSoul = async (filename: string, content: string): Promise<Result> => {
     if (!/\.(md|txt)$/i.test(filename)) return { ok: false, error: "Seuls les fichiers .md ou .txt sont acceptés." };
     if (new Blob([content]).size > SOUL_MAX_BYTES) return { ok: false, error: "Le fichier dépasse 64 Ko." };
@@ -644,6 +692,9 @@ export function useTrame() {
     cancelGithubLogin,
     saveWatchlist,
     uploadSoul,
+    getPeople,
+    uploadPeople,
+    removePeople,
     selftest,
     toggleWatch,
     setWatchMany,

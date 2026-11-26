@@ -21,6 +21,7 @@ const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ d
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GithubConnect } from "@/components/GithubConnect";
 import { ClaudeConnect } from "@/components/ClaudeConnect";
+import { EntourageSection } from "@/components/EntourageSection";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -335,9 +336,12 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
       >
         <header className="flex items-center gap-3">
           <InitialsAvatar name={d.from} className="size-8" />
-          <div className="flex min-w-0 flex-1 items-baseline gap-2">
-            <span className="truncate font-medium">{d.from}</span>
-            {place && <span className="truncate text-sm text-muted-foreground">dans {place}</span>}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate font-medium">{d.from}</span>
+              {place && <span className="truncate text-sm text-muted-foreground">dans {place}</span>}
+            </div>
+            {d.senderLabel && <span className="truncate text-xs text-muted-foreground">{d.senderLabel}</span>}
           </div>
           <span className="shrink-0 text-xs text-muted-foreground">{d.receivedAt}</span>
           <DropdownMenu>
@@ -657,6 +661,8 @@ function SettingsView({ trame }: { trame: Trame }) {
           )}
         </div>
       </motion.div>
+
+      <EntourageSection trame={trame} />
 
       <div>
         <SectionLabel>Application</SectionLabel>

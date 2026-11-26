@@ -22,8 +22,8 @@ class ClaudeBrain(Brain):
         self.args = base + [a for a in HARDENING if a not in base or a == ""]
         self.timeout = timeout
 
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "") -> str:
-        return self.complete(build_prompt(soul, thread_summary, incoming, github_context))
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
+        return self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context))
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         proc = subprocess.run(

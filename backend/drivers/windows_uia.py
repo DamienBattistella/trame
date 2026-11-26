@@ -3,6 +3,7 @@ import time
 from typing import Callable, Iterable, Optional
 from models import IncomingMessage, Surface, WatchEntity
 from drivers.base import TeamsDriver
+from drivers import rail_label
 
 # Real driver — Windows only. Imported lazily so the backend runs on any OS with
 # the mock. Teams v2 is a WebView2 (Chromium) app: the UIA tree is the web DOM
@@ -66,8 +67,14 @@ class WindowsUIADriver(TeamsDriver):
         return out
 
     @staticmethod
-    def _display_name_of(item) -> str:
-        return (item.Name or "").strip()  # A CALER: Name may carry the last-message preview.
+    def _label_of(item) -> "rail_label.RailLabel":
+        return rail_label.parse(item.Name or "")
+
+    @classmethod
+    def _display_name_of(cls, item) -> str:
+        # The item label also carries presence and the last message: keep the name only,
+        # so the name-based id stays stable when someone goes from Away to Offline.
+        return cls._label_of(item).name
 
     def _thread_id_of(self, item) -> str:
         # Teams rail DOM id is "chat-list-item_19:...@thread.v2"; Chromium usually
@@ -82,10 +89,10 @@ class WindowsUIADriver(TeamsDriver):
         if rail is None:
             return out
         for item in self._rail_items(rail):
-            name = self._display_name_of(item)
+            label = self._label_of(item)
             thread_id = self._thread_id_of(item)
-            self._names[thread_id] = name
-            out.append(WatchEntity(thread_id=thread_id, display_name=name, surface=Surface.dm))
+            self._names[thread_id] = label.name
+            out.append(WatchEntity(thread_id=thread_id, display_name=label.name, surface=label.surface))
         return out
 
     def _rail_item_for(self, rail, thread_id: str):
@@ -258,11 +265,15 @@ class WindowsUIADriver(TeamsDriver):
         return True
 
     def _is_unread(self, item) -> bool:
-        name = (item.Name or "").lower()
-        return "non lu" in name or "unread" in name  # A CALER: real unread badge node.
+        return self._label_of(item).unread
 
     def _rail_preview(self, item) -> Optional[tuple[str, str]]:
-        return None  # A CALER: (sender, last message) read from the rail item without opening it.
+        """(sender, last message) read from the rail label, without opening the chat.
+        None when the last message is the user's own."""
+        label = self._label_of(item)
+        if not label.preview or label.preview_sender in (None, "You"):
+            return None
+        return label.preview_sender, label.preview
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
         wanted = set(thread_ids) if thread_ids is not None else None
@@ -279,7 +290,8 @@ class WindowsUIADriver(TeamsDriver):
                 if preview is None:
                     continue
                 sender, text = preview
-                out.append(IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at="", surface=Surface.dm))
+                out.append(IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at="",
+                                           surface=self._label_of(item).surface))
             return out
         except Exception:
             return []
