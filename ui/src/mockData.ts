@@ -1,4 +1,4 @@
-import { Brief, BriefGithubItem, WatchEntity, DraftItem, LogItem } from "./types";
+import { Brief, BriefGithubItem, WatchEntity, DraftItem, LogItem, Presence } from "./types";
 
 const TIMES = ["04:49", "04:12", "Hier", "25/11", "25/11", "24/11", "24/11", "22/11", "21/11", "20/11"];
 
@@ -10,7 +10,20 @@ export const mockConversations: WatchEntity[] = withRecency([
   { threadId: "19:ee55@thread.v2", displayName: "Chiara Rossi", surface: "dm", watch: false, mode: "draft", namedPeople: [] },
   { threadId: "19:ff66@thread.v2", displayName: "Projet FHIR Passerelle", surface: "group", watch: true, mode: "draft", namedPeople: ["Lucas Bernard"] },
   ...extraConversations(),
-]);
+]).map(withPresence);
+
+/** Démo : un statut Teams varié pour chaque conversation privée, quelques-unes sans
+ *  statut connu (comme quand Teams ne le dit pas). */
+function withPresence(c: WatchEntity, i: number): WatchEntity {
+  if (c.surface !== "dm") return c;
+  const fixed: Record<string, Presence> = {
+    "19:aa11@thread.v2": "available",
+    "19:bb22@thread.v2": "in_meeting",
+    "19:ee55@thread.v2": "away",
+  };
+  const cycle: (Presence | null)[] = ["available", "busy", "offline", "dnd", "brb", "in_call", null, "ooo", "presenting", "available", "offline"];
+  return { ...c, presence: fixed[c.threadId] ?? cycle[i % cycle.length] };
+}
 
 /** Démo : ordre et heures façon Teams, deux conversations non lues. */
 function withRecency(list: WatchEntity[]): WatchEntity[] {

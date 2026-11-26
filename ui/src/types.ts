@@ -1,5 +1,7 @@
 export type Surface = "dm" | "group" | "channel";
 export type Mode = "draft" | "auto";
+/** Présence Teams de la personne d'une conversation privée. */
+export type Presence = "available" | "busy" | "in_call" | "in_meeting" | "presenting" | "dnd" | "brb" | "away" | "ooo" | "offline";
 
 export interface WatchEntity {
   threadId: string;
@@ -13,6 +15,8 @@ export interface WatchEntity {
   /** Heure du dernier message telle que Teams l'affiche (« 04:49 », « 25/11 »). */
   lastActivity?: string | null;
   unread?: boolean;
+  /** Statut lu dans Teams (conversation privée seulement) ; absent quand Teams ne le dit pas. */
+  presence?: Presence | null;
 }
 
 export interface DraftItem {

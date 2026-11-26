@@ -1,5 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Optional
@@ -83,6 +84,27 @@ class TeamsDriver(ABC):
         """Bring Teams to the front on this conversation, for the user to read it there.
         Nothing is typed, so no strict confirmation is needed. False if not found."""
         return bool(self.open_thread(thread_id))
+
+    # --- presence ---
+    PRESENCE_TTL = 90.0
+    """A status read longer ago than this is dropped: Teams stopped saying (window
+    closed, relay gone), and no dot beats a stale one."""
+
+    def _note_presence(self, thread_id: str, value: Optional[str]) -> None:
+        """Record what Teams shows for thread_id right now (None: nothing recognised)."""
+        cache = self.__dict__.setdefault("_presence_cache", {})
+        if value:
+            cache[thread_id] = (time.monotonic(), value)
+        else:
+            cache.pop(thread_id, None)
+
+    def presence(self) -> dict[str, str]:
+        """Presence of the people of 1:1 chats, by thread id, as last seen in the chat
+        list the driver already polls (no extra reading of Teams). Empty when the
+        driver cannot tell: the UI then shows no status at all."""
+        cache = self.__dict__.get("_presence_cache", {})
+        now = time.monotonic()
+        return {tid: value for tid, (at, value) in list(cache.items()) if now - at <= self.PRESENCE_TTL}
 
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         """Calibration report (structure only, no message text)."""

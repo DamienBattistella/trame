@@ -11,11 +11,12 @@ from typing import Iterator, Callable, Iterable, Optional
 import config as cfgmod
 import safety
 import people as peoplemod
+import presence as presencemod
 import telemetry
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
-from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, WatchEntity
+from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, Notice, Surface, WatchEntity
 from drivers.base import Focus, SendUncertain, TeamsDriver
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
@@ -112,12 +113,35 @@ class Watcher:
             self.log("warn", self.telemetry_error)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        threading.Thread(target=self._presence_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
 
     def _run(self) -> None:
         self.driver.watch(self._on_message, self._stop.is_set)
+
+    PRESENCE_REFRESH = 20.0
+
+    def _presence_loop(self) -> None:
+        """Copy the drivers' presence onto the conversations every PRESENCE_REFRESH s.
+        The drivers read it from the chat list they already poll: this never asks
+        Teams anything more."""
+        while True:
+            self.apply_presence()
+            if self._stop.wait(self.PRESENCE_REFRESH):
+                return
+
+    def apply_presence(self) -> None:
+        try:
+            seen = self.driver.presence()
+        except Exception:
+            seen = {}
+        with self._lock:
+            for w in self.state.watchlist:
+                value = seen.get(w.thread_id) if w.surface == Surface.dm and not w.is_self else None
+                if w.presence != value:
+                    w.presence = value
 
     # --- core reaction ---
     MAX_NOTICES = 20
@@ -194,7 +218,7 @@ class Watcher:
         try:
             with telemetry.span("brain.draft", provider=self.state.brain, history_chars=len(summary),
                                 github=bool(gh_ctx)):
-                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary))
+                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary, entity))
         except Exception as e:
             self.log("warn", f"Rédaction impossible: {e}")
             return None
@@ -426,7 +450,7 @@ class Watcher:
         last = theirs[-1]
         summary = "\n".join(f"{m.sender}: {m.text}" for m in msgs[:-1])
         try:
-            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary))
+            reply = self.brain.draft(self.soul, summary, last.text, "", self._people_context(last, summary, entity))
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -552,7 +576,7 @@ class Watcher:
     def _persist_watchlist(self) -> None:
         with self._lock:
             cfg = dict(self.cfg)
-            cfg["watchlist"] = [json.loads(w.model_dump_json(exclude={"rank", "last_activity", "unread", "is_self", "own_preview"}))
+            cfg["watchlist"] = [json.loads(w.model_dump_json(exclude={"rank", "last_activity", "unread", "is_self", "own_preview", "presence"}))
                                 for w in self.state.watchlist]
             self.cfg = cfg
             try:
@@ -689,10 +713,13 @@ class Watcher:
             return merged
 
     # --- entourage (who's who, exported from Orbite) ---
-    def _people_context(self, msg: IncomingMessage, summary: str) -> str:
-        """Cards of the sender, then of the other people speaking in the thread."""
+    def _people_context(self, msg: IncomingMessage, summary: str, entity: Optional[WatchEntity] = None) -> str:
+        """Cards of the sender, then of the other people speaking in the thread; plus,
+        in a 1:1 chat, a word on the sender being in a meeting (shorter reply)."""
         names = [msg.sender] + [line.split(":", 1)[0] for line in summary.splitlines() if ":" in line]
-        return self.people.context(n for n in names if n.strip())
+        cards = self.people.context(n for n in names if n.strip())
+        hint = presencemod.brain_hint(msg.sender, entity.presence) if entity and entity.surface == Surface.dm else ""
+        return "\n".join(p for p in (cards, hint) if p)
 
     def _sender_label(self, name: str) -> Optional[str]:
         p = self.people.find(name)
