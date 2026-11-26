@@ -14,7 +14,16 @@ _SEED = [
     WatchEntity(thread_id="19:cc33@thread.v2", display_name="Équipe Interop", surface=Surface.group, watch=True, mode="draft", named_people=["Sofia Marino"]),
     WatchEntity(thread_id="19:dd44@thread.v2", display_name="#prod-incidents", surface=Surface.channel, watch=False, mode="draft"),
     WatchEntity(thread_id="19:ee55@thread.v2", display_name="Chiara Rossi", surface=Surface.dm, watch=False, mode="draft"),
+    WatchEntity(thread_id="19:meeting_ff66@thread.v2", display_name="Point interop hebdo", surface=Surface.group, watch=False, mode="draft"),
 ]
+
+# Conversations de réunion : le lien de la réunion, et si elle est en cours.
+_MEETINGS = {
+    "19:meeting_ff66@thread.v2": {
+        "url": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_ff66%40thread.v2/0?context=%7b%22Tid%22%3a%22demo%22%7d",
+        "live": True,
+    },
+}
 
 
 def _say(line: str) -> None:
@@ -41,6 +50,10 @@ _UNREAD = {
 }
 
 _HISTORY: dict[str, list[tuple[str, str, str]]] = {
+    "19:meeting_ff66@thread.v2": [
+        ("09:58", "Sofia Marino", "Je lance la réunion, on commence par le point FHIR."),
+        ("10:01", "Lucas Bernard", "J'arrive dans deux minutes."),
+    ],
     "19:aa11@thread.v2": [
         ("08:52", "Sofia Marino", "Salut Damien, la CI est rouge sur main depuis ce matin."),
         ("08:54", "Damien Battistella", "Je regarde. C'est le job de tests d'intégration HL7 ?"),
@@ -236,6 +249,7 @@ class MockTeamsDriver(TeamsDriver):
         return False
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
+        self._note_meeting(thread_id, _MEETINGS.get(thread_id))
         surface = next((c.surface for c in self._convs if c.thread_id == thread_id), Surface.dm)
         history = self._thread(thread_id)[-last_n:] if last_n > 0 else []
         return [

@@ -48,6 +48,11 @@ NOT_WATCHED = {
     "search-message-card": "résultats de recherche : aucun quand rien ne correspond",
     "message-app-card-header": "dans les résultats de recherche",
     "86fcd49b-61a2-4701-b771-54728cd291fb": "dans chat_app",
+    # Lien de la réunion d'une conversation de réunion : rien d'autre dans la page ne dit
+    # qu'une conversation en est une, le contrôle ne saurait pas quand les exiger.
+    "chat-join-button": "seulement dans une conversation de réunion",
+    "entity-header-toolbar": "lu pour le lien de réunion, absent ou présent selon la conversation",
+    "chat-meeting-details": "seulement dans une conversation de réunion",
 }
 
 
