@@ -180,6 +180,24 @@ export interface ThreadMessage {
   seen?: boolean | null;
   /** Message supprimé : Teams n'en montre plus que « Ce message a été supprimé. » */
   deleted?: boolean;
+  /** Liens du texte dont le texte n'est pas l'adresse (« [ALL-141] Recherche identité - Jira »). */
+  links?: MessageLink[];
+  /** Cartes d'aperçu sous le message (Jira, GitHub, un site), résumées. */
+  cards?: LinkCard[];
+}
+
+/** Un lien du texte d'un message : son texte tel qu'affiché, son adresse (http/https). */
+export interface MessageLink {
+  text: string;
+  url: string;
+}
+
+/** Une carte d'aperçu résumée : source, titre, adresse (peut manquer), quelques champs. */
+export interface LinkCard {
+  source: string;
+  title: string;
+  url: string;
+  fields: string[];
 }
 
 /** Réunion d'une conversation de réunion : son lien (ouvert dans Teams) et si elle est en cours. */
@@ -211,6 +229,7 @@ export interface MessageHit {
    *  Teams a trouvé le message sans ces mots exacts (formes voisines). */
   excerpt: string;
   match: [number, number] | null;
+  links?: MessageLink[];
 }
 
 /** Jusqu'où va la recherche : messages lus par le moteur depuis son démarrage. */

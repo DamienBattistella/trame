@@ -1,4 +1,4 @@
-import { siClaude, siGithub, siGithubcopilot } from "simple-icons";
+import { siClaude, siGithub, siGithubcopilot, siJira } from "simple-icons";
 
 type Props = { className?: string };
 
@@ -20,6 +20,10 @@ export const CopilotLogo = ({ className }: Props) => (
 
 export const GithubLogo = ({ className }: Props) => (
   <Mark path={siGithub.path} title={siGithub.title} className={className} />
+);
+
+export const JiraLogo = ({ className }: Props) => (
+  <Mark path={siJira.path} title={siJira.title} color={`#${siJira.hex}`} className={className} />
 );
 
 /** Marque Microsoft Teams simplifiée (simple-icons ne la fournit plus) : carré violet, T blanc, deux têtes. */

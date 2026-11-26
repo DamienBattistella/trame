@@ -792,6 +792,163 @@
     return null;
   };
 
+  // --- Corps d'un message : texte, liens et cartes d'aperçu (lecture seule) ---
+  // Le texte d'un lien Teams (« [ALL-141] Recherche identité - Jira ») n'est pas son adresse,
+  // et un aperçu (carte Jira, aperçu d'un site) mêle titre, libellés et boutons. Lus par
+  // innerText, les deux devenaient du texte bruité. Ici : le texte du corps sans les cartes ni
+  // les boutons, ses liens (texte et adresse http(s)) et, par carte, un résumé (source,
+  // titre, adresse, quelques champs). N'utilise que nodeType / tagName / childNodes /
+  // getAttribute : ui/tests/messageParts.test.ts l'exécute tel quel sur des fragments relevés.
+  // >>> message-parts
+  const messageParts = (() => {
+    const BLOCK = new Set(["P", "DIV", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "TABLE", "TR", "SECTION", "ARTICLE", "HEADER", "FOOTER", "FIGURE"]);
+    const SKIP = new Set(["SCRIPT", "STYLE", "BUTTON", "SVG", "IMG", "TEMPLATE", "NOSCRIPT", "VIDEO", "AUDIO", "CANVAS"]);
+    // Pas role=button : une mention (@quelqu'un) en est un, dans le texte du message.
+    const SKIP_ROLES = new Set(["toolbar", "progressbar", "menu"]);
+    const TRACKING = /^(atlOrigin|utm_\w+)$/i;
+    const attr = (el, k) => (el && el.getAttribute && el.getAttribute(k)) || "";
+    const tag = (el) => String(el.tagName || "").toUpperCase();
+    const one = (s) => String(s || "").replace(/[\u2060\u200b]/g, "").replace(/\s+/g, " ").trim();
+    const elements = (el) => Array.from(el.childNodes || []).filter((n) => n.nodeType === 1);
+    const hasClass = (el, c) => ` ${attr(el, "class")} `.includes(` ${c} `);
+    // Éléments les plus hauts qui répondent au test (on ne descend pas dans un élément trouvé).
+    const find = (el, test, out = []) => {
+      for (const c of elements(el)) {
+        if (test(c)) out.push(c);
+        else find(c, test, out);
+      }
+      return out;
+    };
+    const first = (el, test) => find(el, test)[0] || null;
+    const isPreview = (el) => attr(el, "data-tid") === "url-preview";
+    const isAppCard = (el) => attr(el, "data-testid") === "componentUXWrapperTestId" || attr(el, "data-tid") === "adaptive-card";
+    const isCard = (el) => isAppCard(el) || isPreview(el) || (tag(el) === "A" && Boolean(first(el, isPreview)));
+    // Adresse ouvrable : http(s) seulement ; un lien « Safe Links » d'Outlook donne l'adresse
+    // qu'il protège ; les paramètres de suivi (atlOrigin, utm_*) sont retirés.
+    const safeUrl = (href) => {
+      try {
+        const u = new URL(String(href || "").trim());
+        if (/(^|\.)safelinks\.protection\.outlook\.com$/i.test(u.hostname) && u.searchParams.get("url")) return safeUrl(u.searchParams.get("url"));
+        if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname || u.username || u.password) return "";
+        const drop = Array.from(u.searchParams.keys()).filter((k) => TRACKING.test(k));
+        if (!drop.length) return String(href).trim();
+        for (const k of drop) u.searchParams.delete(k);
+        return u.href;
+      } catch {
+        return "";
+      }
+    };
+    // Dans la page, l'affichage réel décide (Teams met en bloc des <span> par CSS, comme
+    // l'auteur et la date d'une citation) ; hors page (tests), la balise.
+    const display = (el) => {
+      if (typeof getComputedStyle !== "function" || !el.isConnected) return BLOCK.has(tag(el)) ? "block" : "inline";
+      return getComputedStyle(el).display || "inline";
+    };
+    // Texte tel qu'affiché : blocs sur leur ligne, espaces repliés (sauf dans <pre>), sans
+    // boutons, barres d'outils, images, éléments masqués ni cartes.
+    const textOf = (root) => {
+      let out = "";
+      const walk = (n, pre) => {
+        if (n.nodeType === 3) {
+          let t = String(n.data || "");
+          if (!pre) {
+            t = t.replace(/[ \t\r\n\f]+/g, " ");
+            if (!out || out.endsWith("\n") || out.endsWith(" ")) t = t.replace(/^ /, "");
+          }
+          out += t;
+          return;
+        }
+        if (n.nodeType !== 1) return;
+        const t = tag(n);
+        if (SKIP.has(t) || SKIP_ROLES.has(attr(n, "role")) || isCard(n)) return;
+        if (t === "BR") {
+          out += "\n";
+          return;
+        }
+        const d = display(n);
+        if (d === "none") return;
+        const cell = d === "table-cell" || t === "TD" || t === "TH";
+        const block = !cell && !d.startsWith("inline") && d !== "contents";
+        if (block && out && !out.endsWith("\n")) out += "\n";
+        for (const c of Array.from(n.childNodes || [])) walk(c, pre || t === "PRE");
+        if (block && !out.endsWith("\n")) out += "\n";
+        else if (cell && !out.endsWith(" ")) out += " ";
+      };
+      walk(root, false);
+      return out.replace(/\u00a0/g, " ").replace(/[\u2060\u200b]/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+    };
+    // Liens du corps (hors cartes) : texte affiché et adresse, sans doublon.
+    const linksOf = (root) => {
+      const out = [];
+      const seen = new Set();
+      for (const a of find(root, (el) => isCard(el) || (tag(el) === "A" && attr(el, "href")))) {
+        if (isCard(a)) continue;
+        const url = safeUrl(attr(a, "href"));
+        const text = one(textOf(a)) || url;
+        if (!url || seen.has(`${text}\n${url}`)) continue;
+        seen.add(`${text}\n${url}`);
+        out.push({ text: text.slice(0, 300), url });
+      }
+      return out.slice(0, 20);
+    };
+    const sourceOf = (url, fallback = "") => {
+      try {
+        const h = new URL(url).hostname.replace(/^www\./, "");
+        if (/(^|\.)atlassian\.net$/.test(h)) return "Jira";
+        if (/(^|\.)github\.(com|io)$/.test(h)) return "GitHub";
+        if (/(^|\.)gitlab\./.test(h)) return "GitLab";
+        return fallback || h;
+      } catch {
+        return fallback;
+      }
+    };
+    const shortUrl = (url) => url.replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "").replace(/\/$/, "");
+    // Aperçu d'un site : lien autour de data-tid=url-preview, son corps donne titre,
+    // description et domaine. Seuls le titre et l'adresse sont gardés.
+    const previewCard = (el) => {
+      const a = tag(el) === "A" ? el : first(el, (x) => tag(x) === "A" && attr(x, "href"));
+      const url = safeUrl(attr(a, "href"));
+      const body = first(el, (x) => attr(x, "data-tid") === "url-preview-body");
+      const parts = body ? elements(body).map((x) => one(textOf(x))).filter(Boolean) : [];
+      const site = parts.length > 1 ? parts[parts.length - 1] : "";
+      const source = sourceOf(url, site);
+      let title = parts[0] || "";
+      if (!title || title.toLowerCase() === source.toLowerCase()) title = url ? shortUrl(url) : title;
+      return { source, title, url, fields: [] };
+    };
+    // Carte d'application (Jira…) : en-tête (source), puis la carte adaptative : son premier
+    // lien est le titre, ses blocs de texte des champs (assignée, priorité, état). Les
+    // boutons (Comment, Edit, Notify) ne sont jamais lus.
+    const appCard = (el) => {
+      const head = first(el, (x) => attr(x, "data-testid") === "headerTitleTestId");
+      const titleLink = first(el, (x) => attr(x, "data-testid") === "titleLinkTestId");
+      const ac = first(el, (x) => hasClass(x, "ac-adaptiveCard")) || el;
+      const noActions = (x) => hasClass(x, "ac-actionSet") || SKIP.has(tag(x)) || SKIP_ROLES.has(attr(x, "role")) || attr(x, "role") === "button";
+      const a = find(ac, (x) => noActions(x) || (tag(x) === "A" && safeUrl(attr(x, "href")))).find((x) => !noActions(x)) || null;
+      const url = a ? safeUrl(attr(a, "href")) : "";
+      const blocks = find(ac, (x) => noActions(x) || hasClass(x, "ac-textBlock"))
+        .filter((x) => !noActions(x))
+        .map((x) => one(textOf(x)).slice(0, 120))
+        .filter((t) => /[\p{L}\p{N}]/u.test(t));
+      const title = (a ? one(textOf(a)) : "") || blocks[0] || "";
+      const fields = blocks.filter((t) => t !== title).slice(0, 3);
+      const source = one(textOf(head || { childNodes: [] })) || one(attr(titleLink, "aria-label")) || sourceOf(url);
+      return { source: source.slice(0, 60), title: title.slice(0, 200), url, fields };
+    };
+    const cardsOf = (root) =>
+      find(root, (el) => isAppCard(el) || isPreview(el) || (tag(el) === "A" && Boolean(first(el, isPreview))))
+        .map((el) => (isAppCard(el) ? appCard(el) : previewCard(el)))
+        .filter((c) => c.title || c.url)
+        .slice(0, 5);
+    return (root) => (root ? { text: textOf(root), links: linksOf(root), cards: cardsOf(root) } : { text: "", links: [], cards: [] });
+  })();
+  // <<< message-parts
+  // Le corps d'un message du fil : bulle de Teams, sinon son contenu.
+  const partsOf = (el) => {
+    const parts = messageParts(el.querySelector('[data-tid="chat-pane-message"]') || el.querySelector('[id^="content-"]'));
+    return { ...parts, text: parts.text.replace(REACTIONS, "").replace(/\s+\n/g, "\n").trim() };
+  };
+
   // --- Pièces jointes reçues (lecture seule) ---
   // Fichier : une carte de « file-attachment-grid », nommée par son aria-label ; son titre
   // porte « nom + lien » (SharePoint / OneDrive). Trame n'en lit que le nom et le lien.
@@ -1003,11 +1160,8 @@
   };
 
   // --- Un message précis du fil : réagir, répondre ---
-  const bodyOf = (el) =>
-    (el.querySelector('[data-tid="chat-pane-message"]')?.innerText || el.querySelector('[id^="content-"]')?.innerText || "")
-      .replace(REACTIONS, "")
-      .replace(/\s+\n/g, "\n")
-      .trim();
+  // Même texte que read (sans cartes ni boutons) : le message est retrouvé par son début.
+  const bodyOf = (el) => partsOf(el).text;
   const msgId = (el) => {
     const c = el.querySelector('[id^="content-"]');
     if (c) return c.id.slice("content-".length);
@@ -1627,17 +1781,13 @@
     read: async ({ last = 30 }) => {
       const snap = () =>
         Array.from(document.querySelectorAll(MSGS)).map((el) => {
-          const body =
-            el.querySelector('[data-tid="chat-pane-message"]')?.innerText ||
-            el.querySelector('[id^="content-"]')?.innerText ||
-            "";
+          const { text: body, links, cards } = partsOf(el);
           const time = el.querySelector("time");
           const at = time?.innerText?.trim() || time?.getAttribute("datetime") || "";
           const files = filesOf(el);
           const names = new Set(files.map((f) => f.name));
           // Le nom d'un fichier joint fait aussi partie du texte : il est déjà dans sa puce.
           const text = body
-            .replace(REACTIONS, "")
             .split("\n")
             .filter((line) => !names.has(line.trim()))
             .join("\n")
@@ -1655,11 +1805,13 @@
             reactions: myReactions(el),
             files,
             images,
+            links,
+            cards,
           };
         })
         // Teams intercale des éléments vides (avatar seul) : sans texte, fichier ni image,
         // ils se ressembleraient tous et fausseraient la fusion.
-        .filter((m) => m.text || m.files.length || m.images);
+        .filter((m) => m.text || m.files.length || m.images || m.cards.length);
       // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
       // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
       let acc = snap();
@@ -1702,7 +1854,7 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
-        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images, links: m.links, cards: m.cards });
       }
       const shown = out.slice(-last);
       await thumbnails(shown);

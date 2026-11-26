@@ -72,7 +72,7 @@ def locate(flat: str, query: str) -> Optional[tuple[int, int]]:
 
 
 def hit(thread_id: Optional[str], conversation: str, sender: str, at: str, mine: bool, text: str,
-        query: str) -> dict:
+        query: str, links: Optional[list[dict]] = None, cards: Optional[list[dict]] = None) -> dict:
     """One search result. `match` is None when the text itself does not contain the
     query (Teams' search also matches word forms): the excerpt is then its beginning."""
     flat = " ".join((text or "").split())
@@ -84,7 +84,7 @@ def hit(thread_id: Optional[str], conversation: str, sender: str, at: str, mine:
         snippet, s, e = excerpt(flat, *where)
         match = [s, e]
     return {"thread_id": thread_id, "conversation": conversation, "sender": sender, "at": at, "mine": mine,
-            "text": text, "excerpt": snippet, "match": match}
+            "text": text, "excerpt": snippet, "match": match, "links": links or [], "cards": cards or []}
 
 
 class MessageArchive:
@@ -111,10 +111,14 @@ class MessageArchive:
                     # Teams' own time beats the one noted when the message arrived.
                     if m.received_at:
                         known["at"] = m.received_at
+                    if m.links or m.cards:
+                        known["links"] = [link.model_dump() for link in m.links]
+                        known["cards"] = [c.model_dump() for c in m.cards]
                     continue
                 self._seq += 1
                 bucket[key] = {"sender": m.sender or "", "text": text, "at": m.received_at or "",
-                               "seq": self._seq, "folded": fold(text)}
+                               "seq": self._seq, "folded": fold(text),
+                               "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards]}
             while len(bucket) > self.PER_THREAD:
                 bucket.pop(next(iter(bucket)))
 
@@ -157,7 +161,7 @@ class MessageArchive:
                     if q not in m["folded"]:
                         continue
                     hits.append((m["seq"], hit(thread_id, names.get(thread_id, thread_id), m["sender"], m["at"],
-                                               is_mine(m["sender"]), m["text"], query)))
+                                               is_mine(m["sender"]), m["text"], query, m["links"], m["cards"])))
         hits.sort(key=lambda h: h[0], reverse=True)
         return [h for _, h in hits[:limit]]
 

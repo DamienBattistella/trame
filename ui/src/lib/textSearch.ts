@@ -86,7 +86,7 @@ export class DemoArchive {
         const [snippet, s, e] = excerpt(flat, at[0], at[1]);
         hits.push({
           threadId, conversation: names.get(threadId) ?? threadId, sender: m.sender, at: m.at, mine: m.mine,
-          text: m.text, excerpt: snippet, match: [s, e], seq: m.seq,
+          text: m.text, excerpt: snippet, match: [s, e], links: m.links ?? [], seq: m.seq,
         });
       }
     }

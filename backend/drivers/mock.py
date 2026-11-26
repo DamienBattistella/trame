@@ -4,7 +4,7 @@ import os
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional
-from models import DELETED_TEXT, IncomingMessage, MessageRef, Surface, WatchEntity
+from models import DELETED_TEXT, CardRef, IncomingMessage, LinkRef, MessageRef, Surface, WatchEntity
 from drivers.base import TeamsDriver, same_message
 import teams_check
 
@@ -47,6 +47,19 @@ _UNREAD = {
     "19:cc33@thread.v2": ("Sofia Marino", "@Damien on garde le créneau de 14h pour la démo interop ?", ["Damien"]),
     "19:dd44@thread.v2": ("Alerte Prod", "Latence élevée sur le connecteur HL7 depuis 9h12.", []),
     "19:ee55@thread.v2": ("Chiara Rossi", "Bonjour Damien, tu aurais 5 minutes cet après-midi ?", []),
+}
+
+# Liens et cartes d'aperçu de certains messages, comme Teams les montre : texte de lien qui
+# n'est pas l'adresse, carte Jira, aperçu d'une PR GitHub. Par (conversation, texte).
+_RICH: dict[tuple[str, str], dict] = {
+    ("19:ee55@thread.v2", "Les deux fiches pour la doc :\n[HL7-12] Typage OBX-2 - Jira\n[HL7-13] Unités UCUM - Jira"): {
+        "links": [LinkRef(text="[HL7-12] Typage OBX-2 - Jira", url="https://example.atlassian.net/browse/HL7-12"),
+                  LinkRef(text="[HL7-13] Unités UCUM - Jira", url="https://example.atlassian.net/browse/HL7-13")],
+        "cards": [CardRef(source="Jira", title="HL7-12: Typage OBX-2", url="https://example.atlassian.net/browse/HL7-12",
+                          fields=["Assigned to Lucas Bernard", "Medium", "OPEN"]),
+                  CardRef(source="GitHub", title="Mapping HL7 des résultats de labo by lbernard · Pull Request #214",
+                          url="https://github.com/example/hl7-bridge/pull/214")],
+    },
 }
 
 _HISTORY: dict[str, list[tuple[str, str, str]]] = {
@@ -113,6 +126,7 @@ _HISTORY: dict[str, list[tuple[str, str, str]]] = {
         ("11:04", "Damien Battistella", "Super, il y a un brouillon dans le wiki du repo."),
         ("11:06", "Chiara Rossi", "Je l'ai vu, mais il manque la partie sur les segments OBX et leur typage."),
         ("11:08", "Damien Battistella", "Lucas est en train de finaliser ça dans la PR #214, attends qu'elle soit fusionnée."),
+        ("11:09", "Chiara Rossi", "Les deux fiches pour la doc :\n[HL7-12] Typage OBX-2 - Jira\n[HL7-13] Unités UCUM - Jira"),
         ("11:10", "Chiara Rossi", "D'accord. Et pour la démo interop, tu veux que je prépare les messages anonymisés ?"),
         ("11:13", "Damien Battistella", "Oui, ça aiderait beaucoup, merci."),
         ("11:15", "Chiara Rossi", "Je m'y mets cet après-midi."),
@@ -296,7 +310,7 @@ class MockTeamsDriver(TeamsDriver):
         return [
             IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at=at, surface=surface,
                             id=mid, reactions=list(self.reactions.get(f"{thread_id}/{mid}", [])),
-                            deleted=f"{thread_id}/{mid}" in self.deleted)
+                            deleted=f"{thread_id}/{mid}" in self.deleted, **_RICH.get((thread_id, text), {}))
             for mid, at, sender, text in history
         ]
 

@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
+import { LinkCards } from "@/components/LinkCards";
 import { MessageText } from "@/components/MessageText";
 import { ThreadMessage, WatchEntity } from "@/types";
 
@@ -142,7 +143,8 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
                         m.mine ? "rounded-tr-md border border-primary/30 bg-primary/10 dark:bg-primary/15" : "rounded-tl-md bg-muted"
                       )}
                     >
-                      <MessageText text={m.text} github={trame.githubLink} />
+                      <MessageText text={m.text} links={m.links} github={trame.githubLink} />
+                      <LinkCards cards={m.cards} />
                     </div>
                     {m.at && <span className="mx-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
                   </motion.div>

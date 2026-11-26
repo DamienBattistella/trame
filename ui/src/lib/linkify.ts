@@ -33,7 +33,7 @@ function trimEnd(raw: string): string {
 }
 
 /** Adresse http(s) valide, sinon null (rien d'autre n'est jamais ouvert). */
-function safeUrl(raw: string): string | null {
+export function safeUrl(raw: string): string | null {
   try {
     const u = new URL(raw);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
@@ -59,24 +59,39 @@ export function linkLabel(url: string): string {
   return gh ? `${gh.repo}#${gh.number}` : url;
 }
 
-/** Découpe le texte en morceaux ; leur concaténation redonne exactement le texte. */
-export function linkify(text: string): Segment[] {
-  const out: Segment[] = [];
-  let cursor = 0;
-  const pushText = (end: number) => {
-    if (end > cursor) out.push({ type: "text", text: text.slice(cursor, end), start: cursor, end });
-    cursor = end;
-  };
+/** Lien du message dont le texte n'est pas l'adresse (« [ALL-141] Recherche identité - Jira »). */
+export type TextLink = { text: string; url: string };
+
+/** Découpe le texte en morceaux ; leur concaténation redonne exactement le texte.
+ *  `links` : liens lus dans Teams, retrouvés par leur texte, dans l'ordre, hors des adresses en clair. */
+export function linkify(text: string, links: TextLink[] = []): Segment[] {
+  const found: { start: number; end: number; url: string; label: string }[] = [];
   for (const m of text.matchAll(URL_RE)) {
     const start = m.index ?? 0;
     const url = safeUrl(trimEnd(m[0]));
-    if (!url) continue;
-    const end = start + url.length;
-    pushText(start);
-    out.push({ type: "link", text: url, start, end, url, label: linkLabel(url), github: githubRef(url) });
-    cursor = end;
+    if (url) found.push({ start, end: start + url.length, url, label: linkLabel(url) });
   }
-  pushText(text.length);
+  let from = 0;
+  for (const link of links) {
+    const url = safeUrl(link.url);
+    if (!url || !link.text || link.text === link.url) continue;
+    for (let at = text.indexOf(link.text, from); at >= 0; at = text.indexOf(link.text, at + 1)) {
+      const end = at + link.text.length;
+      if (found.some((f) => f.start < end && at < f.end)) continue;
+      found.push({ start: at, end, url, label: link.text });
+      from = end;
+      break;
+    }
+  }
+  found.sort((a, b) => a.start - b.start);
+  const out: Segment[] = [];
+  let cursor = 0;
+  for (const f of found) {
+    if (f.start > cursor) out.push({ type: "text", text: text.slice(cursor, f.start), start: cursor, end: f.start });
+    out.push({ type: "link", text: text.slice(f.start, f.end), start: f.start, end: f.end, url: f.url, label: f.label, github: githubRef(f.url) });
+    cursor = f.end;
+  }
+  if (cursor < text.length) out.push({ type: "text", text: text.slice(cursor), start: cursor, end: text.length });
   return out;
 }
 

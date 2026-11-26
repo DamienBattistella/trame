@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
+import { LinkCards } from "@/components/LinkCards";
 import { MessageText } from "@/components/MessageText";
 import { MessageAttachments } from "@/components/MessageAttachments";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
@@ -83,7 +84,11 @@ const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
 /** Le message à qui proposer une réponse : une image ou un fichier seul est nommé
  *  comme le moteur le lit (« [image] », « [fichier joint : nom] »). */
 const proposalRef = (m: ThreadMessage): MessageRef => {
-  const named = [...(m.files ?? []).map((f) => `[fichier joint : ${f.name}]`), ...(m.images ?? []).map(() => "[image]")];
+  const named = [
+    ...(m.files ?? []).map((f) => `[fichier joint : ${f.name}]`),
+    ...(m.images ?? []).map(() => "[image]"),
+    ...(m.cards ?? []).map((c) => `[aperçu ${c.source} : ${c.title}]`),
+  ];
   return { ...refOf(m), text: m.text.trim() || named.join("\n") };
 };
 const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -926,7 +931,13 @@ export function DiscussionView({
                       ) : (
                         <>
                           {m.replyTo && <Quote target={m.replyTo} />}
-                          <MessageText text={m.text} range={i === foundIndex ? findFolded(m.text, foundQuery) : null} github={trame.githubLink} />
+                          <MessageText
+                            text={m.text}
+                            links={m.links}
+                            range={i === foundIndex ? findFolded(m.text, foundQuery) : null}
+                            github={trame.githubLink}
+                          />
+                          <LinkCards cards={m.cards} />
                         </>
                       )}
                       <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />

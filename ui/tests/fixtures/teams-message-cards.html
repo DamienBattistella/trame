@@ -1,0 +1,119 @@
+<!--
+  Messages de Teams web avec liens et cartes d'aperçu, relevés sur teams.cloud.microsoft le
+  26/11/2026 (structure, data-tid, data-testid, rôles et classes utiles conservés ; classes de
+  style retirées). Textes, noms et adresses inventés : aucune donnée réelle.
+  data-fixture n'existe pas dans Teams : il nomme le cas pour les tests.
+-->
+<div data-fixture="jira">
+  <div data-tid="chat-pane-message" role="group" class="fui-ChatMessage__body">
+    <button data-tid="message-actions-menu-hidden-button" aria-label="Plus d’options de message"></button>
+    <div dir="auto" id="content-1700000000001" aria-label="Deux fiches pour le module :  Lien [ABC-12] Recherche patient - Jira" data-message-content="">
+      <div>
+        <p>Deux fiches pour le module :&nbsp;</p>
+        <p><a data-testid="atp-safelink" aria-label="Lien [ABC-12] Recherche patient - Jira" href="https://example.atlassian.net/browse/ABC-12" class="fui-Link">[ABC-12] Recherche patient - Jira</a></p>
+        <p><a data-testid="atp-safelink" aria-label="Lien [ABC-13] Création patient - Jira" href="https://example.atlassian.net/browse/ABC-13" class="fui-Link">[ABC-13] Création patient - Jira</a></p>
+        <div class="fui-Flex">
+          <div class="fui-Flex"><div role="progressbar" class="fui-Skeleton"><div class="fui-SkeletonItem"></div></div></div>
+          <div class="body-89">
+            <div data-testid="componentUXWrapperTestId">
+              <div data-testid="glow-layer"></div>
+              <div>
+                <div role="group" aria-label="Carte Jira">
+                  <div data-testid="chromeTestId">
+                    <div data-testid="chromePrimarySpaceTestId" role="toolbar" aria-label="Actions principales">
+                      <button data-testid="titleLinkTestId" aria-label="Jira" class="fui-Link">
+                        <div><span data-testid="lazy-image-wrapper"><img data-tid="lazy-image-2" class="fui-Image"></span></div>
+                        <div><span><span data-testid="headerTitleTestId">Jira</span></span></div>
+                      </button>
+                    </div>
+                    <div data-testid="chromeSecondarySpaceTestId" role="toolbar" aria-label="Actions secondaires">
+                      <button data-testid="overflow-button" role="button" aria-label="Plus d’actions"><svg></svg></button>
+                    </div>
+                  </div>
+                  <div data-tid="adaptive-card" id="adaptive-card-1">
+                    <div class="ac-container ac-adaptiveCard" tabindex="0">
+                      <div>
+                        <div class="ac-container"><div><div class="ac-container"><div><img role="button" class="fui-Image"></div></div>
+                          <div class="ac-vertical-separator"></div>
+                          <div class="ac-container"><div>
+                            <div class="ac-textBlock"><div><p><a href="https://example.atlassian.net/browse/ABC-12?atlOrigin=eyJpIjoiZmFrZSJ9" class="fui-Link">ABC-12: Recherche patient</a></p></div></div>
+                            <div class="ac-textBlock"><div><p>Assigned to Alex Martin</p></div></div>
+                          </div></div>
+                        </div></div>
+                        <div class="ac-horizontal-separator"></div>
+                        <div class="ac-container"><div><div class="ac-container"><div>
+                          <div class="ac-container"><div><img role="button" class="fui-Image"></div></div>
+                          <div class="ac-container"><div><div class="ac-textBlock"><div><p><strong>Medium</strong></p></div></div></div></div>
+                          <div class="ac-vertical-separator"></div>
+                          <div class="ac-container"><div><div class="ac-textBlock"><div><p>|</p></div></div></div></div>
+                          <div class="ac-vertical-separator"></div>
+                          <div class="ac-container"><div><div class="ac-textBlock"><div><p><strong>OPEN</strong></p></div></div></div></div>
+                        </div></div></div></div>
+                        <div class="ac-horizontal-separator"></div>
+                        <div class="ac-container"><div><div class="ac-container"><div>
+                          <div class="ac-container"><div><div><div class="ac-actionSet">
+                            <div><button role="button" aria-label="Comment"><div class="ac-pushButton-content"><div>Comment</div></div></button></div>
+                            <div><button role="button" aria-label="Edit"><div class="ac-pushButton-content"><div>Edit</div></div></button></div>
+                          </div></div></div></div>
+                          <div class="ac-vertical-separator"></div>
+                          <div class="ac-container"><div><div><div class="ac-actionSet">
+                            <div><button role="button" aria-label="🔔 Notify"><div class="ac-pushButton-content"><div>🔔 Notify</div></div></button></div>
+                          </div></div></div></div>
+                        </div></div></div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="fui-ChatMessage__reactions">
+      <div data-tid="diverse-reaction-summary" role="toolbar" aria-label="Réactions">
+        <button data-tid="diverse-reaction-pill-button"><div><span data-tid="emoticon-renderer"><img itemtype="http://schema.skype.com/Emoji"></span><div>1</div></div></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div data-fixture="github">
+  <div data-tid="chat-pane-message" role="group" class="fui-ChatMessage__body">
+    <button data-tid="message-actions-menu-hidden-button" aria-label="Plus d’options de message"></button>
+    <div dir="auto" id="content-1700000000002" data-message-content="">
+      <div>
+        <p>Hello,</p>
+        <p><a data-testid="atp-safelink" aria-label="Lien Conformité — Projet 10" href="https://octo-example-abc123.pages.github.io/conformite/" class="fui-Link">Conformité — Projet 10</a></p>
+        <p>Dans cette page, j'aimerais une case à cocher par exigence. Est-ce envisageable ?</p>
+      </div>
+    </div>
+    <div class="fui-Primitive">
+      <a data-testid="atp-safelink" aria-label="GitHub" href="https://octo-example-abc123.pages.github.io/conformite/" class="fui-Link">
+        <div data-tid="url-preview" class="fui-Flex">
+          <span class="ui-flex"><img data-tid="url-preview-image" class="ui-image"></span>
+          <div data-tid="url-preview-body" class="fui-Flex">
+            <div class="fui-Flex"><span class="fui-StyledText">GitHub</span></div>
+            <p class="fui-StyledText">GitHub is where people build software. More than 100 million people use GitHub to discover, fork, and contribute.</p>
+            <span class="fui-StyledText">octo-example-abc123.pages.github.io</span>
+          </div>
+        </div>
+      </a>
+    </div>
+  </div>
+</div>
+
+<div data-fixture="plain">
+  <div data-tid="chat-pane-message" role="group" class="fui-ChatMessage__body">
+    <button data-tid="message-actions-menu-hidden-button" aria-label="Plus d’options de message"></button>
+    <div dir="auto" id="content-1700000000003" data-message-content="">
+      <div>
+        <!-- Dans Teams, la mention est dans un <div role="button"> affiché en ligne par CSS ; sans CSS ici, un <span>. -->
+        <p><span role="button"><span itemtype="http://schema.skype.com/Mention">Alex Martin</span></span> tu peux relire https://github.com/example/app/pull/42 ?</p>
+        <p>Lien piégé : <a href="javascript:alert(1)">clique</a>, protégé : <a href="https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fdoc&amp;data=x">la doc</a>.</p>
+        <pre>  ligne 1
+  ligne 2</pre>
+      </div>
+    </div>
+  </div>
+</div>
