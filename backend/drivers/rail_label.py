@@ -119,9 +119,14 @@ _STRUCTURAL = {
 }
 
 
+_COUNTER_RE = re.compile(r"[\d\s+]+")
+
+
 def is_structural(name: str, aria: str = "") -> bool:
-    """Section headers and quick views of the chat list: never a conversation."""
-    return " ".join((name or "").split()).casefold() in _STRUCTURAL or "expanded=true" in (aria or "").lower()
+    """Section headers and quick views of the chat list: never a conversation. Neither
+    is an entry made of counters only ("3 3", "99+"), as Teams web shows one."""
+    flat = " ".join((name or "").split())
+    return flat.casefold() in _STRUCTURAL or "expanded=true" in (aria or "").lower() or bool(_COUNTER_RE.fullmatch(flat))
 
 
 def stable_id(automation_id: str) -> Optional[str]:
