@@ -173,7 +173,7 @@ function RunDetail({ run, trame }: { run: ReflectionRun; trame: Trame }) {
   );
 }
 
-function StepLine({ step, live }: { step: ReflectionStep; live: boolean }) {
+export function StepLine({ step, live }: { step: ReflectionStep; live: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   // La réflexion défile avec le texte qui arrive.
   useEffect(() => {

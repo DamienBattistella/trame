@@ -5,7 +5,8 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 from contextlib import contextmanager
 from typing import Iterator, Callable, Iterable, Optional, Sequence
 
@@ -19,6 +20,7 @@ import search as searchmod
 import journal as journalmod
 import outbox_store as outboxstore
 import reflection
+import reports as reportsmod
 import skills as skillsmod
 import telemetry
 import teams_check as teamscheck
@@ -116,6 +118,8 @@ class Watcher:
         # Agent skills offered to the brain (Réglages › Skills).
         self.skills = skillsmod.Registry(cfgmod.HOME, lambda: self.cfg)
         skillsmod.install(self.skills)
+        # Comptes-rendus de réunion (un skill appliqué à un .vtt, en plusieurs tours).
+        self.reports = reportsmod.Reports(self.reflections, lambda: self.brain, self.log)
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
         # lists them itself (a brand-new chat only shows up there after its first message).
@@ -2322,6 +2326,48 @@ class Watcher:
             shutil.rmtree(target, ignore_errors=True)
         self.skills.reload()
         return self.skills.summary()
+
+    # --- meeting reports ---
+    def start_meeting_report(self, thread_id: str = "", mid: str = "", title: str = "", day: Optional[str] = None,
+                             skill: str = "meeting-report", path: Optional[str] = None) -> dict:
+        """Apply a skill to a meeting's .vtt: the file already fetched (same name in the
+        transcripts folder, or path inside it), else fetched from Teams first."""
+        found = self.skills.find(skill)
+        if found is None:
+            raise ActionError(404, f"Skill « {skill} » introuvable : installe-le dans un dossier de skills "
+                                   "(Réglages › Skills), puis recharge la liste.")
+        folder = transcriptsmod.chosen_dir(cfgmod._home())
+        vtt: Optional[Path] = None
+        candidate = Path(path) if path else None
+        # Only a .vtt of the transcripts folder: anything else is ignored (the meeting is
+        # then found by name, or fetched again).
+        usable = candidate is not None and candidate.suffix.lower() == ".vtt" and candidate.is_file()
+        if usable and candidate.resolve().parent == folder.resolve():
+            vtt = candidate
+        else:
+            try:
+                when = date.fromisoformat(day) if day else None
+            except ValueError:
+                when = None
+            candidate = folder / transcriptsmod.file_name(title, when)
+            if title and candidate.is_file():
+                vtt = candidate
+            elif thread_id and mid:
+                saved = self.save_transcript(thread_id, mid)
+                vtt, title = Path(saved["path"]), title or saved.get("title", "")
+            else:
+                raise ActionError(422, "Réunion ou fichier .vtt à préciser.")
+        try:
+            return self.reports.start(found, vtt, title or vtt.stem,
+                                      transcriptsmod.meeting_id(thread_id, mid) if thread_id and mid else "")
+        except reportsmod.ReportError as e:
+            raise ActionError(e.status, e.message)
+
+    def report_call(self, fn: Callable[..., dict], *args) -> dict:
+        try:
+            return fn(*args)
+        except reportsmod.ReportError as e:
+            raise ActionError(e.status, e.message)
 
     # --- entourage (who's who, exported from Orbite) ---
     def _people_context(self, msg: IncomingMessage, summary: str, entity: Optional[WatchEntity] = None) -> str:

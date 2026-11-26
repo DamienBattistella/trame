@@ -52,6 +52,12 @@ class MockBrain(Brain):
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         if prompt.startswith(skillsmod.PROTOCOL):
             return self._skill_turn(prompt)
+        import reports
+        if prompt.startswith(reports.MARK):
+            _think("Je lis la transcription : qui parle, de quoi, quelles décisions et quelles actions. "
+                   "Le skill demande un compte-rendu structuré, puis de proposer des issues de suivi : "
+                   "je pose la question plutôt que de les créer, Trame ne crée rien lui-même.")
+            return reports.demo_answer(prompt)
         from brain.status_note import MARKER
         if MARKER in prompt:
             # Démo : un message différent selon l'angle demandé.
