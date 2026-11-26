@@ -130,7 +130,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
           ) : (
             <span className="size-3 rounded-full border-2 border-dashed border-muted-foreground/60" />
           )}
-          <span className="hidden max-w-28 truncate sm:inline">{label}</span>
+          <span className="hidden max-w-28 truncate lg:inline">{label}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-1.5">
