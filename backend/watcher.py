@@ -15,6 +15,7 @@ import people as peoplemod
 import presence as presencemod
 import search as searchmod
 import journal as journalmod
+import outbox_store as outboxstore
 import reflection
 import telemetry
 from drivers import rail_label
@@ -108,6 +109,9 @@ class Watcher:
         # et nouvel essai demandé) enverraient le même message deux fois.
         self._outbox_flush = threading.Lock()
         self.outbox_auto = True  # renvoi en arrière-plan ; coupé par les tests
+        # La file survit à un redémarrage : relue ici, réécrite à chaque changement.
+        self._outbox_store = outboxstore.OutboxStore(cfgmod.HOME / "outbox")
+        self._outbox_restore()
 
     # --- lifecycle ---
     def teams_ready(self, ready: bool) -> None:
@@ -631,9 +635,19 @@ class Watcher:
                           files=[f.name for f in files], reply_to=reply_to,
                           queued_at=datetime.now().strftime("%H:%M"), reason=reason)
         with self._lock:
-            self._outbox_payload[item.id] = {"mentions": list(mentions), "files": list(files),
+            used = sum(f.get("size", 0) for p in self._outbox_payload.values() for f in p.get("meta", ()))
+            try:
+                meta = self._outbox_store.add_files(item.id, files, used)
+            except outboxstore.OutboxFull:
+                raise ActionError(413, "File d'envoi pleine : trop de pièces jointes attendent déjà. Rien n'a été "
+                                       "envoyé ; retire un message en attente ou réessaie quand Teams est prêt.")
+            except OSError as e:
+                meta = []
+                self._outbox_disk_warn(e)
+            self._outbox_payload[item.id] = {"mentions": list(mentions), "files": list(files), "meta": meta,
                                              "since": time.monotonic()}
             self.state.outbox = [*self.state.outbox, item]
+            self._outbox_save()
         self.log("info", f"Message pour {conversation} mis en file d'envoi : {reason}. Il partira dès que Teams est prêt.")
         self._outbox_wake.set()
         return item
@@ -704,11 +718,53 @@ class Watcher:
     def _outbox_update(self, item: QueuedSend, **changes) -> None:
         with self._lock:
             self.state.outbox = [x.model_copy(update=changes) if x.id == item.id else x for x in self.state.outbox]
+            self._outbox_save()
 
     def _outbox_drop(self, item_id: str) -> None:
         with self._lock:
             self.state.outbox = [x for x in self.state.outbox if x.id != item_id]
             self._outbox_payload.pop(item_id, None)
+            self._outbox_save()
+            # Parti ou retiré : ses pièces jointes ne restent pas sur le disque.
+            try:
+                self._outbox_store.remove_files(item_id)
+            except OSError as e:
+                self._outbox_disk_warn(e)
+
+    def _outbox_save(self) -> None:
+        """Réécrit la file sur le disque (appelé sous self._lock, à chaque changement).
+        Un échec n'empêche pas l'envoi : le message attend en mémoire, comme avant."""
+        try:
+            self._outbox_store.save(self.state.outbox, self._outbox_payload)
+            self._outbox_disk_warned = False
+        except OSError as e:
+            self._outbox_disk_warn(e)
+
+    def _outbox_disk_warn(self, e: OSError) -> None:
+        if getattr(self, "_outbox_disk_warned", False):
+            return
+        self._outbox_disk_warned = True
+        self.log("warn", f"File d'envoi : enregistrement sur le disque impossible ({e.strerror or type(e).__name__}). "
+                         "Les messages en attente seront perdus si Trame est quitté avant leur envoi.")
+
+    def _outbox_restore(self) -> None:
+        """Au démarrage : reprend les messages qui attendaient quand Trame a été quitté.
+        Un message « en cours d'envoi » à l'arrêt devient « à vérifier », jamais renvoyé seul."""
+        try:
+            restored = self._outbox_store.load()
+        except OSError as e:
+            self._outbox_disk_warn(e)
+            return
+        if restored.corrupt:
+            self.log("warn", "File d'envoi enregistrée illisible : ignorée.")
+        if not restored.items:
+            return
+        with self._lock:
+            self.state.outbox = restored.items
+            self._outbox_payload = restored.payload
+            self._outbox_save()
+        n = len(restored.items)
+        self.log("info", f"File d'envoi : {n} message{'s' if n > 1 else ''} repris après le redémarrage")
 
     def _outbox_item(self, item_id: str) -> QueuedSend:
         item = next((x for x in self.state.outbox if x.id == item_id), None)
@@ -729,6 +785,9 @@ class Watcher:
         item = self._outbox_item(item_id)
         if item.status == "sending":
             raise ActionError(409, "Ce message est en cours d'envoi.")
+        if self._outbox_payload.get(item_id, {}).get("lost_files"):
+            raise ActionError(409, "Pièce jointe perdue au redémarrage : renvoie ce message toi-même, puis "
+                                   "retire-le de la file.")
         with self._lock:
             self._outbox_payload.setdefault(item_id, {})["since"] = time.monotonic()
         self._outbox_update(item, status="waiting", reason="nouvel essai demandé")
