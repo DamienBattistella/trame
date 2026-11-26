@@ -94,7 +94,8 @@ export function ChangelogDialog({
             {since ? `Ce qui a changé depuis la version ${since}.` : "Toutes les versions de Trame, la plus récente en premier."}
           </DialogDescription>
         </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1 border-y">
+        {/* Le dialogue n'a qu'une hauteur max : sans flex, le viewport (h-full) prendrait toute sa hauteur et déborderait. */}
+        <ScrollArea className="flex min-h-0 flex-1 flex-col border-y" viewportClassName="min-h-0 flex-1">
           <div className="flex flex-col gap-8 px-6 py-5">
             {list.length ? list.map((r) => <ReleaseBlock key={r.version} release={r} />) : (
               <p className="py-8 text-center text-sm text-muted-foreground">Rien de nouveau à afficher.</p>
