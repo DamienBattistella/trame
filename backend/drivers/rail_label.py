@@ -38,6 +38,7 @@ _MARKER_RE = re.compile(r"\s(?:" + "|".join(re.escape(m) for m in sorted(_MARKER
 _UNREAD_RE = re.compile(r"\b(?:unread|non lus?)\b", re.IGNORECASE)
 _PREVIEW_RE = re.compile(r"\b(?:Last message|Dernier message)\s+(.*)$")
 _TRAILING_TIME_RE = re.compile(r"\s+(?:\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|yesterday|hier|[A-Z][a-z]{2,8})\s*$")
+_TIME_RE = re.compile(r"\s(\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterday|[Hh]ier)\s*$")
 _SELF_RE = re.compile(r"\s*\((?:You|Vous|Moi)\)\s*$")
 
 
@@ -49,6 +50,7 @@ class RailLabel:
     is_self: bool
     preview_sender: Optional[str]
     preview: Optional[str]
+    last_time: Optional[str] = None
 
 
 def parse(label: str) -> RailLabel:
@@ -75,5 +77,9 @@ def parse(label: str) -> RailLabel:
             preview_sender, preview = "You", said.strip()
         else:
             preview_sender, preview = (name if surface == Surface.dm else None), body
-    return RailLabel(name=name, surface=surface, unread=bool(_UNREAD_RE.search(rest)), is_self=is_self,
+    t = _TIME_RE.search(rest)
+    last_time = None
+    if t:
+        last_time = {"yesterday": "Hier", "hier": "Hier"}.get(t.group(1).lower(), t.group(1))
+    return RailLabel(name=name, surface=surface, unread=bool(_UNREAD_RE.search(rest)), is_self=is_self, last_time=last_time,
                      preview_sender=preview_sender, preview=preview or None)

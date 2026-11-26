@@ -88,11 +88,14 @@ class WindowsUIADriver(TeamsDriver):
         out: list[WatchEntity] = []
         if rail is None:
             return out
-        for item in self._rail_items(rail):
+        for rank, item in enumerate(self._rail_items(rail)):
             label = self._label_of(item)
             thread_id = self._thread_id_of(item)
             self._names[thread_id] = label.name
-            out.append(WatchEntity(thread_id=thread_id, display_name=label.name, surface=label.surface))
+            own = label.preview if label.preview_sender == "You" else None
+            out.append(WatchEntity(thread_id=thread_id, display_name=label.name, surface=label.surface,
+                                   rank=rank, last_activity=label.last_time, unread=label.unread,
+                                   is_self=label.is_self, own_preview=own))
         return out
 
     def _rail_item_for(self, rail, thread_id: str):
@@ -102,7 +105,7 @@ class WindowsUIADriver(TeamsDriver):
             # to the display name could pick another chat with the same name.
             by_id = [i for i in items if thread_id in (getattr(i, "AutomationId", "") or "")]
             return by_id[0] if len(by_id) == 1 else None
-        name = thread_id[5:]
+        name = rail_label.parse(thread_id[5:]).name
         by_name = [i for i in items if self._display_name_of(i) == name]
         return by_name[0] if len(by_name) == 1 else None
 

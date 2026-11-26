@@ -1,6 +1,8 @@
 import { Brief, BriefGithubItem, WatchEntity, DraftItem, LogItem } from "./types";
 
-export const mockConversations: WatchEntity[] = [
+const TIMES = ["04:49", "04:12", "Hier", "25/11", "25/11", "24/11", "24/11", "22/11", "21/11", "20/11"];
+
+export const mockConversations: WatchEntity[] = withRecency([
   { threadId: "19:aa11@thread.v2", displayName: "Sofia Marino", surface: "dm", watch: true, mode: "auto", namedPeople: [] },
   { threadId: "19:bb22@thread.v2", displayName: "Lucas Bernard", surface: "dm", watch: true, mode: "draft", namedPeople: [] },
   { threadId: "19:cc33@thread.v2", displayName: "Équipe Interop", surface: "group", watch: true, mode: "draft", namedPeople: ["Sofia Marino"] },
@@ -8,7 +10,14 @@ export const mockConversations: WatchEntity[] = [
   { threadId: "19:ee55@thread.v2", displayName: "Chiara Rossi", surface: "dm", watch: false, mode: "draft", namedPeople: [] },
   { threadId: "19:ff66@thread.v2", displayName: "Projet FHIR Passerelle", surface: "group", watch: true, mode: "draft", namedPeople: ["Lucas Bernard"] },
   ...extraConversations(),
-];
+]);
+
+/** Démo : ordre et heures façon Teams, deux conversations non lues. */
+function withRecency(list: WatchEntity[]): WatchEntity[] {
+  const order = [1, 0, 2, 5, 3, 4];
+  const ranked = list.map((c, i) => ({ c, r: order.indexOf(i) >= 0 ? order.indexOf(i) : i }));
+  return ranked.map(({ c, r }) => ({ ...c, rank: r, lastActivity: TIMES[Math.min(r, TIMES.length - 1)], unread: r === 0 || r === 2 }));
+}
 
 /** Volume réaliste d'exemple (~60 conversations) pour éprouver recherche et filtres. */
 function extraConversations(): WatchEntity[] {

@@ -2,6 +2,8 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Check, Moon, Sun, Settings2, Pause, Play, Minus, Square, X, WifiOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CountBadge } from "@/components/kit";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -9,7 +11,7 @@ import { Logo } from "@/Logo";
 import { useTrame } from "@/api";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
-import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
+import { installUpdate, isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
 import { cn } from "@/lib/utils";
 
 // Chargés à part : le wizard ne sert qu'au premier lancement. Les deux téléchargements
@@ -72,11 +74,25 @@ export default function App() {
     const offAvailable = onDesktopEvent<string>("update-available", (version) =>
       toast.info(`Mise à jour vers la version ${version}`, { description: "Téléchargement en cours. Trame redémarrera tout seul." })
     );
+    const offReady = onDesktopEvent<string>("update-ready", (version) =>
+      toast(`Trame ${version} est disponible`, {
+        description: "Installe-la maintenant : Trame redémarre en quelques secondes.",
+        duration: Infinity,
+        action: {
+          label: "Mettre à jour",
+          onClick: async () => {
+            const error = await installUpdate();
+            if (error) toast.error("Mise à jour impossible", { description: error });
+          },
+        },
+      })
+    );
     const offFailed = onDesktopEvent("update-failed", () =>
       toast.error("Mise à jour impossible", { description: "Trame continue avec la version actuelle et réessaiera au prochain lancement." })
     );
     return () => {
       offAvailable();
+      offReady();
       offFailed();
     };
   }, []);
@@ -125,14 +141,31 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-screen flex-col overflow-hidden rounded-xl border bg-background text-foreground">
+      <Tabs
+        value={panelTab}
+        onValueChange={(v) => setPanelTab(v as PanelTab)}
+        className="flex h-screen flex-col gap-0 overflow-hidden rounded-xl border bg-background text-foreground"
+      >
         <header
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-          className="flex h-12 select-none items-center gap-3 border-b bg-sidebar pl-4"
+          className="relative flex h-12 select-none items-center gap-3 border-b bg-sidebar pl-4"
         >
           <Logo size={30} />
           <span className="text-sm font-semibold">Trame</span>
+
+          {configured && !booting && !engineDown && (
+            <div className="ml-3" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+              <TabsList aria-label="Sections" className="h-8 rounded-full">
+                <TabsTrigger value="drafts" className="rounded-full px-3 text-xs">
+                  Brouillons <CountBadge n={trame.state.drafts.length} />
+                </TabsTrigger>
+                <TabsTrigger value="watchlist" className="rounded-full px-3 text-xs">Conversations</TabsTrigger>
+                <TabsTrigger value="logs" className="rounded-full px-3 text-xs">Journal</TabsTrigger>
+                <TabsTrigger value="settings" className="rounded-full px-3 text-xs">Réglages</TabsTrigger>
+              </TabsList>
+            </div>
+          )}
 
           <div className="flex-1" />
 
@@ -162,16 +195,6 @@ export default function App() {
               </div>
             )}
 
-            {configured && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Réglages" aria-pressed={panelTab === "settings"} onClick={() => setPanelTab("settings")}>
-                    <Settings2 className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Réglages</TooltipContent>
-              </Tooltip>
-            )}
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -222,7 +245,7 @@ export default function App() {
             )}
           </AnimatePresence>
         </main>
-      </div>
+      </Tabs>
       <Toaster richColors position="bottom-right" />
     </TooltipProvider>
     </MotionConfig>

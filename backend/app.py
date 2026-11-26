@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import config as cfgmod
+import soul_template as soultpl
 from settings import SettingsPatch
 from watcher import ActionError, Watcher
 from brain.base import Brain
@@ -305,6 +306,14 @@ def create_app(
     def get_soul():
         custom = cfgmod.soul_is_custom()
         return {"ok": True, "soul": {"custom": custom, "filename": "SOUL.md", "content": watcher.soul if custom else ""}}
+
+    @app.get("/api/soul/template")
+    def soul_template():
+        try:
+            convs = watcher.driver.list_conversations()
+        except Exception:
+            convs = []
+        return {"ok": True, "content": soultpl.build(convs, None)}
 
     @app.post("/api/soul/preview")
     def soul_preview(body: SoulPreviewBody):

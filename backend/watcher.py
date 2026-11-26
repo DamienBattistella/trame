@@ -364,7 +364,8 @@ class Watcher:
     def _persist_watchlist(self) -> None:
         with self._lock:
             cfg = dict(self.cfg)
-            cfg["watchlist"] = [json.loads(w.model_dump_json()) for w in self.state.watchlist]
+            cfg["watchlist"] = [json.loads(w.model_dump_json(exclude={"rank", "last_activity", "unread", "is_self", "own_preview"}))
+                                for w in self.state.watchlist]
             self.cfg = cfg
             try:
                 cfgmod.save(cfg)

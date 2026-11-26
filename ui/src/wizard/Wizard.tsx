@@ -6,10 +6,11 @@ import { Card } from "@/components/ui/card";
 import type { BrainId } from "@/components/BrainPicker";
 import { BrainChoice } from "@/components/BrainConnect";
 import { TeamsLogo } from "@/brands";
-import { ConversationList } from "@/components/ConversationList";
+import { ConversationList, ConversationMeta } from "@/components/ConversationList";
 import { SoulGhost } from "@/components/SoulGhost";
 import { SoulHelp } from "@/components/SoulHelp";
 import { SoulInsight } from "@/components/SoulInsight";
+import { SoulEditor } from "@/components/SoulEditor";
 import { GithubConnect } from "@/components/GithubConnect";
 import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   const touched = useRef(false);
   const [countdown, setCountdown] = useState(5);
   const [soul, setSoul] = useState<Soul | null>(null);
+  const [editing, setEditing] = useState(false);
   const [activation, setActivation] = useState<"idle" | "run" | "ok" | "error">("idle");
   const [steps, setSteps] = useState<ActivationStep[]>([]);
   const [activationError, setActivationError] = useState<string | null>(null);
@@ -295,8 +297,9 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               onClick={() => toggleWatch(c.threadId)}
               className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
             >
-              <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
-              <span className={cn("flex-1 truncate text-left transition-colors", !c.watch && "text-muted-foreground")}>{c.displayName}</span>
+              <InitialsAvatar name={c.displayName} className="size-8" />
+              <span className={cn("flex-1 truncate text-left transition-colors", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
+              <ConversationMeta c={c} />
               <SelectCircle checked={c.watch} />
             </motion.button>
           )}
@@ -327,7 +330,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
             }
             renderRow={(c) => (
               <div className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors duration-300", c.mode === "auto" && "bg-warning/[0.05]")}>
-                <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
+                <InitialsAvatar name={c.displayName} className="size-8" />
                 <div className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="truncate">{c.displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>
@@ -346,6 +349,19 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
       sub: "Dépose ton SOUL.md : ta façon d'écrire, ton rôle, ce que Trame doit refuser.",
       body: (
         <div className="flex w-full flex-col items-center gap-3">
+          {editing ? (
+            <SoulEditor
+              trame={trame}
+              initial={soul?.content ?? null}
+              onCancel={() => setEditing(false)}
+              onUse={(content) => {
+                soulTouched.current = true;
+                setSoul({ name: "SOUL.md", content });
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <>
           <SoulDrop
             value={soul}
             onChange={(v) => {
@@ -353,7 +369,23 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
               setSoul(v);
             }}
           />
-          {soul ? <SoulInsight trame={trame} content={soul.content} /> : <SoulHelp />}
+          {soul ? (
+            <>
+              <SoulInsight trame={trame} content={soul.content} />
+              <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground" onClick={() => setEditing(true)}>
+                <PenLine className="size-4" /> Modifier le texte
+              </Button>
+            </>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" className="rounded-full" onClick={() => setEditing(true)}>
+                <PenLine className="size-4" /> Écrire le mien
+              </Button>
+              <SoulHelp />
+            </div>
+          )}
+            </>
+          )}
         </div>
       ),
     },

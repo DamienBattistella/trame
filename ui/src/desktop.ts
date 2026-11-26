@@ -19,6 +19,28 @@ export async function appVersion(): Promise<string | null> {
   }
 }
 
+/** Mises à jour : version disponible (null si à jour) ; erreur explicite sinon. */
+export async function checkUpdate(): Promise<{ ok: true; version: string | null } | { ok: false; error: string }> {
+  const t = tauri();
+  if (!t?.core) return { ok: false, error: "Disponible dans l'application installée." };
+  try {
+    const v = await t.core.invoke("check_update");
+    return { ok: true, version: typeof v === "string" ? v : null };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/** Télécharge, installe et redémarre Trame. Ne revient qu'en cas d'échec. */
+export async function installUpdate(): Promise<string | null> {
+  try {
+    await tauri()?.core?.invoke("install_update");
+    return null;
+  } catch (e) {
+    return String(e);
+  }
+}
+
 /** Relance le moteur embarqué (application de bureau uniquement). */
 export async function restartBackend(): Promise<boolean> {
   try {

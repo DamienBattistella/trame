@@ -49,6 +49,9 @@ function mapWatch(w: any): WatchEntity {
     watch: w.watch,
     mode: w.mode,
     namedPeople: w.named_people ?? [],
+    rank: typeof w.rank === "number" ? w.rank : null,
+    lastActivity: w.last_activity ?? null,
+    unread: Boolean(w.unread),
   };
 }
 function mapDraft(d: any): DraftItem {
@@ -517,6 +520,20 @@ export function useTrame() {
     return request("DELETE", "/api/people");
   };
 
+  /** Modèle de SOUL.md pré-rempli avec ce que Teams sait déjà (nom, groupes, messages récents). */
+  const getSoulTemplate = async (): Promise<Result<{ content: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(500);
+      return {
+        ok: true,
+        content:
+          "# SOUL — Toi\n\n## Qui je suis\n- Nom : Toi\n- Rôle : <ton poste, ton équipe>\n- Sujets du moment : Équipe Interop, Projet FHIR Passerelle\n\n## Ton et style\n- Direct et cordial, sans formules toutes faites.\n\n## Tu ou vous\n- Je tutoie mon équipe ; je vouvoie les clients.\n\n## Longueur\n- Une à trois phrases.\n\n## Ce que Trame doit refuser\n- Jamais d'engagement de date à ma place.\n\n## Exemples de messages écrits par moi\n> Je regarde ça ce soir et je te dis.\n",
+      };
+    }
+    return request<{ content: string }>("GET", "/api/soul/template");
+  };
+
   /** SOUL.md déposé précédemment (null si c'est encore celui livré par défaut). */
   const getSoul = async (): Promise<Result<{ soul: { filename: string; content: string } | null }>> => {
     if (!connectedRef.current) return { ok: true, soul: null };
@@ -728,6 +745,7 @@ export function useTrame() {
     saveWatchlist,
     uploadSoul,
     getSoul,
+    getSoulTemplate,
     factoryReset,
     previewSoul,
     getPeople,

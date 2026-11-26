@@ -113,6 +113,52 @@ fn restart_backend(app: AppHandle) {
     spawn_backend(&app);
 }
 
+/// Trame lives in the tray and is rarely relaunched: look for a new release every
+/// 6 hours too, and let the UI offer it (« Mettre à jour »).
+async fn watch_updates(app: AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    loop {
+        pause_for(std::time::Duration::from_secs(6 * 60 * 60)).await;
+        if let Ok(updater) = app.updater() {
+            if let Ok(Some(update)) = updater.check().await {
+                let _ = app.emit("update-ready", update.version.clone());
+            }
+        }
+    }
+}
+
+async fn pause_for(d: std::time::Duration) {
+    let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
+/// Réglages › Mises à jour : « Rechercher ».
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(Some(update.version.clone())),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// « Installer et redémarrer » : download, stop the engine, install, restart.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Trame est déjà à jour.".to_string())?;
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    stop_backend(&app);
+    update.install(bytes).map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 fn quit(app: &AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
     stop_backend(app);
@@ -130,7 +176,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![restart_backend])
+        .invoke_handler(tauri::generate_handler![restart_backend, check_update, install_update])
         .setup(|app| {
             spawn_backend(app.handle());
 
@@ -166,6 +212,7 @@ fn main() {
                 .build(app)?;
 
             tauri::async_runtime::spawn(update_on_launch(app.handle().clone()));
+            tauri::async_runtime::spawn(watch_updates(app.handle().clone()));
 
             if std::env::args().any(|a| a == "--minimized") {
                 if let Some(w) = app.get_webview_window("main") {

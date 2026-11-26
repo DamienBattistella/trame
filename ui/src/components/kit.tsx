@@ -2,21 +2,18 @@
    pour le wizard ET le panneau. */
 import { useId } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Hash, Loader2, Timer, User, Users, X } from "lucide-react";
-import type { Surface } from "@/types";
+import { Check, Loader2, Timer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export const spring = { type: "spring", stiffness: 500, damping: 32 } as const;
 export const pop = { type: "spring", stiffness: 520, damping: 17 } as const;
 
+/** Initiales lisibles : lettres seulement (emojis, crochets et tirets ignorés). */
 export function initials(name: string) {
-  return name
-    .replace(/[#]/g, "")
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase())
-    .join("");
+  const words = name.split(/[\s_-]+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
+  const letters = words.slice(0, 2).map((w) => Array.from(w)[0]!.toUpperCase());
+  return letters.join("") || "?";
 }
 
 /** Avatar shadcn à initiales (Teams n'expose pas les photos). */
@@ -32,46 +29,23 @@ export function avatarHue(name: string): number {
 }
 
 /** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom. */
-const SURFACE_ICON = { dm: User, group: Users, channel: Hash } as const;
-const SURFACE_LABEL = { dm: "Conversation privée Teams", group: "Groupe Teams", channel: "Canal Teams" } as const;
-
-/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom. Avec
- *  `surface`, une pastille violette Teams indique le type : 1:1, groupe ou canal. */
-export function InitialsAvatar({
-  name,
-  className,
-  surface,
-  muted = false,
-}: {
-  name: string;
-  className?: string;
-  surface?: Surface;
-  muted?: boolean;
-}) {
-  const Icon = surface ? SURFACE_ICON[surface] : null;
+/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom. */
+export function InitialsAvatar({ name, className }: { name: string; className?: string }) {
   return (
-    <span className={cn("relative inline-flex shrink-0", muted && "grayscale")} title={surface ? SURFACE_LABEL[surface] : undefined}>
-      <Avatar className={cn("size-9 transition-[filter]", className)} aria-hidden>
-        <AvatarFallback
-          className="bg-[oklch(0.93_0.045_var(--avatar-h))] text-xs font-semibold text-[oklch(0.4_0.12_var(--avatar-h))] dark:bg-[oklch(0.33_0.07_var(--avatar-h))] dark:text-[oklch(0.9_0.06_var(--avatar-h))]"
-          style={{ "--avatar-h": avatarHue(name) } as React.CSSProperties}
-        >
-          {initials(name)}
-        </AvatarFallback>
-      </Avatar>
-      {Icon && (
-        <span className="absolute -right-1 -bottom-1 grid size-4 place-items-center rounded-full bg-teams text-teams-foreground ring-2 ring-card">
-          <Icon className="size-2.5" strokeWidth={2.5} />
-          <span className="sr-only">{SURFACE_LABEL[surface!]}</span>
-        </span>
-      )}
-    </span>
+    <Avatar className={cn("size-9 shrink-0", className)} aria-hidden>
+      <AvatarFallback
+        className="bg-[oklch(0.93_0.045_var(--avatar-h))] text-xs font-semibold text-[oklch(0.4_0.12_var(--avatar-h))] dark:bg-[oklch(0.33_0.07_var(--avatar-h))] dark:text-[oklch(0.9_0.06_var(--avatar-h))]"
+        style={{ "--avatar-h": avatarHue(name) } as React.CSSProperties}
+      >
+        {initials(name)}
+      </AvatarFallback>
+    </Avatar>
   );
 }
 
-export function GroupList({ children, className }: { children: React.ReactNode; className?: string }) {
+export function GroupList({ children, className, ...rest }: React.ComponentProps<"div">) {
   return (
-    <div className={cn("w-full divide-y divide-border overflow-hidden rounded-2xl border bg-card text-left", className)}>
+    <div {...rest} className={cn("w-full divide-y divide-border overflow-hidden rounded-2xl border bg-card text-left", className)}>
       {children}
     </div>
   );

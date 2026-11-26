@@ -20,6 +20,13 @@ class WatchEntity(BaseModel):
     watch: bool = False
     mode: Mode = "draft"
     named_people: list[str] = Field(default_factory=list)
+    # Live facts from Teams (not saved): rail position (0 = most recent), time of the
+    # last message as Teams shows it ("04:49", "25/11"), unread flag.
+    rank: Optional[int] = None
+    last_activity: Optional[str] = None
+    unread: bool = False
+    is_self: bool = False
+    own_preview: Optional[str] = None
 
 
 class IncomingMessage(BaseModel):

@@ -33,3 +33,10 @@ def test_meeting_and_french():
 
 def test_plain_name_untouched():
     assert parse("Amélie Durand").name == "Amélie Durand"
+
+
+def test_last_time():
+    assert parse("Chat Bertrand GAUTHIER Offline Last message voir ça demain 25/11").last_time == "25/11"
+    assert parse("Chat Damien Battistella (You) You: test 04:49").last_time == "04:49"
+    assert parse("Chat Anne Away Last message ok Yesterday").last_time == "Hier"
+    assert parse("Amélie Durand").last_time is None

@@ -8,6 +8,11 @@ export interface WatchEntity {
   watch: boolean;
   mode: Mode;
   namedPeople: string[];
+  /** Position dans la liste de Teams (0 = activité la plus récente). */
+  rank?: number | null;
+  /** Heure du dernier message telle que Teams l'affiche (« 04:49 », « 25/11 »). */
+  lastActivity?: string | null;
+  unread?: boolean;
 }
 
 export interface DraftItem {

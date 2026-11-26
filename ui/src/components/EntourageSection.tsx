@@ -3,8 +3,9 @@ import { motion, useAnimationControls } from "motion/react";
 import { Loader2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { GroupList, SectionLabel, shake } from "@/components/kit";
+import { GroupList, shake } from "@/components/kit";
 import { Trame } from "@/api";
+import { cn } from "@/lib/utils";
 import { PeopleSummary } from "@/types";
 
 const dateFr = (iso: string | null) => {
@@ -17,6 +18,7 @@ const dateFr = (iso: string | null) => {
 export function EntourageSection({ trame }: { trame: Trame }) {
   const [people, setPeople] = useState<PeopleSummary | null>(null);
   const [busy, setBusy] = useState(false);
+  const [drag, setDrag] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const controls = useAnimationControls();
 
@@ -52,8 +54,21 @@ export function EntourageSection({ trame }: { trame: Trame }) {
 
   return (
     <motion.div animate={controls}>
-      <SectionLabel>Entourage</SectionLabel>
-      <GroupList>
+      <GroupList
+        className={cn("transition-colors duration-200", drag && "border-primary bg-primary/5")}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!drag) setDrag(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          pick(e.dataTransfer.files[0]);
+        }}
+      >
         <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
           <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
             <Users className="size-4" />
@@ -62,14 +77,16 @@ export function EntourageSection({ trame }: { trame: Trame }) {
             {people?.loaded ? (
               <>
                 <span className="text-sm font-medium">
-                  {people.count} personne{people.count > 1 ? "s" : ""}
+                  {drag ? "Lâche le nouveau fichier ici" : `${people.count} personne${people.count > 1 ? "s" : ""}`}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
                   {[people.source && `Exporté de ${people.source}`, when && `le ${when}`].filter(Boolean).join(" ")}
                 </span>
               </>
             ) : (
-              <span className="text-sm text-muted-foreground">Aucun entourage importé</span>
+              <span className="text-sm text-muted-foreground">
+                {drag ? "Lâche ENTOURAGE.json ici" : "Glisse ENTOURAGE.json ici, ou importe-le"}
+              </span>
             )}
           </div>
           {busy && <Loader2 className="size-4 animate-spin text-muted-foreground" />}

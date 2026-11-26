@@ -1,11 +1,11 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, BookOpenText, Check, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
 import { toast } from "sonner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -14,18 +14,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BrainChoice } from "@/components/BrainConnect";
-import { ConversationList } from "@/components/ConversationList";
+import { ConversationList, ConversationMeta } from "@/components/ConversationList";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ default: m.BriefSheet })));
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GithubConnect } from "@/components/GithubConnect";
 import { EntourageSection } from "@/components/EntourageSection";
+import { UpdatesRow } from "@/components/UpdatesRow";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
-import { appVersion, autostartEnabled, isDesktop, setAutostart } from "@/desktop";
+import { autostartEnabled, isDesktop, setAutostart } from "@/desktop";
 import { DraftItem, LogItem, Settings, SettingsPatch, Surface } from "@/types";
 
 
@@ -73,7 +74,6 @@ export function Panel({
 }) {
   const { state } = trame;
   const [briefFor, setBriefFor] = useState<BriefTarget | null>(null);
-  const setTab = (t: string) => onTab(t as PanelTab);
   // Le brief n'est chargé qu'à la première ouverture, puis reste monté pour ses animations.
   const [briefUsed, setBriefUsed] = useState(false);
   useEffect(() => {
@@ -81,7 +81,7 @@ export function Panel({
   }, [briefFor]);
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col overflow-hidden px-6 pt-5">
+    <div className={cn("mx-auto flex h-full flex-col overflow-hidden px-6 pt-5 transition-[max-width] duration-300", tab === "settings" ? "max-w-5xl" : "max-w-3xl")}>
       <AnimatePresence initial={false}>
         {state.paused && (
           <motion.div
@@ -114,18 +114,10 @@ export function Panel({
         )}
       </AnimatePresence>
 
-      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="self-start rounded-full">
-          <TabsTrigger value="drafts" className="rounded-full">
-            Brouillons <CountBadge n={state.drafts.length} />
-          </TabsTrigger>
-          <TabsTrigger value="watchlist" className="rounded-full">Conversations</TabsTrigger>
-          <TabsTrigger value="logs" className="rounded-full">Journal</TabsTrigger>
-          <TabsTrigger value="settings" className="rounded-full">Réglages</TabsTrigger>
-        </TabsList>
+      <div className="flex min-h-0 flex-1 flex-col">
 
         <TabsContent value="drafts" className="flex-1 overflow-auto">
-          <Drafts trame={trame} onBrief={setBriefFor} onChoose={() => setTab("watchlist")} />
+          <Drafts trame={trame} onBrief={setBriefFor} onChoose={() => onTab("watchlist")} />
         </TabsContent>
         <TabsContent value="watchlist" className="flex-1 overflow-auto">
           <Watchlist trame={trame} onBrief={setBriefFor} />
@@ -133,10 +125,10 @@ export function Panel({
         <TabsContent value="logs" className="flex-1 overflow-auto">
           <Logs logs={state.logs} />
         </TabsContent>
-        <TabsContent value="settings" className="flex-1 overflow-auto">
+        <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
           <SettingsView trame={trame} onRestartSetup={onRestartSetup} />
         </TabsContent>
-      </Tabs>
+      </div>
       {briefUsed && (
         <Suspense fallback={null}>
           <BriefSheet trame={trame} target={briefFor} onClose={() => setBriefFor(null)} />
@@ -345,7 +337,7 @@ function DraftCard({ draft: d, trame, onBrief }: { draft: DraftItem; trame: Tram
         )}
       >
         <header className="flex items-center gap-3">
-          <InitialsAvatar name={d.from} surface={d.surface} className="size-8" />
+          <InitialsAvatar name={d.from} className="size-8" />
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="truncate font-medium">{d.from}</span>
@@ -473,9 +465,9 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
         className="h-[52vh]"
         renderRow={(c) => (
           <div className="group flex min-h-14 items-center gap-3 px-4 py-2">
-            <InitialsAvatar name={c.displayName} surface={c.surface} className="size-8" />
+            <InitialsAvatar name={c.displayName} className="size-8" />
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground")}>{c.displayName}</span>
+              <span className={cn("truncate transition-colors duration-200", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
               {c.namedPeople.length > 0 && (
                 <span className="truncate text-xs text-muted-foreground">réagit à {c.namedPeople.join(", ")}</span>
               )}
@@ -500,6 +492,9 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
                 </motion.div>
               )}
             </AnimatePresence>
+            <span className="flex w-16 justify-end">
+              <ConversationMeta c={c} />
+            </span>
             <Switch
               aria-label={`Suivre ${c.displayName}`}
               checked={c.watch}
@@ -553,11 +548,9 @@ const COUNTDOWNS = [3, 5, 10];
 const BRIEF_DEPTHS = [20, 30, 50];
 
 /** Libellé de section + pastille d'état d'enregistrement (en cours → coche). */
-function SectionHeader({ children, state }: { children: React.ReactNode; state: SaveState }) {
+function SaveIndicator({ state }: { state: SaveState }) {
   return (
-    <div className="flex items-center gap-2">
-      <SectionLabel>{children}</SectionLabel>
-      <span className="mb-2 grid size-4 place-items-center">
+    <span className="grid size-4 place-items-center">
         <AnimatePresence mode="popLayout" initial={false}>
           {state === "saving" && (
             <motion.span key="saving" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -578,12 +571,14 @@ function SectionHeader({ children, state }: { children: React.ReactNode; state: 
             </motion.span>
           )}
         </AnimatePresence>
-      </span>
-    </div>
+    </span>
   );
 }
 
+type SettingsPane = "general" | "brain" | "people" | "github" | "brief" | "safety" | "advanced";
+
 function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup: () => void }) {
+  const [pane, setPane] = useState<SettingsPane>("general");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [save, setSave] = useState<Record<Section, SaveState>>({ brain: "idle", github: "idle", safety: "idle", brief: "idle" });
@@ -653,10 +648,32 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
   const countdowns = Array.from(new Set([...COUNTDOWNS, safety.countdownSeconds])).sort((a, b) => a - b);
   const depths = Array.from(new Set([...BRIEF_DEPTHS, brief.lastMessages])).sort((a, b) => a - b);
 
-  return (
-    <div className="flex max-w-xl flex-col gap-6 py-5">
+  const panes: { id: SettingsPane; label: string; icon: React.ElementType; desc: string; state?: SaveState; body: React.ReactNode }[] = [
+    {
+      id: "general",
+      label: "Général",
+      icon: Settings2,
+      desc: "Démarrage et comportement de l'application.",
+      body: (
+      <div>
+        <GroupList>
+          <UpdatesRow />
+          <AutostartRow />
+          <div className="px-4 py-2.5 text-xs text-muted-foreground">
+            Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
+          </div>
+        </GroupList>
+      </div>
+      ),
+    },
+    {
+      id: "brain",
+      label: "Cerveau",
+      icon: Sparkle,
+      desc: "Qui rédige tes réponses, et son état de connexion.",
+      state: save.brain,
+      body: (
       <motion.div animate={brainCtl}>
-        <SectionHeader state={save.brain}>Cerveau</SectionHeader>
         <BrainChoice
           trame={trame}
           value={settings.brain}
@@ -664,21 +681,23 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
           size="md"
         />
       </motion.div>
-
-      <EntourageSection trame={trame} />
-
-      <div>
-        <SectionLabel>Application</SectionLabel>
-        <GroupList>
-          <AutostartRow />
-          <div className="px-4 py-2.5 text-xs text-muted-foreground">
-            Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
-          </div>
-        </GroupList>
-      </div>
-
+      ),
+    },
+    {
+      id: "people",
+      label: "Entourage",
+      icon: Users,
+      desc: "Qui est qui au travail, pour adapter chaque réponse.",
+      body: <EntourageSection trame={trame} />,
+    },
+    {
+      id: "github",
+      label: "GitHub",
+      icon: GitBranch,
+      desc: "Retrouver les PR et issues dont on te parle. En lecture seule.",
+      state: save.github,
+      body: (
       <motion.div animate={githubCtl}>
-        <SectionHeader state={save.github}>GitHub</SectionHeader>
         <GithubConnect trame={trame} />
         <AnimatePresence initial={false}>
           {trame.githubStatus?.loggedIn && (
@@ -707,9 +726,16 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
           )}
         </AnimatePresence>
       </motion.div>
-
+      ),
+    },
+    {
+      id: "brief",
+      label: "Résumé",
+      icon: BookOpenText,
+      desc: "Résumé d'une conversation à la demande.",
+      state: save.brief,
+      body: (
       <motion.div animate={briefCtl}>
-        <SectionHeader state={save.brief}>Résumé</SectionHeader>
         <GroupList>
           <ToggleRow
             label="Résumé de conversation"
@@ -730,9 +756,16 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
           </div>
         </GroupList>
       </motion.div>
-
+      ),
+    },
+    {
+      id: "safety",
+      label: "Sécurité",
+      icon: ShieldCheck,
+      desc: "Garde-fous avant tout envoi automatique.",
+      state: save.safety,
+      body: (
       <motion.div animate={safetyCtl}>
-        <SectionHeader state={save.safety}>Sécurité</SectionHeader>
         <GroupList>
           <ToggleRow
             label="Pause pendant un partage d'écran"
@@ -758,9 +791,16 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
           />
         </GroupList>
       </motion.div>
-
+      ),
+    },
+    {
+      id: "advanced",
+      label: "Avancé",
+      icon: SlidersHorizontal,
+      desc: "Configuration et réinitialisation.",
+      body: (
+        <div className="flex flex-col gap-6">
       <div className="pb-4">
-        <SectionLabel>Configuration</SectionLabel>
         <GroupList>
           <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
             <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
@@ -776,22 +816,63 @@ function SettingsView({ trame, onRestartSetup }: { trame: Trame; onRestartSetup:
           </div>
         </GroupList>
       </div>
+          <DangerZone trame={trame} onReset={onRestartSetup} />
+        </div>
+      ),
+    },
+  ];
+  const current = panes.find((p) => p.id === pane) ?? panes[0];
 
-      <DangerZone trame={trame} onReset={onRestartSetup} />
-      <AppVersion />
-    </div>
-  );
-}
-
-function AppVersion() {
-  const [version, setVersion] = useState<string | null>(null);
-  useEffect(() => {
-    appVersion().then(setVersion);
-  }, []);
   return (
-    <p className="pb-6 text-center text-xs text-muted-foreground tabular-nums">
-      Trame {version ? `version ${version}` : "· version de développement"}
-    </p>
+    <div className="flex h-full min-h-0 gap-6 py-5">
+      <nav aria-label="Rubriques des réglages" className="flex w-48 shrink-0 flex-col gap-0.5">
+        {panes.map((p) => {
+          const Icon = p.icon;
+          const active = p.id === current.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              aria-current={active ? "page" : undefined}
+              onClick={() => setPane(p.id)}
+              className={cn(
+                "relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                active ? "font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+            >
+              {active && <motion.span layoutId="settings-pane" transition={spring} className="absolute inset-0 rounded-xl bg-secondary" />}
+              <Icon className={cn("relative size-4", p.id === "advanced" && active && "text-destructive")} />
+              <span className="relative">{p.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <ScrollArea className="min-w-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.section
+            key={current.id}
+            initial={{ opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -8 }}
+            transition={{ duration: 0.15 }}
+            aria-labelledby={`pane-${current.id}`}
+            className="flex max-w-2xl flex-col gap-4 pr-3 pb-6"
+          >
+            <header className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <h2 id={`pane-${current.id}`} className="text-xl font-semibold tracking-tight">
+                  {current.label}
+                </h2>
+                {current.state && <SaveIndicator state={current.state} />}
+              </div>
+              <p className="text-sm text-muted-foreground">{current.desc}</p>
+            </header>
+            {current.body}
+          </motion.section>
+        </AnimatePresence>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -811,7 +892,7 @@ function DangerZone({ trame, onReset }: { trame: Trame; onReset: () => void }) {
     onReset();
   };
   return (
-    <motion.div animate={controls} className="pb-2">
+    <motion.div animate={controls}>
       <SectionLabel>Zone de danger</SectionLabel>
       <div className="overflow-hidden rounded-2xl border border-destructive/40 bg-destructive/5">
         <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2.5">
