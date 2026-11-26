@@ -221,7 +221,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
 type Section = "brain" | "github" | "safety" | "brief" | "telemetry" | "mcp";
 type SaveState = "idle" | "saving" | "saved";
 
-const COUNTDOWNS = [3, 5, 10];
+const COUNTDOWNS = [0, 3, 5, 10];
 const BRIEF_DEPTHS = [20, 30, 50];
 
 /** Libellé de section + pastille d'état d'enregistrement (en cours → coche). */
@@ -489,7 +489,12 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             onChange={(v) => update("safety", { safety: { ...safety, markAutoReplies: v } })}
           />
           <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <span className="text-sm">Compte à rebours avant envoi auto</span>
+            <span className="flex min-w-0 flex-col">
+              <span className="text-sm">Compte à rebours avant envoi auto</span>
+              {safety.countdownSeconds === 0 && (
+                <span className="text-xs text-muted-foreground">Envoi immédiat : plus le temps de mettre en pause.</span>
+              )}
+            </span>
             <Segment
               value={String(safety.countdownSeconds)}
               options={countdowns.map((n) => ({ value: String(n), label: `${n} s` }))}

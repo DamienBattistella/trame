@@ -488,3 +488,13 @@ def test_notices_are_capped_and_newest_first(make_client):
     for i in range(25):
         watcher._notice(_incoming(text=f"m{i}"))
     assert len(watcher.state.notices) == 20 and watcher.state.notices[0].text == "m24"
+
+
+def test_countdown_zero_is_kept(make_client, fresh_home):
+    client, watcher, _d = make_client()
+    r = client.put("/api/settings", json={"safety": {"countdown_seconds": 0}})
+    assert r.status_code == 200 and r.json()["settings"]["safety"]["countdown_seconds"] == 0
+    assert watcher.cfg["reply"]["auto_send_countdown_seconds"] == 0
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["reply"]["auto_send_countdown_seconds"] == 0
+    assert client.get("/api/settings").json()["settings"]["safety"]["countdown_seconds"] == 0

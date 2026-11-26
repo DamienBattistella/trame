@@ -69,7 +69,7 @@ def test_auto_send_is_marked(make_client):
 def test_countdown_log_shows_the_marked_text(make_client):
     _client, watcher, _driver = make_client()
     watcher._process(_msg(DM_AUTO))
-    assert any("dans 0 s" in log.text and "Réponse de test 🤖" in log.text for log in watcher.state.logs)
+    assert any("tout de suite" in log.text and "Réponse de test 🤖" in log.text for log in watcher.state.logs)
 
 
 def test_manual_send_is_not_marked(make_client):
