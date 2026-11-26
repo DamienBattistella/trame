@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { GroupList } from "@/components/kit";
 import { TeamsLogo } from "@/brands";
-import { isDesktop, restartBackend, teamsWebHide, teamsWebOpen } from "@/desktop";
+import { isDesktop, restartBackend, teamsWebClose, teamsWebHide, teamsWebOpen } from "@/desktop";
 import { Trame } from "@/api";
 
 type Status = { enabled: boolean; relay?: boolean; ready?: boolean; title?: string; error?: string };
@@ -35,11 +35,18 @@ export function TeamsWebSettings({ trame, enabled, onToggle }: { trame: Trame; e
     setSwitching(true);
     const saved = await onToggle(v);
     if (saved) {
-      await restartBackend();
-      toast.success(v ? "Teams intégré activé" : "Retour au pilotage de l'appli Teams", {
-        description: v ? "Connecte-toi une fois dans la fenêtre Teams de Trame." : "Le moteur a redémarré.",
-      });
-      if (v) await teamsWebOpen(true);
+      if (!v) await teamsWebClose();
+      const restarted = await restartBackend();
+      const openError = v ? await teamsWebOpen(true) : null;
+      if (!restarted || openError) {
+        toast.error("Changement incomplet", {
+          description: openError ? `Fenêtre Teams : ${openError}` : "Le moteur n'a pas redémarré : relance Trame.",
+        });
+      } else {
+        toast.success(v ? "Teams intégré activé" : "Retour au pilotage de l'appli Teams", {
+          description: v ? "Connecte-toi une fois dans la fenêtre Teams de Trame." : "Le moteur a redémarré.",
+        });
+      }
     }
     setSwitching(false);
   };

@@ -67,3 +67,30 @@ def test_activate_prefers_accessibility_over_mouse(monkeypatch):
     win2 = Win()
     stuck = Rail(win2, "Hugo Lannes", works=set())
     assert d._activate(win2, stuck) == "mouse" and stuck.clicked and win2.activated
+
+
+class TopWin:
+    ControlTypeName = "WindowControl"
+
+    def __init__(self, name, items=0):
+        self.Name, self.items = name, items
+
+    def GetFirstChildControl(self):
+        return object()
+
+
+def test_main_window_preferred_over_meeting_window(monkeypatch):
+    d = D.__new__(D)
+    d.window_title = "Microsoft Teams"
+    meeting = TopWin("workshop séjours | Microsoft Teams")
+    main = TopWin("Activité | Microsoft Teams", items=12)
+    other = TopWin("Bloc-notes")
+    root = type("R", (), {"GetChildren": lambda self: [other, meeting, main]})()
+    d.auto = type("A", (), {"GetRootControl": staticmethod(lambda: root)})()
+    monkeypatch.setattr(d, "_find_rail", lambda w: w if w.items else None, raising=False)
+    monkeypatch.setattr(d, "_rail_items", lambda r: list(range(r.items)), raising=False)
+    assert d._pick_window() is main
+    chat = TopWin("Conversation | Romain CUREAU | Microsoft Teams")
+    root2 = type("R", (), {"GetChildren": lambda self: [meeting, chat, main]})()
+    d.auto = type("A", (), {"GetRootControl": staticmethod(lambda: root2)})()
+    assert d._pick_window() is chat

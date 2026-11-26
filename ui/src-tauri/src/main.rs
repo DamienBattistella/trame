@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -12,6 +13,22 @@ use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct Backend(Mutex<Option<CommandChild>>);
+
+static UPDATING: AtomicBool = AtomicBool::new(false);
+
+struct UpdateGuard;
+
+impl UpdateGuard {
+    fn take() -> Option<Self> {
+        (!UPDATING.swap(true, Ordering::SeqCst)).then_some(UpdateGuard)
+    }
+}
+
+impl Drop for UpdateGuard {
+    fn drop(&mut self) {
+        UPDATING.store(false, Ordering::SeqCst);
+    }
+}
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -48,6 +65,7 @@ async fn update_on_launch(app: AppHandle) {
     if cfg!(debug_assertions) {
         return;
     }
+    let Some(_guard) = UpdateGuard::take() else { return };
     let Ok(updater) = app.updater() else { return };
     let update = match updater.check().await {
         Ok(Some(update)) => update,
@@ -69,6 +87,7 @@ async fn update_on_launch(app: AppHandle) {
     stop_backend(&app);
     if let Err(e) = update.install(bytes) {
         eprintln!("[update] installation impossible : {e}");
+        spawn_backend(&app);
         let _ = app.emit("update-failed", ());
         return;
     }
@@ -111,7 +130,7 @@ fn spawn_backend(app: &AppHandle) {
 
 /// "Réessayer" on the engine-down screen: stop whatever is left and start again.
 #[tauri::command]
-fn restart_backend(app: AppHandle) {
+async fn restart_backend(app: AppHandle) {
     stop_backend(&app);
     spawn_backend(&app);
 }
@@ -150,6 +169,7 @@ async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
 /// « Installer et redémarrer » : download, stop the engine, install, restart.
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
+    let _guard = UpdateGuard::take().ok_or_else(|| "Une mise à jour est déjà en cours.".to_string())?;
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
@@ -158,7 +178,10 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Trame est déjà à jour.".to_string())?;
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     stop_backend(&app);
-    update.install(bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = update.install(bytes) {
+        spawn_backend(&app);
+        return Err(e.to_string());
+    }
     app.restart();
 }
 
@@ -168,8 +191,10 @@ const TEAMS_BRIDGE: &str = include_str!("../teams-bridge.js");
 
 /// « Teams intégré » (expérimental) : Teams web in a Trame window, hidden once the
 /// user has signed in. Its page may only call `teams_bridge_reply`.
+/// Async on purpose: building a window from a synchronous command deadlocks on
+/// Windows (WebView2), and sync commands run on the main thread.
 #[tauri::command]
-fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
+async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(TEAMS_WEB) {
         if visible {
             let _ = w.show();
@@ -196,10 +221,26 @@ fn teams_web_hide(app: AppHandle) {
     }
 }
 
+/// Teams intégré turned off: close the signed-in Teams web session too.
+#[tauri::command]
+fn teams_web_close(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(TEAMS_WEB) {
+        let _ = w.destroy();
+    }
+}
+
+fn is_teams_host(url: &tauri::Url) -> bool {
+    matches!(url.host_str(), Some(h) if h == "teams.microsoft.com" || h == "teams.cloud.microsoft" || h.ends_with(".teams.microsoft.com"))
+}
+
 /// Relay from the Trame UI: run one bridge command inside the Teams page.
 #[tauri::command]
 fn teams_web_eval(app: AppHandle, script: String) -> Result<(), String> {
     let w = app.get_webview_window(TEAMS_WEB).ok_or("Teams intégré n'est pas ouvert")?;
+    let url = w.url().map_err(|e| e.to_string())?;
+    if !is_teams_host(&url) {
+        return Err("Teams n'est pas affiché (connexion en cours ?)".into());
+    }
     w.eval(&script).map_err(|e| e.to_string())
 }
 
@@ -232,6 +273,7 @@ fn main() {
             install_update,
             teams_web_open,
             teams_web_hide,
+            teams_web_close,
             teams_web_eval,
             teams_bridge_reply
         ])

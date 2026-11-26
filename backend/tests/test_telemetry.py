@@ -50,3 +50,9 @@ def test_invalid_endpoint_refused(make_client):
     client, _w, _ = make_client()
     r = client.put("/api/settings", json={"telemetry": {"enabled": True, "endpoint": "pas une url"}})
     assert r.status_code == 422
+
+
+def test_nested_quotes_fully_redacted():
+    telemetry._state["content"] = False
+    out = telemetry.redact("Envoyé à Alice : « Ok pour « demain », je confirme le budget de 40k »")
+    assert "40k" not in out and "demain" not in out and out.startswith("Envoyé à Alice")

@@ -35,27 +35,37 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({ review: false, unread: false, followed: false, others: true });
   const [catching, setCatching] = useState(false);
 
-  const draftOf = useMemo(() => new Map(drafts.map((d) => [d.threadId, d])), [drafts]);
+  // The engine lists the newest draft first: keep that one per conversation.
+  const draftOf = useMemo(() => {
+    const m = new Map<string, (typeof drafts)[number]>();
+    for (const d of drafts) if (!m.has(d.threadId)) m.set(d.threadId, d);
+    return m;
+  }, [drafts]);
 
-  const groups = useMemo(() => {
-    const out: Record<GroupId, WatchEntity[]> = { review: [], unread: [], followed: [], others: [] };
+  const items = useMemo<WatchEntity[]>(() => {
     const known = new Set(watchlist.map((w) => w.threadId));
-    const items: WatchEntity[] = [
+    return [
       ...watchlist,
-      ...drafts
+      ...[...draftOf.values()]
         .filter((d) => !known.has(d.threadId))
         .map((d) => ({ threadId: d.threadId, displayName: d.from, surface: d.surface, watch: true, mode: d.mode, namedPeople: [] })),
     ];
+  }, [watchlist, draftOf]);
+
+  const groups = useMemo(() => {
+    const out: Record<GroupId, WatchEntity[]> = { review: [], unread: [], followed: [], others: [] };
     for (const c of items.filter((c) => !query || norm(c.displayName).includes(norm(query)))) {
       const id: GroupId = draftOf.has(c.threadId) ? "review" : c.unread ? "unread" : c.watch ? "followed" : "others";
       out[id].push(c);
     }
     for (const g of Object.values(out)) g.sort(byRecent);
     return out;
-  }, [watchlist, drafts, query, draftOf]);
+  }, [items, query, draftOf]);
 
   const all = [...groups.review, ...groups.unread, ...groups.followed, ...groups.others];
-  const current = all.find((c) => c.threadId === selected) ?? null;
+  // From every conversation, not the filtered ones: searching must not close the
+  // open discussion and lose a reply being written.
+  const current = items.find((c) => c.threadId === selected) ?? null;
 
   // Première ouverture : la première réponse à relire, sinon rien de choisi.
   useEffect(() => {

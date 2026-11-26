@@ -16,7 +16,7 @@ from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
 from models import AppState, Brief, BriefSources, Draft, IncomingMessage, LogItem, WatchEntity
-from drivers.base import Focus, TeamsDriver
+from drivers.base import Focus, SendUncertain, TeamsDriver
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
 
@@ -193,7 +193,7 @@ class Watcher:
         """The user's own messages, and the replies Trame just sent, must never trigger
         a reply (an auto-mode conversation would otherwise answer itself forever)."""
         sender = (msg.sender or "").strip().casefold()
-        if sender and any(sender == n.strip().casefold() for n in self_names if n.strip()):
+        if sender in ("you", "vous", "moi") or (sender and any(sender == n.strip().casefold() for n in self_names if n.strip())):
             return True
         now = time.monotonic()
         with self._lock:
@@ -224,6 +224,13 @@ class Watcher:
                 with telemetry.span("teams.type", conversation=thread_id, send=send, auto=auto) as sp:
                     focus = self.driver.type_focused(thread_id, text, send, restore)
                     telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
+            except SendUncertain as e:
+                # Never report "nothing was sent" here: a resend could duplicate it.
+                self._remember_sent(thread_id, text)
+                self.log("warn", f"Envoi non confirmé, à vérifier dans Teams : {e}")
+                if auto:
+                    return False
+                raise ActionError(409, "Envoi non confirmé : le message est peut-être parti. Vérifie dans Teams avant de renvoyer.")
             except Exception as e:
                 self.log("warn", f"Saisie impossible: {e}")
                 return False
@@ -640,6 +647,7 @@ class Watcher:
                 new_brain = self.brain_factory(cfg)
             except Exception:
                 new_brain = None
+        self.telemetry_error = telemetry.configure(cfg.get("telemetry"))
         with self._lock:
             self.cfg = cfg
             if new_brain is not None:
@@ -768,7 +776,7 @@ class Watcher:
         try:
             with self._ui_lock:
                 diag = self.driver.diagnose(None)
-            teams = {k: diag.get(k) for k in ("driver", "window", "title_conversation", "rail_items", "selected_now")}
+            teams = {k: diag.get(k) for k in ("driver", "window", "teams_windows", "title_conversation", "rail_items", "selected_now")}
             teams["compose_found"] = bool(diag.get("compose")) if "compose" in diag else None
             out += ["", "## Teams (diagnostic court)", json.dumps(teams, ensure_ascii=False)]
         except Exception as e:

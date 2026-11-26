@@ -6,6 +6,7 @@ fn main() {
             "install_update",
             "teams_web_open",
             "teams_web_hide",
+            "teams_web_close",
             "teams_web_eval",
             "teams_bridge_reply",
         ]),

@@ -394,7 +394,14 @@ def create_app(
     @app.post("/api/diagnostics/teams")
     def diagnostics(body: DiagnosticBody):
         try:
-            report = watcher.driver.diagnose(body.thread_id)
+            # Clicking a conversation is a UI action: same lock and screen-share rule
+            # as typing, so it never races a send or shows up in a shared screen.
+            with watcher._ui_lock:
+                if body.thread_id and watcher._screen_share_guarded():
+                    raise ActionError(409, "Partage d'écran en cours : test d'ouverture annulé.")
+                report = watcher.driver.diagnose(body.thread_id)
+        except ActionError:
+            raise
         except Exception as e:
             report = {"error": repr(e)}
         watcher.log("info", "Diagnostic Teams lancé")

@@ -6,6 +6,10 @@ from typing import Callable, Iterable, Iterator, Optional
 from models import IncomingMessage, WatchEntity
 
 
+class SendUncertain(RuntimeError):
+    """Send was pressed but could not be confirmed: the message may have left."""
+
+
 @dataclass
 class Focus:
     """Outcome of a temporary focus: whether the target was confirmed active, the

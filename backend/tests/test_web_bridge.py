@@ -80,3 +80,19 @@ def test_preview_watcher_detects_only_new_messages_from_others():
     new = w.diff([("a", "Chat Romain Away Last message tu as vu ? 10:05")], convs)
     assert len(new) == 1 and new[0].sender == "Romain" and new[0].text == "tu as vu ?"
     assert w.diff([("a", "Chat Romain Away Last message You: oui 10:06")], convs) == []
+
+
+def test_preview_time_relabel_is_not_a_new_message():
+    w = PreviewWatcher()
+    convs = {"a": WatchEntity(thread_id="a", display_name="Alice", surface=Surface.dm)}
+    w.diff([("a", "Chat Alice Away Last message on se voit demain ? 23:41")], convs)
+    assert w.diff([("a", "Chat Alice Away Last message on se voit demain ? Yesterday")], convs) == []
+    assert w.diff([("a", "Chat Alice Away Last message on se voit demain ? 20/11")], convs) == []
+    assert w.diff([("a", "Conversation Alice Absent Dernier message Vous : oui 08:00")], convs) == []
+
+
+def test_own_message_in_french_never_triggers(make_client):
+    from models import IncomingMessage
+    _c, watcher, driver = make_client()
+    msg = IncomingMessage(thread_id="19:aa11@thread.v2", sender="Vous", text="je regarde", received_at="10:00", surface=Surface.dm)
+    assert watcher._process(msg) is None and driver.typed == []

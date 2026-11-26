@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from watcher import ActionError, Watcher
 
@@ -152,10 +153,11 @@ def make_router(watcher: Watcher) -> APIRouter:
             body = await request.json()
         except Exception:
             return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "JSON invalide"}}, status_code=400)
+        # Tools read Teams and call the brain (seconds): never on the event loop.
         if isinstance(body, list):
-            replies = [r for r in (rpc(m) for m in body if isinstance(m, dict)) if r]
+            replies = [r for r in [await run_in_threadpool(rpc, m) for m in body if isinstance(m, dict)] if r]
             return JSONResponse(replies) if replies else Response(status_code=202)
-        reply = rpc(body) if isinstance(body, dict) else None
+        reply = await run_in_threadpool(rpc, body) if isinstance(body, dict) else None
         return JSONResponse(reply) if reply else Response(status_code=202)
 
     @router.get("/mcp")

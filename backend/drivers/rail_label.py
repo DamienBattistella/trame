@@ -39,6 +39,7 @@ _UNREAD_RE = re.compile(r"\b(?:unread|non lus?)\b", re.IGNORECASE)
 _PREVIEW_RE = re.compile(r"\b(?:Last message|Dernier message)\s+(.*)$")
 _TRAILING_TIME_RE = re.compile(r"\s+(?:\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|yesterday|hier|[A-Z][a-z]{2,8})\s*$")
 _TIME_RE = re.compile(r"\s(\d{1,2}:\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|[Yy]esterday|[Hh]ier)\s*$")
+_SELF_SENDERS = {"you", "vous", "moi"}
 _SELF_RE = re.compile(r"\s*\((?:You|Vous|Moi)\)\s*$")
 
 
@@ -70,11 +71,12 @@ def parse(label: str) -> RailLabel:
     p = _PREVIEW_RE.search(rest)
     if p:
         body = _TRAILING_TIME_RE.sub("", p.group(1)).strip()
-        who, sep, said = body.partition(": ")
-        if sep and len(who) <= 60 and " " not in who.strip(" ").replace(" ", "", 2):
-            preview_sender, preview = who.strip(), said.strip()
-        elif sep and who.strip() in ("You", "Vous"):
+        who, sep, said = body.partition(":")
+        who = who.strip()
+        if sep and who.casefold() in _SELF_SENDERS:
             preview_sender, preview = "You", said.strip()
+        elif sep and said.startswith(" ") and len(who) <= 60 and " " not in who.replace(" ", "", 2):
+            preview_sender, preview = who, said.strip()
         else:
             preview_sender, preview = (name if surface == Surface.dm else None), body
     t = _TIME_RE.search(rest)

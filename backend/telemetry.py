@@ -103,7 +103,7 @@ def flush() -> None:
             pass
 
 
-_QUOTED = re.compile(r"«[^»]*»")
+_QUOTED = re.compile(r"«.*»", re.DOTALL)
 
 
 def redact(text: str) -> str:

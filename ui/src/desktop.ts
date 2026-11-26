@@ -57,6 +57,13 @@ export async function teamsWebHide(): Promise<void> {
     /* fenêtre absente */
   }
 }
+export async function teamsWebClose(): Promise<void> {
+  try {
+    await tauri()?.core?.invoke("teams_web_close");
+  } catch {
+    /* fenêtre absente */
+  }
+}
 export async function teamsWebEval(script: string): Promise<boolean> {
   try {
     await tauri()?.core?.invoke("teams_web_eval", { script });

@@ -19,7 +19,9 @@ export function TeamsWebRelay() {
       }).catch(() => undefined);
     });
 
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const loop = async () => {
+      let backoff = 1000;
       while (!stopped) {
         let res: Response;
         try {
@@ -29,12 +31,17 @@ export function TeamsWebRelay() {
           continue;
         }
         if (res.status === 409) {
-          await new Promise((r) => setTimeout(r, 15000));
+          await sleep(15000);
           continue;
         }
+        if (!res.ok) {
+          await sleep(backoff);
+          backoff = Math.min(backoff * 2, 30000);
+          continue;
+        }
+        backoff = 1000;
         if (!opened) {
-          opened = true;
-          await teamsWebOpen(false);
+          opened = (await teamsWebOpen(false)) === null;
         }
         const data = await res.json().catch(() => null);
         const cmd = data?.command;
@@ -44,7 +51,7 @@ export function TeamsWebRelay() {
           fetch(`${API}/api/teams-web/reply`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: cmd.id, ok: false, error: "fenêtre Teams de Trame indisponible" }),
+            body: JSON.stringify({ id: cmd.id, ok: false, error: "Teams n'est pas affiché dans la fenêtre de Trame (connexion requise ?)" }),
           }).catch(() => undefined);
         }
       }

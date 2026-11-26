@@ -26,17 +26,56 @@ class WindowsUIADriver(TeamsDriver):
         self._names: dict[str, str] = {}
         self._previews = PreviewWatcher()
 
+    def _teams_windows(self) -> list:
+        try:
+            tops = self.auto.GetRootControl().GetChildren()
+        except Exception:
+            return []
+        return [w for w in tops if self.window_title.casefold() in (w.Name or "").casefold()
+                and w.ControlTypeName == "WindowControl"]
+
+    def _warm_up(self, win) -> None:
+        # WebView2 builds the a11y tree lazily once a UIA client connects.
+        for _ in range(10):
+            if win.GetFirstChildControl() is not None:
+                return
+            time.sleep(0.3)
+
+    def _pick_window(self):
+        """Teams opens meetings and popped-out chats as extra windows that are also
+        titled "… | Microsoft Teams" and often sit on top: the main window is the
+        one showing the chat list, not simply the first match."""
+        windows = self._teams_windows()
+        if not windows:
+            return None
+        for win in windows:
+            if rail_label.title_conversation(win.Name or ""):
+                return win
+        for win in windows:
+            self._warm_up(win)
+            rail = self._find_rail(win)
+            if rail is not None and self._rail_items(rail):
+                return win
+        return windows[0]
+
     def _window(self):
         if self._win is None or not self._win.Exists(0, 0):
-            self._win = self.auto.WindowControl(searchDepth=1, SubName=self.window_title)
-            if not self._win.Exists(maxSearchSeconds=5):
-                raise RuntimeError("Fenêtre Teams introuvable (Teams ouvert ?)")
-            # Warm-up: WebView2 builds the a11y tree lazily once a UIA client connects.
-            for _ in range(10):
-                if self._win.GetFirstChildControl() is not None:
-                    break
-                time.sleep(0.3)
+            self._win = self._pick_window()
+            if self._win is None:
+                self._win = self.auto.WindowControl(searchDepth=1, SubName=self.window_title)
+                if not self._win.Exists(maxSearchSeconds=5):
+                    self._win = None
+                    raise RuntimeError("Fenêtre Teams introuvable (Teams ouvert ?)")
+            self._warm_up(self._win)
         return self._win
+
+    def _forget_window_unless_chat(self, win) -> None:
+        # The cached window lost its chat list (a meeting window took the lead, or the
+        # main window moved away from Chat): pick again on the next call.
+        if self._win is win and not rail_label.title_conversation(win.Name or ""):
+            rail = self._find_rail(win)
+            if rail is None or not self._rail_items(rail):
+                self._win = None
 
     def selftest(self) -> bool:
         try:
@@ -92,8 +131,12 @@ class WindowsUIADriver(TeamsDriver):
         rail = self._find_rail(win)
         out: list[WatchEntity] = []
         if rail is None:
+            self._forget_window_unless_chat(win)
             return out
-        for rank, item in enumerate(self._rail_items(rail)):
+        items = self._rail_items(rail)
+        if not items:
+            self._forget_window_unless_chat(win)
+        for rank, item in enumerate(items):
             label = self._label_of(item)
             thread_id = self._thread_id_of(item)
             self._names[thread_id] = label.name
@@ -226,6 +269,7 @@ class WindowsUIADriver(TeamsDriver):
             rail = self._find_rail(win)
             item = self._rail_item_for(rail, thread_id) if rail is not None else None
             if item is None:
+                self._forget_window_unless_chat(win)
                 return False
             self._activate(win, item)
             for _ in range(15):
@@ -412,6 +456,7 @@ class WindowsUIADriver(TeamsDriver):
         except Exception as e:
             return {**report, "window": f"introuvable : {e}"}
         report["window"] = {"name": win.Name, "class": win.ClassName}
+        report["teams_windows"] = [w.Name for w in self._teams_windows()][:6]
         report["title_conversation"] = self._conversation_title(win)
         rail = self._find_rail(win)
         compose = self._find_compose(win)

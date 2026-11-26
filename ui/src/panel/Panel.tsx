@@ -204,7 +204,7 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
           </div>
         )}
       />
-      <ConversationSheet trame={trame} conversation={open} onClose={() => setOpen(null)} />
+      <ConversationSheet key={open?.threadId ?? "none"} trame={trame} conversation={open} onClose={() => setOpen(null)} />
     </div>
   );
 }
@@ -315,21 +315,29 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
   /** Optimiste : on applique tout de suite, on annule si le moteur refuse. */
   const update = async (section: Section, patch: SettingsPatch) => {
     if (!settings) return;
+    // Only the patched keys move: a late answer or rollback for one section must not
+    // undo another section saved in the meantime.
+    const keys = Object.keys(patch) as (keyof Settings)[];
+    const slice = (from: Settings, onto: Settings): Settings => {
+      const out = { ...onto } as Record<keyof Settings, unknown>;
+      for (const k of keys) out[k] = from[k];
+      return out as Settings;
+    };
     const prev = settings;
-    setSettings(mergeSettings(settings, patch));
+    setSettings((cur) => (cur ? mergeSettings(cur, patch) : cur));
     const n = ++seq.current[section];
     if (timers.current[section]) clearTimeout(timers.current[section]);
     mark(section, "saving");
     const res = await trame.updateSettings(patch);
     if (n !== seq.current[section]) return;
     if (!res.ok) {
-      setSettings(prev);
+      setSettings((cur) => (cur ? slice(prev, cur) : cur));
       mark(section, "idle");
       ctl[section].start(shake);
       toast.error("Réglage non enregistré", { description: `${res.error} Ton ancien réglage est conservé.` });
       return;
     }
-    setSettings(res.settings);
+    setSettings((cur) => (cur ? slice(res.settings, cur) : res.settings));
     mark(section, "saved");
     timers.current[section] = setTimeout(() => mark(section, "idle"), 1600);
   };

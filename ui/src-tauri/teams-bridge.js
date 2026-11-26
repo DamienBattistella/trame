@@ -1,5 +1,6 @@
 (() => {
   if (window.top !== window || window.__trame) return;
+  if (!/(^|\.)teams\.(microsoft|cloud\.microsoft)\.com$|^teams\.cloud\.microsoft$/.test(location.hostname)) return;
   const reply = (payload) => window.__TAURI_INTERNALS__.invoke("teams_bridge_reply", { payload });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const label = (el) => (el?.getAttribute?.("aria-label") || el?.innerText || "").replace(/\s+/g, " ").trim();
@@ -27,13 +28,24 @@
   const sendButton = () =>
     document.querySelector('[data-tid="newMessageCommands-send"]') ||
     document.querySelector('button[aria-label^="Send"], button[aria-label^="Envoyer"]');
+  // Wall-clock deadline: the window is hidden, so timers can be throttled to 1 s or
+  // more and counting iterations would wait far longer than the engine does.
   const waitFor = async (check, ms) => {
-    for (let t = 0; t < ms; t += 150) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
       if (check()) return true;
       await sleep(150);
     }
     return check();
   };
+  const flat = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  const clear = (box) => {
+    box.focus();
+    document.execCommand("selectAll", false);
+    document.execCommand("delete", false);
+  };
+  let deadline = 0;
+  const late = () => deadline && Date.now() > deadline;
 
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
@@ -50,7 +62,7 @@
       if (!item) return { ok: false, title: document.title, error: "conversation absente de la liste" };
       item.scrollIntoView({ block: "nearest" });
       item.click();
-      const ok = await waitFor(() => isOpen(name), 4000);
+      const ok = await waitFor(() => isOpen(name), 3500);
       return { ok, title: document.title };
     },
     read: ({ last = 30 }) => {
@@ -80,14 +92,19 @@
       box.focus();
       document.execCommand("insertText", false, text);
       await sleep(150);
-      if (!box.innerText.includes(text.slice(0, 20))) return { ok: false, error: "texte non inséré" };
+      const fail = (error) => {
+        clear(box);
+        return { ok: false, error };
+      };
+      if (!flat(box.innerText).includes(flat(text).slice(0, 20))) return fail("texte non inséré");
       if (!send) return { ok: true };
-      if (!isOpen(name)) return { ok: false, error: "conversation changée avant l'envoi" };
+      if (!isOpen(name)) return fail("conversation changée avant l'envoi");
+      if (late()) return fail("délai dépassé avant l'envoi");
       const btn = sendButton();
       if (btn) btn.click();
       else box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
       const sent = await waitFor(() => !box.innerText.trim(), 3000);
-      return { ok: sent, error: sent ? undefined : "envoi non confirmé" };
+      return sent ? { ok: true } : { ok: false, uncertain: true, error: "envoi non confirmé, vérifie dans Teams" };
     },
     diagnose: () => ({
       url: location.href,
@@ -95,22 +112,25 @@
       title_conversation: titleName(),
       rail: Boolean(rail()),
       items: items().length,
-      sample: items().slice(0, 6).map(label),
+      sample: items().slice(0, 6).map((el) => label(el).split(/\s+/).slice(0, 3).join(" ")),
       editor: Boolean(editor()),
       send_button: Boolean(sendButton()),
       messages: document.querySelectorAll('[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]').length,
     }),
   };
 
-  window.__trame = {
+  const api = Object.freeze({
     run: async (cmd) => {
       try {
         const op = ops[cmd.op];
         if (!op) throw new Error(`opération inconnue : ${cmd.op}`);
+        if (cmd.deadline_ms && Date.now() > cmd.deadline_ms) throw new Error("commande expirée");
+        deadline = cmd.deadline_ms || 0;
         reply({ id: cmd.id, ok: true, result: await op(cmd.args || {}) });
       } catch (e) {
         reply({ id: cmd.id, ok: false, error: String((e && e.message) || e) });
       }
     },
-  };
+  });
+  Object.defineProperty(window, "__trame", { value: api, writable: false, configurable: false });
 })();

@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Iterable, Optional
 
 from drivers import rail_label
-from drivers.base import TeamsDriver
+from drivers.base import SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
 from models import IncomingMessage, Surface, WatchEntity
 
@@ -39,10 +39,19 @@ class WebBridgeDriver(TeamsDriver):
     # --- relay side (HTTP endpoints) ---
     def next_command(self, wait: float = 20.0) -> Optional[dict]:
         self._last_poll = time.monotonic()
-        try:
-            return self._commands.get(timeout=wait)
-        except queue.Empty:
-            return None
+        end = time.monotonic() + wait
+        while True:
+            try:
+                cmd = self._commands.get(timeout=max(0.0, end - time.monotonic()))
+            except queue.Empty:
+                return None
+            # A command whose caller already gave up must never run late: a "type"
+            # that timed out was reported as not sent and must stay unsent.
+            with self._lock:
+                live = cmd["id"] in self._pending
+            if live and time.time() < cmd["deadline"]:
+                return cmd
+            self._last_poll = time.monotonic()
 
     def deliver(self, cid: int, ok: bool, result: Any = None, error: Optional[str] = None) -> None:
         with self._lock:
@@ -61,9 +70,13 @@ class WebBridgeDriver(TeamsDriver):
         slot = {"event": threading.Event()}
         with self._lock:
             self._pending[cid] = slot
-        self._commands.put({"id": cid, "op": op, "args": args})
+        wait = timeout or self.RPC_TIMEOUT
+        # The deadline (epoch ms) travels with the command so the page refuses it once
+        # the engine has stopped waiting, even if the relay was slow to fetch it.
+        self._commands.put({"id": cid, "op": op, "args": args, "deadline": time.time() + wait,
+                            "deadline_ms": int((time.time() + wait - 1.0) * 1000)})
         try:
-            if not slot["event"].wait(timeout or self.RPC_TIMEOUT):
+            if not slot["event"].wait(wait):
                 raise BridgeUnavailable(f"Teams intégré : pas de réponse à « {op} ».")
             if not slot.get("ok"):
                 raise BridgeUnavailable(f"Teams intégré : {slot.get('error') or op + ' a échoué'}")
@@ -92,6 +105,8 @@ class WebBridgeDriver(TeamsDriver):
                 continue
             thread_id = rail_label.stable_id(it.get("id") or "") or f"name:{label.name}"
             out.append({**it, "thread_id": thread_id, "parsed": label})
+            self._names[thread_id] = label.name
+            self._kinds[thread_id] = label.surface
         return out
 
     def list_conversations(self) -> list[WatchEntity]:
@@ -140,7 +155,14 @@ class WebBridgeDriver(TeamsDriver):
                 for m in msgs if (m.get("text") or "").strip()]
 
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
-        res = self._rpc("type", name=self._name(thread_id), text=text, send=send, timeout=15)
+        try:
+            res = self._rpc("type", name=self._name(thread_id), text=text, send=send, timeout=15)
+        except BridgeUnavailable as e:
+            if send and "pas de réponse" in str(e):
+                raise SendUncertain(str(e)) from e
+            raise
+        if send and res and res.get("uncertain"):
+            raise SendUncertain(res.get("error") or "envoi non confirmé")
         return bool(res and res.get("ok"))
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

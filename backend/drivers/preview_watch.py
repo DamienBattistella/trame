@@ -21,9 +21,14 @@ class PreviewWatcher:
             label = rail_label.parse(raw)
             if label.preview is None:
                 continue
-            key = f"{label.preview_sender}|{label.preview}|{label.last_time}"
+            # The displayed time changes on its own ("23:41" → "Hier" → "20/11"): only
+            # the time of day may tell two identical messages apart.
+            clock = label.last_time if label.last_time and ":" in label.last_time else ""
+            key = f"{label.preview_sender}|{label.preview}|{clock}"
             current[thread_id] = key
             if not self._primed or self._seen.get(thread_id) == key:
+                continue
+            if self._seen.get(thread_id, "").rsplit("|", 1)[0] == key.rsplit("|", 1)[0] and not clock:
                 continue
             if label.preview_sender in (None, "You") or label.is_self:
                 continue

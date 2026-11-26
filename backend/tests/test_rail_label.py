@@ -55,3 +55,10 @@ def test_teams_v2_calibration():
     assert is_structural("Hexagone", "expanded=true;level=1")
     assert not is_structural("Foundation 🧱", "expanded=false;level=2;selected=false")
     assert same_name("Romain  CUREAU", "romain cureau")
+
+
+def test_french_self_preview_is_own():
+    r = parse("Conversation Romain CUREAU Absent Dernier message Vous : je regarde 10:02")
+    assert r.preview_sender == "You" and r.preview == "je regarde"
+    r = parse("Chat Chloé Julenon Away Last message You: J'arrive 09:12")
+    assert r.preview_sender == "You"
