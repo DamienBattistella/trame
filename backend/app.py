@@ -229,6 +229,15 @@ class FolderBody(BaseModel):
     directory: Optional[str] = Field(default=None, max_length=400)
 
 
+class FolderChoiceBody(BaseModel):
+    directory: str = Field(min_length=1, max_length=400)
+
+
+class TranscriptFileBody(BaseModel):
+    path: str = Field(min_length=1, max_length=600)
+    reveal: bool = False
+
+
 class DiagnosticBody(BaseModel):
     thread_id: Optional[str] = None
 
@@ -438,6 +447,21 @@ def create_app(
     def meetings_open_folder(body: FolderBody):
         """Open the transcripts folder in the Explorer (created when missing)."""
         return {"ok": True, **watcher.open_transcripts_folder(body.directory)}
+
+    @app.get("/api/meetings/folder")
+    def meetings_folder():
+        """The transcripts folder, without reading Teams nor opening anything."""
+        return {"ok": True, **watcher.transcripts_folder()}
+
+    @app.post("/api/meetings/folder")
+    def meetings_set_folder(body: FolderChoiceBody):
+        """Choose the transcripts folder (remembered), without opening anything."""
+        return {"ok": True, **watcher.set_transcripts_folder(body.directory)}
+
+    @app.post("/api/meetings/file")
+    def meetings_open_file(body: TranscriptFileBody):
+        """Open a saved .vtt, or show it selected in the Explorer (reveal)."""
+        return {"ok": True, **watcher.open_transcript_file(body.path, body.reveal)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):

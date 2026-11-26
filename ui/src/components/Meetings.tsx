@@ -1,31 +1,89 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertTriangle, CalendarClock, Check, FileText, FolderOpen, Loader2, Lock, RefreshCw, SearchX } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  Clock,
+  Copy,
+  Download,
+  FileCheck2,
+  FileText,
+  FileWarning,
+  FileX2,
+  FolderOpen,
+  FolderSearch,
+  Loader2,
+  Lock,
+  MoreHorizontal,
+  RefreshCw,
+  Repeat,
+  Search,
+  SearchX,
+  Unplug,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Trame } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GroupList, SectionLabel, spring } from "@/components/kit";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { GroupList, SectionLabel, pop } from "@/components/kit";
 import { cn } from "@/lib/utils";
+import { durationLabel, durationMinutes, fold, groupByPeriod, matches, occurrences, shortDate, shortPath, slotOf } from "@/lib/meetings";
 import { Meeting, SavedTranscript } from "@/types";
 
 type Fetch =
+  | { state: "queued" }
   | { state: "run" }
   | { state: "ok"; saved: SavedTranscript }
   | { state: "error"; error: string; kind: "none" | "denied" | "other" };
 
-/** Le motif d'un refus, pour une icône et un libellé clairs. */
+/** Le motif d'un refus : « none » et « denied » ne servent à rien de réessayer. */
 const kindOf = (status?: number): "none" | "denied" | "other" => (status === 404 ? "none" : status === 403 ? "denied" : "other");
+
+type ListError = { message: string; status?: number };
+
+// La liste survit au changement d'onglet : la relire rouvre les conversations de réunion dans Teams.
+const memory: { meetings: Meeting[] | null; directory: string; readAt: Date | null; fetches: Record<string, Fetch> } = {
+  meetings: null,
+  directory: "",
+  readAt: null,
+  fetches: {},
+};
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
+const clock = (d: Date) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
 /** Réunions Teams terminées et leur transcription, enregistrée en .vtt sur le poste
  *  (lisible par le skill meeting-report). Trame ouvre chaque conversation de réunion dans
  *  sa fenêtre Teams et relit l'onglet « Transcript » : rien n'est écrit dans Teams. */
 export function Meetings({ trame }: { trame: Trame }) {
-  const [meetings, setMeetings] = useState<Meeting[] | null>(null);
+  const [meetings, setMeetings] = useState<Meeting[] | null>(memory.meetings);
+  const [readAt, setReadAt] = useState<Date | null>(memory.readAt);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [directory, setDirectory] = useState("");
-  const [fetches, setFetches] = useState<Record<string, Fetch>>({});
+  const [error, setError] = useState<ListError | null>(null);
+  const [directory, setDirectory] = useState(memory.directory);
+  const [fetches, setFetches] = useState<Record<string, Fetch>>(memory.fetches);
+  const [query, setQuery] = useState("");
+  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  const stopBatch = useRef(false);
+
+  useEffect(() => {
+    Object.assign(memory, { meetings, readAt, directory, fetches });
+  }, [meetings, readAt, directory, fetches]);
+
+  useEffect(() => {
+    if (directory) return;
+    void trame.getTranscriptsFolder().then((res) => res.ok && setDirectory((d) => d || res.directory));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = async () => {
     setLoading(true);
@@ -33,147 +91,500 @@ export function Meetings({ trame }: { trame: Trame }) {
     const res = await trame.listMeetings();
     setLoading(false);
     if (!res.ok) {
-      setError(res.error);
+      setError({ message: res.error, status: res.status });
       return;
     }
     setMeetings(res.meetings);
-    setDirectory((d) => d || res.directory);
+    setReadAt(new Date());
+    setDirectory(res.directory);
+    // Un fichier relu depuis le disque remplace l'état d'une récupération précédente.
+    setFetches((f) => Object.fromEntries(Object.entries(f).filter(([, x]) => x.state === "error")));
   };
 
-  const fetchOne = async (m: Meeting) => {
-    setFetches((f) => ({ ...f, [m.meetingId]: { state: "run" } }));
-    const res = await trame.saveTranscript(m, directory.trim() || undefined);
+  const setFetch = (id: string, f: Fetch) => setFetches((all) => ({ ...all, [id]: f }));
+
+  const fetchOne = async (m: Meeting, quiet = false): Promise<Fetch> => {
+    setFetch(m.meetingId, { state: "run" });
+    const res = await trame.saveTranscript(m, undefined);
+    const next: Fetch = res.ok
+      ? { state: "ok", saved: res }
+      : { state: "error", error: res.error, kind: kindOf(res.status) };
+    setFetch(m.meetingId, next);
     if (res.ok) {
-      setFetches((f) => ({ ...f, [m.meetingId]: { state: "ok", saved: res } }));
       setDirectory(res.directory);
-      if (res.organizer) setMeetings((ms) => ms?.map((x) => (x.meetingId === m.meetingId ? { ...x, organizer: res.organizer } : x)) ?? ms);
-      toast.success("Transcription enregistrée", { description: res.name });
-    } else {
-      setFetches((f) => ({ ...f, [m.meetingId]: { state: "error", error: res.error, kind: kindOf(res.status) } }));
+      setMeetings((ms) => ms?.map((x) => (x.meetingId === m.meetingId ? { ...x, organizer: res.organizer || x.organizer, saved: { path: res.path, name: res.name } } : x)) ?? ms);
+      if (!quiet)
+        toast.success("Transcription enregistrée", {
+          description: res.name,
+          action: { label: "Ouvrir", onClick: () => void openFile(res.path) },
+        });
+    }
+    return next;
+  };
+
+  const savedOf = (m: Meeting) => {
+    const f = fetches[m.meetingId];
+    return f?.state === "ok" ? { path: f.saved.path, name: f.saved.name } : m.saved;
+  };
+  // « Nouvelles » : avec transcription, pas encore sur le disque, sans refus définitif.
+  const fresh = (meetings ?? []).filter((m) => {
+    const f = fetches[m.meetingId];
+    return m.transcript && !savedOf(m) && !(f?.state === "error" && f.kind !== "other") && f?.state !== "run";
+  });
+
+  const fetchAll = async () => {
+    const todo = [...fresh];
+    stopBatch.current = false;
+    setFetches((all) => ({ ...all, ...Object.fromEntries(todo.map((m) => [m.meetingId, { state: "queued" } as Fetch])) }));
+    setBatch({ done: 0, total: todo.length });
+    let saved = 0;
+    let failed = 0;
+    for (const [i, m] of todo.entries()) {
+      if (stopBatch.current) {
+        setFetches((all) => Object.fromEntries(Object.entries(all).filter(([, f]) => f.state !== "queued")));
+        break;
+      }
+      const r = await fetchOne(m, true);
+      if (r.state === "ok") saved += 1;
+      else failed += 1;
+      setBatch({ done: i + 1, total: todo.length });
+    }
+    setBatch(null);
+    if (saved || failed)
+      (failed ? toast.warning : toast.success)(`${plural(saved, "transcription enregistrée", "transcriptions enregistrées")}`, {
+        description: failed ? `${plural(failed, "réunion")} non ${failed > 1 ? "récupérées" : "récupérée"} : le motif est sur la ligne.` : undefined,
+      });
+  };
+
+  const openFile = async (path: string, reveal = false) => {
+    const res = await trame.openTranscript(path, reveal);
+    if (!res.ok) toast.error(reveal ? "Fichier non affiché" : "Fichier non ouvert", { description: res.error });
+  };
+  const copyPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      toast.success("Chemin copié", { description: path });
+    } catch {
+      toast.error("Chemin non copié");
     }
   };
 
-  const openFolder = async () => {
-    const res = await trame.openTranscriptsFolder(directory.trim() || undefined);
-    if (!res.ok) toast.error("Dossier non ouvert", { description: res.error });
-    else setDirectory(res.directory);
-  };
-
-  const withTranscript = meetings?.filter((m) => m.transcript).length ?? 0;
+  const counts = useMemo(() => occurrences(meetings ?? []), [meetings]);
+  const visible = useMemo(() => (meetings ?? []).filter((m) => matches(m, query)), [meetings, query]);
+  const groups = useMemo(() => groupByPeriod(visible, new Date()), [visible]);
+  const savedCount = (meetings ?? []).filter((m) => savedOf(m)).length;
+  const searchable = (meetings?.length ?? 0) > 6;
 
   return (
     <div className="flex flex-col gap-5 pb-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">Réunions</h1>
-          <p className="max-w-xl text-sm text-muted-foreground">
-            Transcriptions de tes réunions Teams terminées, enregistrées en <code>.vtt</code> sur ce poste : prêtes pour un compte-rendu.
-            Trame les relit dans sa fenêtre Teams, sans rien y écrire ni démarrer.
+          <p className="max-w-xl text-sm text-pretty text-muted-foreground">
+            Les transcriptions de tes réunions Teams terminées, enregistrées en <code>.vtt</code> sur ce poste pour un compte-rendu.
+            Trame les relit dans sa fenêtre Teams, sans rien y écrire.
           </p>
         </div>
-        <Button variant="outline" size="sm" className="rounded-full" onClick={load} disabled={loading}>
-          {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-          {meetings ? "Actualiser" : "Chercher mes réunions"}
-        </Button>
+        <FolderButton trame={trame} directory={directory} onChange={setDirectory} onCopy={copyPath} />
       </div>
 
-      <div>
-        <SectionLabel>Dossier des transcriptions</SectionLabel>
-        <div className="flex gap-2">
+      {meetings && (
+        <div className="flex flex-wrap items-center gap-2">
+          {searchable && (
+            <div className="relative w-full max-w-64">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                aria-label="Filtrer les réunions par titre"
+                placeholder="Filtrer par titre"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                className="h-8 rounded-full pr-8 pl-9 text-sm [&::-webkit-search-cancel-button]:hidden"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Effacer le filtre"
+                  onClick={() => setQuery("")}
+                  className="absolute top-1/2 right-2 grid size-5 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground tabular-nums" aria-live="polite">
+            {plural(meetings.length, "réunion")}
+            {savedCount > 0 && ` · ${plural(savedCount, "enregistrée")}`}
+            {readAt && ` · lue à ${clock(readAt)}`}
+          </p>
+          {batch ? (
+            <Button variant="secondary" size="sm" className="rounded-full tabular-nums" onClick={() => (stopBatch.current = true)}>
+              <Loader2 className="size-4 animate-spin" /> Arrêter · {batch.done}/{batch.total}
+            </Button>
+          ) : (
+            fresh.length > 1 && (
+              <Button variant="outline" size="sm" className="rounded-full" onClick={fetchAll} disabled={loading}>
+                <Download className="size-4" /> Récupérer les {fresh.length} nouvelles
+              </Button>
+            )
+          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Relire la liste dans Teams" onClick={load} disabled={loading || !!batch}>
+                <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Relire la liste dans Teams</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
+
+      {error && meetings && (
+        <div role="alert" className="flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">Liste non relue : {error.message}</span>
+          <Button variant="ghost" size="sm" className="h-7 rounded-full" onClick={load}>Réessayer</Button>
+        </div>
+      )}
+
+      {!meetings ? (
+        loading ? (
+          <LoadingList />
+        ) : error ? (
+          <ListProblem error={error} onRetry={load} />
+        ) : (
+          <EmptyCard
+            icon={<CalendarClock className="size-5" />}
+            title="Tes réunions terminées"
+            text="Trame ouvre tour à tour tes conversations de réunion récentes dans sa fenêtre Teams, en lecture seule, pour trouver celles qui ont une transcription."
+            action={<Button className="rounded-full" onClick={load}>Chercher mes réunions</Button>}
+          />
+        )
+      ) : meetings.length === 0 ? (
+        <EmptyCard
+          icon={<SearchX className="size-5" />}
+          title="Aucune réunion terminée"
+          text="Tes conversations de réunion récentes n'ont pas de récapitulatif. Une réunion apparaît ici une fois terminée."
+          action={<Button variant="outline" className="rounded-full" onClick={load} disabled={loading}>Relire la liste</Button>}
+        />
+      ) : visible.length === 0 ? (
+        <EmptyCard
+          icon={<SearchX className="size-5" />}
+          title={`Aucune réunion pour « ${query.trim()} »`}
+          text="Le filtre porte sur le titre de la réunion."
+          action={<Button variant="outline" className="rounded-full" onClick={() => setQuery("")}>Tout afficher</Button>}
+        />
+      ) : (
+        <div className="flex flex-col gap-5" aria-busy={loading}>
+          {groups.map(({ period, items }) => (
+            <section key={period.key} aria-label={period.label}>
+              <SectionLabel>{period.label}</SectionLabel>
+              <GroupList>
+                {items.map((m) => (
+                  <MeetingRow
+                    key={m.meetingId}
+                    meeting={m}
+                    relative={period.relative}
+                    fetch={fetches[m.meetingId]}
+                    saved={savedOf(m)}
+                    repeats={counts.get(fold(m.title)) ?? 1}
+                    filtered={fold(query) === fold(m.title)}
+                    batching={!!batch}
+                    onFetch={() => void fetchOne(m)}
+                    onOpen={(p) => void openFile(p)}
+                    onReveal={(p) => void openFile(p, true)}
+                    onCopy={(p) => void copyPath(p)}
+                    onSeries={() => setQuery(m.title)}
+                  />
+                ))}
+              </GroupList>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Le dossier en version courte ; le chemin complet, le changer, l'ouvrir ou le copier dans la bulle. */
+function FolderButton({ trame, directory, onChange, onCopy }: {
+  trame: Trame; directory: string; onChange: (d: string) => void; onCopy: (p: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(directory);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setDraft(directory);
+      setProblem(null);
+    }
+  }, [open, directory]);
+  const changed = draft.trim() !== "" && draft.trim() !== directory;
+
+  const save = async () => {
+    setBusy(true);
+    const res = await trame.setTranscriptsFolder(draft.trim());
+    setBusy(false);
+    if (!res.ok) return setProblem(res.error);
+    onChange(res.directory);
+    setOpen(false);
+    toast.success("Dossier des transcriptions changé", { description: res.directory });
+  };
+  const reveal = async () => {
+    const res = await trame.openTranscriptsFolder(directory || undefined);
+    if (!res.ok) setProblem(res.error);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="max-w-full shrink-0 rounded-full text-muted-foreground hover:text-foreground" aria-label={`Dossier des transcriptions : ${directory || "par défaut"}`}>
+          <FolderOpen className="size-4" />
+          <span className="truncate">{shortPath(directory) || "Documents › Trame › Transcriptions"}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)]">
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (changed) void save();
+          }}
+        >
+          <div>
+            <label htmlFor="transcripts-dir" className="text-sm font-medium">Dossier des transcriptions</label>
+            <p className="text-xs text-muted-foreground">Chaque .vtt y est enregistré sous la date et le titre de la réunion.</p>
+          </div>
           <Input
-            aria-label="Dossier des transcriptions"
-            value={directory}
-            placeholder="Documents\Trame\Transcriptions"
-            onChange={(e) => setDirectory(e.target.value)}
+            id="transcripts-dir"
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setProblem(null);
+            }}
+            spellCheck={false}
+            aria-invalid={!!problem}
             className="font-mono text-xs"
           />
-          <Button variant="outline" size="sm" onClick={openFolder} className="shrink-0">
-            <FolderOpen className="size-4" /> Ouvrir le dossier
-          </Button>
+          {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+          <div className="flex items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" className="rounded-full" onClick={reveal} disabled={!directory}>
+              <FolderOpen className="size-4" /> Ouvrir
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="rounded-full" onClick={() => onCopy(directory)} disabled={!directory}>
+              <Copy className="size-4" /> Copier le chemin
+            </Button>
+            <div className="flex-1" />
+            <Button type="submit" size="sm" className="rounded-full" disabled={!changed || busy}>
+              {busy && <Loader2 className="size-4 animate-spin" />} Enregistrer
+            </Button>
+          </div>
+        </form>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+type RowProps = {
+  meeting: Meeting;
+  relative: boolean;
+  fetch?: Fetch;
+  saved: { path: string; name: string } | null;
+  repeats: number;
+  filtered: boolean;
+  batching: boolean;
+  onFetch: () => void;
+  onOpen: (path: string) => void;
+  onReveal: (path: string) => void;
+  onCopy: (path: string) => void;
+  onSeries: () => void;
+};
+
+type RowState = "none" | "available" | "queued" | "run" | "saved" | "partial" | "denied" | "error";
+
+function rowState(m: Meeting, fetch: Fetch | undefined, saved: RowProps["saved"]): RowState {
+  if (!m.transcript) return "none";
+  if (fetch?.state === "run" || fetch?.state === "queued") return fetch.state;
+  if (fetch?.state === "error") return fetch.kind === "denied" ? "denied" : fetch.kind === "none" ? "none" : "error";
+  if (fetch?.state === "ok" && !fetch.saved.complete) return "partial";
+  return saved ? "saved" : "available";
+}
+
+const STATE_ICON: Record<RowState, { icon: React.ReactNode; label: string }> = {
+  none: { icon: <FileX2 className="size-4 text-muted-foreground/70" />, label: "Pas de transcription" },
+  available: { icon: <FileText className="size-4 text-muted-foreground" />, label: "Transcription disponible dans Teams" },
+  queued: { icon: <Clock className="size-4 text-muted-foreground" />, label: "En attente" },
+  run: { icon: <Loader2 className="size-4 animate-spin text-link" />, label: "Lecture dans Teams" },
+  saved: { icon: <FileCheck2 className="size-4 text-success" />, label: "Transcription enregistrée sur ce poste" },
+  partial: { icon: <FileWarning className="size-4 text-warning" />, label: "Transcription enregistrée, relecture incomplète" },
+  denied: { icon: <Lock className="size-4 text-destructive" />, label: "Accès refusé" },
+  error: { icon: <AlertTriangle className="size-4 text-destructive" />, label: "Transcription non récupérée" },
+};
+
+function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries }: RowProps) {
+  const state = rowState(m, fetch, saved);
+  const { start, end } = slotOf(m);
+  const duration = durationLabel(durationMinutes(start, end));
+  const when = [
+    relative ? "" : shortDate(m.date, new Date()) || (m.date ? "" : m.when || "Date inconnue"),
+    start && end ? `${start}–${end}` : "",
+    duration,
+    m.organizer,
+  ].filter(Boolean).join(" · ");
+  const got = fetch?.state === "ok" ? fetch.saved : null;
+  const detail =
+    state === "run" ? "Lecture dans Teams…"
+    : state === "queued" ? "En attente"
+    : state === "partial" ? "Relecture incomplète : la liste n'a pas été lue jusqu'au bout. Réessaie."
+    : fetch?.state === "error" && state !== "none" ? fetch.error
+    : got ? `${plural(got.cues, "prise de parole", "prises de parole")} · ${plural(got.speakers.length, "intervenant")}`
+    : "";
+  const tone = state === "denied" || state === "error" ? "text-destructive" : "text-muted-foreground";
+  const path = got?.path ?? saved?.path ?? "";
+  // Ce qui reste visible au repos : la reprise d'une erreur ; le reste paraît au survol ou au focus.
+  const reveal = "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 has-[[data-state=open]]:opacity-100";
+
+  return (
+    <div
+      data-testid="meeting-row"
+      data-state={state}
+      aria-busy={state === "run" || undefined}
+      className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40 focus-within:bg-accent/40"
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted/60" role="img" aria-label={STATE_ICON[state].label}>
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.span key={state} className="grid place-items-center" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={pop}>
+                {STATE_ICON[state].icon}
+              </motion.span>
+            </AnimatePresence>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left">{STATE_ICON[state].label}</TooltipContent>
+      </Tooltip>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className={cn("truncate text-sm font-medium", state === "none" && "text-muted-foreground")}>{m.title}</span>
+          {repeats > 1 && !filtered && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onSeries}
+                  aria-label={`Réunion récurrente : afficher ses ${repeats} occurrences`}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                >
+                  <Repeat className="size-3" /> {repeats}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Réunion récurrente : afficher ses {repeats} occurrences</TooltipContent>
+            </Tooltip>
+          )}
         </div>
+        <div className="truncate text-xs text-muted-foreground tabular-nums">{when}</div>
+        {detail && (
+          <div className={cn("truncate text-xs", tone)} title={detail} role={state === "error" || state === "denied" ? "alert" : undefined}>
+            {detail}
+          </div>
+        )}
       </div>
 
-      <div>
-        <SectionLabel>
-          {meetings ? `${withTranscript} réunion${withTranscript > 1 ? "s" : ""} avec transcription` : "Réunions récentes"}
-        </SectionLabel>
-        <GroupList aria-busy={loading}>
-          {error && (
-            <div role="alert" className="flex items-center gap-2 px-4 py-4 text-sm text-destructive">
-              <AlertTriangle className="size-4 shrink-0" /> {error}
-            </div>
-          )}
-          {!error && !meetings && (
-            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
-              {loading ? <Loader2 className="size-5 animate-spin" /> : <CalendarClock className="size-5" />}
-              {loading
-                ? "Trame parcourt tes conversations de réunion dans Teams…"
-                : "« Chercher mes réunions » ouvre tour à tour tes conversations de réunion récentes dans la fenêtre Teams de Trame."}
-            </div>
-          )}
-          {!error && meetings?.length === 0 && (
-            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
-              <SearchX className="size-5" /> Aucune réunion terminée dans tes conversations de réunion récentes.
-            </div>
-          )}
-          {meetings?.map((m) => (
-            <MeetingRow key={m.meetingId} meeting={m} fetch={fetches[m.meetingId]} onFetch={() => fetchOne(m)} />
-          ))}
-        </GroupList>
+      <div className="flex shrink-0 items-center gap-1">
+        {state === "available" && (
+          <Button variant="ghost" size="sm" className={cn("rounded-full", reveal)} onClick={onFetch} disabled={batching} aria-label={`Récupérer la transcription de ${m.title}`}>
+            <Download className="size-4" /> Récupérer
+          </Button>
+        )}
+        {state === "error" && (
+          <Button variant="ghost" size="sm" className="rounded-full" onClick={onFetch} disabled={batching}>
+            <RefreshCw className="size-4" /> Réessayer
+          </Button>
+        )}
+        {(state === "saved" || state === "partial") && path && (
+          <>
+            <Button variant="ghost" size="sm" className={cn("rounded-full", reveal)} onClick={() => onOpen(path)} aria-label={`Ouvrir la transcription de ${m.title}`}>
+              <FileText className="size-4" /> Ouvrir
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className={cn("rounded-full", state !== "partial" && reveal)} aria-label={`Autres actions pour ${m.title}`}>
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => onReveal(path)}>
+                  <FolderSearch className="size-4" /> Afficher dans le dossier
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onCopy(path)}>
+                  <Copy className="size-4" /> Copier le chemin
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onFetch} disabled={batching}>
+                  <RefreshCw className="size-4" /> Récupérer à nouveau
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-function MeetingRow({ meeting: m, fetch, onFetch }: { meeting: Meeting; fetch?: Fetch; onFetch: () => void }) {
-  const busy = fetch?.state === "run";
+function EmptyCard({ icon, title, text, action }: { icon: React.ReactNode; title: string; text: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 px-4 py-3" data-testid="meeting-row">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{m.title}</div>
-          <div className="truncate text-xs text-muted-foreground">
-            {m.when || m.date || "Date inconnue"}
-            {m.organizer && ` · organisée par ${m.organizer}`}
+    <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed px-6 py-10 text-center">
+      <span className="grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">{icon}</span>
+      <div className="text-sm font-medium">{title}</div>
+      <p className="max-w-md text-sm text-pretty text-muted-foreground">{text}</p>
+      {action && <div className="mt-2">{action}</div>}
+    </div>
+  );
+}
+
+/** Le moteur ne lit pas la liste : pilote sans transcriptions, partage d'écran, Teams injoignable. */
+function ListProblem({ error, onRetry }: { error: ListError; onRetry: () => void }) {
+  if (error.status === 501)
+    return (
+      <EmptyCard
+        icon={<Unplug className="size-5" />}
+        title="Réunions indisponibles avec ce mode Teams"
+        text={`${error.message} Les transcriptions se lisent avec Teams intégré (Réglages › Avancé).`}
+      />
+    );
+  return (
+    <EmptyCard
+      icon={<AlertTriangle className="size-5" />}
+      title={error.status === 409 ? "Partage d'écran en cours" : "Liste non lue"}
+      text={error.message}
+      action={<Button variant="outline" className="rounded-full" onClick={onRetry}>Réessayer</Button>}
+    />
+  );
+}
+
+/** Squelette de la liste pendant que Trame parcourt Teams. */
+function LoadingList() {
+  return (
+    <div className="flex flex-col gap-2" aria-busy="true">
+      <p role="status" className="ml-1 flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" /> Trame parcourt tes conversations de réunion dans Teams…
+      </p>
+      <GroupList aria-hidden="true">
+        {[62, 48, 70, 55, 40].map((w, i) => (
+          <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+            <span className="size-8 shrink-0 animate-pulse rounded-full bg-muted" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3.5 animate-pulse rounded bg-muted" style={{ width: `${w}%` }} />
+              <div className="h-3 w-40 animate-pulse rounded bg-muted/70" />
+            </div>
           </div>
-        </div>
-        {m.transcript ? (
-          <Button size="sm" variant={fetch?.state === "ok" ? "outline" : "default"} className="shrink-0 rounded-full" onClick={onFetch} disabled={busy}>
-            {busy ? <Loader2 className="size-4 animate-spin" /> : fetch?.state === "ok" ? <Check className="size-4" /> : <FileText className="size-4" />}
-            {busy ? "Lecture…" : fetch?.state === "ok" ? "Récupérer à nouveau" : "Récupérer le .vtt"}
-          </Button>
-        ) : (
-          <span className="shrink-0 text-xs text-muted-foreground">Pas de transcription</span>
-        )}
-      </div>
-      <AnimatePresence initial={false}>
-        {fetch && fetch.state !== "run" && (
-          <motion.div
-            key={fetch.state}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={spring}
-            className="overflow-hidden"
-          >
-            {fetch.state === "ok" ? (
-              <div className={cn("rounded-lg px-3 py-2 text-xs", fetch.saved.complete ? "bg-success/10" : "bg-warning/10")}>
-                <div className="font-mono break-all">{fetch.saved.path}</div>
-                <div className="mt-0.5 text-muted-foreground">
-                  {fetch.saved.cues} prise{fetch.saved.cues > 1 ? "s" : ""} de parole · {fetch.saved.speakers.length} intervenant
-                  {fetch.saved.speakers.length > 1 ? "s" : ""}
-                  {!fetch.saved.complete && " · relecture incomplète : la liste n'a pas pu être lue jusqu'au bout, réessaie"}
-                </div>
-              </div>
-            ) : (
-              <div role="alert" className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {fetch.kind === "denied" ? <Lock className="size-3.5 shrink-0" /> : <AlertTriangle className="size-3.5 shrink-0" />}
-                {fetch.error}
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        ))}
+      </GroupList>
     </div>
   );
 }

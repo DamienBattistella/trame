@@ -398,15 +398,22 @@ class Watcher:
             except Exception as e:
                 self.log("warn", f"Réunions non lues : {e}")
                 raise ActionError(502, f"Réunions non lues : {e}")
+        folder = transcriptsmod.chosen_dir(cfgmod._home())
         out = []
         for m in found:
             if transcript_only and not m.get("transcript"):
                 continue
-            day = transcriptsmod.parse_meeting_date(m.get("when") or "")
+            when = m.get("when") or ""
+            day = transcriptsmod.parse_meeting_date(when)
+            start, end = transcriptsmod.parse_meeting_slot(when)
             mid = transcriptsmod.meeting_id(m["thread_id"], m["mid"])
-            out.append({**m, "meeting_id": mid, "date": day.isoformat() if day else None,
-                        "organizer": self._meeting_owners.get(mid, "")})
-        return {"meetings": out, "directory": str(transcriptsmod.chosen_dir(cfgmod._home()))}
+            saved = transcriptsmod.saved_file(folder, str(m.get("title") or "Réunion"), day) if m.get("transcript") else None
+            out.append({**m, "meeting_id": mid, "date": day.isoformat() if day else None, "start": start, "end": end,
+                        "organizer": self._meeting_owners.get(mid, ""),
+                        "saved": {"path": str(saved), "name": saved.name} if saved else None})
+        # La plus récente d'abord ; une réunion sans date lisible en dernier.
+        out.sort(key=lambda m: (m["date"] is not None, m["date"] or "", m["start"] or ""), reverse=True)
+        return {"meetings": out, "directory": str(folder)}
 
     def save_transcript(self, thread_id: str, mid: str, directory: Optional[str] = None,
                         save: bool = True, content: bool = False) -> dict:
@@ -490,6 +497,39 @@ class Watcher:
         if os.name == "nt":
             os.startfile(str(folder))  # type: ignore[attr-defined]
         return {"directory": str(folder)}
+
+    def transcripts_folder(self) -> dict:
+        """Le dossier des transcriptions (choisi, sinon celui par défaut), sans rien lire ni ouvrir."""
+        return {"directory": str(transcriptsmod.chosen_dir(cfgmod._home()))}
+
+    def set_transcripts_folder(self, directory: str) -> dict:
+        """Change le dossier des transcriptions, retenu pour les suivantes."""
+        try:
+            folder = transcriptsmod.check_dir(directory)
+        except transcriptsmod.TranscriptError as e:
+            raise ActionError(422, str(e))
+        transcriptsmod.remember_dir(cfgmod._home(), folder)
+        return {"directory": str(folder)}
+
+    def open_transcript_file(self, path: str, reveal: bool = False) -> dict:
+        """Ouvre un .vtt enregistré (application associée, sinon le Bloc-notes) ou le montre
+        sélectionné dans l'Explorateur. Rien d'autre qu'un fichier .vtt existant."""
+        try:
+            file = transcriptsmod.check_vtt_file(path)
+        except transcriptsmod.TranscriptError as e:
+            raise ActionError(422 if "introuvable" not in str(e) else 404, str(e))
+        if os.name == "nt":
+            import subprocess
+
+            if reveal:
+                # Un nom de fichier Windows ne peut contenir de guillemet : citation sûre.
+                subprocess.Popen(f'explorer.exe /select,"{file}"')
+            else:
+                try:
+                    os.startfile(str(file))  # type: ignore[attr-defined]
+                except OSError:
+                    subprocess.Popen(["notepad.exe", str(file)])
+        return {"path": str(file)}
 
     def set_status_message(self, text: str) -> dict:
         """Set (empty: clear) the status message, then check Teams shows exactly it."""

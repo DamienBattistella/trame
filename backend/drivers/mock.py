@@ -180,6 +180,25 @@ _RECAPS = [
     {"thread_id": "19:meeting_mock3@thread.v2", "chat": "Café d'équipe", "mid": "1700000003",
      "title": "Café d'équipe", "when": "vendredi 20 novembre 2026 09:00 - 09:15", "transcript": False},
 ]
+# Le reste d'une liste réaliste, dans l'ordre des conversations (pas des dates) comme Teams
+# la donne : réunions récurrentes, plusieurs périodes, une transcription refusée.
+for _i, (_chat, _title, _when) in enumerate([
+    ("Synchro inter-équipes", "Synchro inter-équipes", "jeudi 26 novembre 2026 11:30 - 12:00"),
+    ("Revue d'architecture", "Revue d'architecture", "jeudi 26 novembre 2026 09:00 - 10:00"),
+    ("Atelier parcours patient", "Atelier parcours patient", "mercredi 25 novembre 2026 15:30 - 16:30"),
+    ("Point projet Atlas", "Point projet Atlas", "mercredi 25 novembre 2026 13:45 - 14:30"),
+    ("Synchro inter-équipes", "Synchro inter-équipes", "jeudi 19 novembre 2026 11:30 - 12:00"),
+    ("Point projet Atlas", "Point projet Atlas", "mercredi 18 novembre 2026 13:45 - 14:30"),
+    ("Démo de fin de sprint", "Démo de fin de sprint", "vendredi 13 novembre 2026 14:30 - 15:00"),
+    ("Synchro inter-équipes", "Synchro inter-équipes", "jeudi 12 novembre 2026 11:30 - 12:00"),
+    ("Synchro inter-équipes", "Synchro inter-équipes", "jeudi 29 octobre 2026 11:30 - 12:00"),
+    ("Point recette", "Point recette", "jeudi 1 octobre 2026 10:00 - 11:15"),
+    ("Comité de pilotage", "Comité de pilotage", "jeudi 3 septembre 2026 14:00 - 15:30"),
+], start=4):
+    _RECAPS.append({"thread_id": f"19:meeting_mock{_i}@thread.v2", "chat": _chat, "mid": f"17000000{_i:02d}",
+                    "title": _title, "when": _when, "transcript": True})
+# Teams ne montre pas cette transcription (réunion d'une autre équipe) : refus d'accès.
+_RECAP_DENIED = {"1700000010"}
 # Transcription fictive, telle que l'iframe de Teams la relit (une suite du même orateur
 # n'a ni nom ni horodatage).
 _RECAP_TRANSCRIPTS = {
@@ -265,8 +284,14 @@ class MockTeamsDriver(TeamsDriver):
             return {"ok": False, "reason": "not_found", "error": "réunion inconnue"}
         if not meeting["transcript"]:
             return {"ok": False, "reason": "none", **meeting}
+        if mid in _RECAP_DENIED:
+            return {"ok": False, "reason": "denied", **meeting}
+        entries = _RECAP_TRANSCRIPTS.get(mid) or [
+            {"speaker": "Chiara Rossi", "time": "0:04", "text": f"On commence : {meeting['title']}."},
+            {"speaker": "Lucas Bernard", "time": "0:40", "text": "Rien de bloquant de mon côté, je termine la revue demain."},
+        ]
         return {"ok": True, "complete": True, "recap_when": meeting["when"], "owner": "sofia_marino_exemple_fr", **meeting,
-                "entries": [dict(e) for e in _RECAP_TRANSCRIPTS[mid]]}
+                "entries": [dict(e) for e in entries]}
 
     def list_conversations(self) -> list[WatchEntity]:
         seen = self.presence()

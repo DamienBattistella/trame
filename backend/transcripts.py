@@ -229,6 +229,33 @@ def parse_meeting_date(when: str, today: Optional[date] = None) -> Optional[date
         return None
 
 
+_SLOT = re.compile(r"\b(\d{1,2})[:h.](\d{2})\s*([ap]\.?m\.?)?\s*[-–—]\s*(\d{1,2})[:h.](\d{2})\s*([ap]\.?m\.?)?", re.I)
+
+
+def _clock(h: str, m: str, ampm: Optional[str]) -> Optional[str]:
+    hour, minute = int(h), int(m)
+    if ampm:
+        pm = ampm.lower().startswith("p")
+        if not 1 <= hour <= 12:
+            return None
+        hour = (hour % 12) + (12 if pm else 0)
+    if hour > 23 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def parse_meeting_slot(when: str) -> tuple[Optional[str], Optional[str]]:
+    """Début et fin d'un créneau Teams (« … 11:00 - 11:45 », « 9:00 AM - 9:30 AM »), en HH:MM ;
+    (None, None) si le créneau n'a pas d'heures lisibles."""
+    m = _SLOT.search(" ".join((when or "").split()))
+    if not m:
+        return None, None
+    end_ampm = m.group(6)
+    start = _clock(m.group(1), m.group(2), m.group(3) or end_ampm)
+    end = _clock(m.group(4), m.group(5), end_ampm)
+    return (start, end) if start and end else (None, None)
+
+
 def meeting_id(thread_id: str, mid: str) -> str:
     """Un seul identifiant pour une occurrence : la conversation de réunion et sa carte."""
     return f"{thread_id}#{mid}"
@@ -268,6 +295,29 @@ def file_name(title: str, day: Optional[date]) -> str:
     if not clean or clean.lower() in _RESERVED:
         clean = "Réunion"
     return f"{day.isoformat()} {clean}.vtt" if day else f"{clean}.vtt"
+
+
+def saved_file(directory: Path, title: str, day: Optional[date]) -> Optional[Path]:
+    """Le .vtt déjà enregistré pour cette réunion dans ce dossier (même nom que save), sinon None."""
+    path = directory / file_name(title, day)
+    try:
+        return path if path.is_file() else None
+    except OSError:
+        return None
+
+
+def check_vtt_file(raw: str) -> Path:
+    """Un .vtt à ouvrir ou montrer : chemin absolu local d'un fichier .vtt existant, rien d'autre
+    (jamais un exécutable ni un partage réseau)."""
+    s = (raw or "").strip().strip('"')
+    if not s or len(s) > 600 or "\x00" in s or s.startswith("\\\\") or s.startswith("//"):
+        raise TranscriptError("Fichier invalide.")
+    path = Path(s)
+    if not path.is_absolute() or path.suffix.lower() != ".vtt":
+        raise TranscriptError("Seule une transcription .vtt peut être ouverte.")
+    if not path.is_file():
+        raise TranscriptError("Fichier introuvable : il a peut-être été déplacé ou supprimé.")
+    return path
 
 
 def default_dir() -> Path:
