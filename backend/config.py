@@ -23,8 +23,11 @@ CONFIG_PATH = HOME / "config.json"
 
 
 def _seed() -> None:
+    """First launch gets the shipped files. The org chart (ENTOURAGE.json) only comes
+    with a fresh config: an entourage removed later must stay removed."""
     HOME.mkdir(parents=True, exist_ok=True)
-    for name in ("config.json", "SOUL.md"):
+    first_launch = not (HOME / "config.json").exists()
+    for name in ("config.json", "SOUL.md", *(["ENTOURAGE.json"] if first_launch else [])):
         target = HOME / name
         source = BUNDLE / name
         if not target.exists() and source.exists():

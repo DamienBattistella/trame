@@ -154,6 +154,7 @@ function mapPerson(p: any): Person {
     aliases: Array.isArray(p?.aliases) ? p.aliases.filter((a: unknown) => typeof a === "string") : [],
     role: text(p?.role),
     team: text(p?.team),
+    manager: text(p?.manager),
     relation: text(p?.relation),
     tone: text(p?.tone),
     note: text(p?.note),

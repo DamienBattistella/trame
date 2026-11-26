@@ -21,6 +21,9 @@ export function entourageStats(people: Person[]) {
     teams: new Set(people.map((p) => p.team).filter(Boolean)).size,
     personalTone: people.filter((p) => p.tone && p.tone !== common).length,
     notes: people.filter((p) => p.note).length,
+    personal: people.some((p) => p.tone || p.note),
+    managed: people.filter((p) => p.manager).length,
+    managers: new Set(people.map((p) => p.manager).filter(Boolean)).size,
   };
 }
 
@@ -45,27 +48,32 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 /** Réglages › Entourage : ce que contient le fichier, et ce que Trame dit de chacun au cerveau. */
 export function EntourageDirectory({ people }: { people: Person[] }) {
   const [query, setQuery] = useState("");
-  const [relation, setRelation] = useState("");
+  const [facetValue, setFacetValue] = useState("");
   const [open, setOpen] = useState<string | null>(null);
 
   const stats = useMemo(() => entourageStats(people), [people]);
-  const relations = useMemo(() => {
+  // Filtre par relation si l'export en donne, sinon par équipe (organigramme livré avec Trame).
+  const facet: "relation" | "team" = people.some((p) => p.relation) ? "relation" : "team";
+  const facets = useMemo(() => {
     const count = new Map<string, number>();
-    for (const p of people) if (p.relation) count.set(p.relation, (count.get(p.relation) ?? 0) + 1);
+    for (const p of people) {
+      const v = p[facet];
+      if (v) count.set(v, (count.get(v) ?? 0) + 1);
+    }
     return [...count.entries()].sort((a, b) => b[1] - a[1]);
-  }, [people]);
+  }, [people, facet]);
   const shown = useMemo(() => {
     const q = fold(query.trim());
     return people
-      .filter((p) => !relation || p.relation === relation)
-      .filter((p) => !q || [p.name, p.role, p.team, ...p.aliases].some((v) => v && fold(v).includes(q)))
+      .filter((p) => !facetValue || p[facet] === facetValue)
+      .filter((p) => !q || [p.name, p.role, p.team, p.manager, ...p.aliases].some((v) => v && fold(v).includes(q)))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
-  }, [people, query, relation]);
+  }, [people, query, facet, facetValue]);
 
-  const filtered = Boolean(query.trim() || relation);
+  const filtered = Boolean(query.trim() || facetValue);
   const reset = () => {
     setQuery("");
-    setRelation("");
+    setFacetValue("");
   };
 
   return (
@@ -73,8 +81,17 @@ export function EntourageDirectory({ people }: { people: Person[] }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Tile label="Personnes" value={people.length} />
         <Tile label="Équipes" value={stats.teams} />
-        <Tile label="Ton personnalisé" value={stats.personalTone} />
-        <Tile label="Avec une note" value={stats.notes} />
+        {stats.personal ? (
+          <>
+            <Tile label="Ton personnalisé" value={stats.personalTone} />
+            <Tile label="Avec une note" value={stats.notes} />
+          </>
+        ) : (
+          <>
+            <Tile label="Responsables" value={stats.managers} />
+            <Tile label="Avec un responsable" value={stats.managed} />
+          </>
+        )}
       </div>
 
       <div className="flex gap-2">
@@ -83,19 +100,19 @@ export function EntourageDirectory({ people }: { people: Person[] }) {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Nom, rôle ou équipe"
+            placeholder="Nom, rôle, équipe ou responsable"
             aria-label="Chercher une personne"
             className="rounded-full pl-9"
           />
         </div>
         <select
-          value={relation}
-          onChange={(e) => setRelation(e.target.value)}
-          aria-label="Filtrer par relation"
+          value={facetValue}
+          onChange={(e) => setFacetValue(e.target.value)}
+          aria-label={facet === "relation" ? "Filtrer par relation" : "Filtrer par équipe"}
           className="h-9 max-w-[45%] rounded-full border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
         >
-          <option value="">Toutes les relations</option>
-          {relations.map(([name, n]) => (
+          <option value="">{facet === "relation" ? "Toutes les relations" : "Toutes les équipes"}</option>
+          {facets.map(([name, n]) => (
             <option key={name} value={name}>
               {name} ({n})
             </option>
@@ -141,6 +158,7 @@ export function EntourageDirectory({ people }: { people: Person[] }) {
                     <Detail label={p.tone && p.tone !== stats.defaultTone ? "Ton, écrit pour cette personne" : "Ton, celui par défaut"}>
                       {p.tone ?? "Aucun ton indiqué : Trame garde ta voix habituelle."}
                     </Detail>
+                    {p.manager && <Detail label="Rattaché à">{p.manager}</Detail>}
                     {p.note && <Detail label="Note">{p.note}</Detail>}
                     {p.aliases.length > 0 && <Detail label="Aussi connu comme">{p.aliases.join(", ")}</Detail>}
                   </dl>

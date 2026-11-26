@@ -732,7 +732,7 @@ function DangerZone({ trame, onReset }: { trame: Trame; onReset: () => void }) {
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-sm font-medium">Réinitialiser Trame</span>
             <span className="text-xs text-muted-foreground">
-              Réglages par défaut ; conversations suivies, brouillons, SOUL.md et entourage effacés. Tes connexions Claude et GitHub sont gardées.
+              Réglages par défaut ; conversations suivies, brouillons, SOUL.md effacés, entourage remis à celui livré avec Trame. Tes connexions Claude et GitHub sont gardées.
             </span>
           </div>
           <AnimatePresence mode="popLayout" initial={false}>
