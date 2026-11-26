@@ -327,6 +327,14 @@
     return Boolean(btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true");
   };
   const visible = (el) => Boolean(el && el.getClientRects().length);
+  // Un élément décrit par sa structure seule (balise, rôle, data-tid), jamais son texte :
+  // pour dire dans une erreur où se trouvait le focus.
+  const describe = (el) => {
+    if (!el || el === document.body) return "rien";
+    const tid = el.getAttribute("data-tid") || el.getAttribute("data-testid");
+    const role = el.getAttribute("role");
+    return [el.tagName.toLowerCase(), role && `role=${role}`, tid && `data-tid=${tid}`].filter(Boolean).join(" ");
+  };
   const editor = () => {
     const picks = [
       '[data-tid="ckeditor"][contenteditable="true"]',
@@ -1678,45 +1686,67 @@
       if (findItem(name)) return ops.open({ name });
       const button = Array.from(document.querySelectorAll(NEW_CHAT)).find(visible);
       if (!button) return { ok: false, title: document.title, error: "bouton « Nouvelle conversation » introuvable dans Teams" };
+      // La conversation affichée avant : rouverte si on n'aboutit pas, pour ne pas laisser
+      // Teams sur un brouillon « Nouveau message » vide.
+      const before = titleName();
       button.click();
       // Jamais le champ de recherche du haut, qui est lui aussi une liste déroulante.
       const field = () => Array.from(document.querySelectorAll(TO_FIELD)).find((el) => visible(el) && !el.matches(SEARCH_INPUT));
-      if (!seen("people_picker", await waitFor(() => field(), 4000))) return { ok: false, title: document.title, error: "champ « À » introuvable" };
-      const input = field();
-      const cancel = () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
-      input.focus();
+      const giveUp = async (error) => {
+        const el = field();
+        el?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+        if (before && !isOpen(before) && findItem(before)) await ops.open({ name: before });
+        return { ok: false, title: document.title, error };
+      };
+      if (!seen("people_picker", await waitFor(() => field(), 4000))) return giveUp("champ « À » introuvable");
+      // Teams place lui-même le focus à l'ouverture de « Nouveau message » (parfois dans la
+      // zone de saisie, un instant après) : le champ « À » doit l'avoir au moment de taper,
+      // sinon le nom partirait ailleurs. Jamais de frappe hors de ce champ.
+      await sleep(300);
+      const focused = await waitFor(() => {
+        const el = field();
+        if (el && document.activeElement !== el) el.focus();
+        return Boolean(el) && document.activeElement === el;
+      }, 2000);
+      if (!focused) return giveUp(`le champ « À » ne prend pas le focus (focus sur ${describe(document.activeElement)})`);
       // Teams ne propose des personnes que sur une vraie frappe (comme pour les mentions) :
       // l'application tape le nom. Sans elle, le setter natif du champ React, en repli.
       try {
         await typeTrusted(name);
       } catch {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, name);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
+        const el = field();
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, name);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
       }
-      if (!(await waitFor(() => norm(input.value) === norm(name), 2000))) {
-        cancel();
-        return { ok: false, title: document.title, error: "nom non saisi dans le champ « À »" };
+      // Relu à chaque fois : Teams peut remplacer le champ pendant la frappe.
+      if (!(await waitFor(() => norm(field()?.value) === norm(name), 4000))) {
+        const el = field();
+        const got = el ? `${(el.value || "").length} caractère(s) sur ${name.length}` : "champ disparu";
+        return giveUp(`nom non saisi dans le champ « À » (${got}, focus sur ${describe(document.activeElement)})`);
       }
+      const input = field();
+      const cancel = () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
       const n = norm(name);
       // Les suggestions de CE champ (sa liste, aria-controls), jamais celles de la recherche.
       const options = () => {
         const own = document.getElementById(input.getAttribute("aria-controls") || "");
         return own ? Array.from(own.querySelectorAll('[role="option"]')) : Array.from(document.querySelectorAll(LM.people_list));
       };
+      // Une suggestion se lit « Nom, Service » (« Nom (Vous), Service » pour soi-même) :
+      // le nom est ce qui précède la virgule.
       const matches = () =>
         options()
           .filter(visible)
           .filter((o) => {
             const l = norm(label(o));
-            return l === n || l.startsWith(n + " ");
+            const who = l.split(",")[0].replace(/\s*\((vous|you|moi)\)\s*$/, "").trim();
+            return who === n || l === n || l.startsWith(n + " ");
           });
       seen("people_list", await waitFor(() => options().some(visible), 6000));
       await waitFor(() => matches().length > 0, 2000);
       const found = matches();
       if (found.length !== 1) {
-        cancel();
-        const error = found.length ? `${found.length} personnes nommées « ${name} » dans Teams` : `« ${name} » introuvable dans Teams`;
-        return { ok: false, title: document.title, error };
+        return giveUp(found.length ? `${found.length} personnes nommées « ${name} » dans Teams` : `« ${name} » introuvable dans Teams`);
       }
       found[0].click();
       if (await waitFor(() => isOpen(name), 6000)) return { ok: true, title: document.title };
