@@ -234,6 +234,10 @@ def create_app(
         count = watcher.upsert_watchlist((i.thread_id, i.watch, i.mode) for i in body)
         return {"ok": True, "count": count, "missing": list(watcher._last_missing)}
 
+    @app.post("/api/conversations/refresh")
+    def refresh_conversations():
+        return {"ok": True, "count": watcher.refresh_conversations()}
+
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[TextBody] = None):
         watcher.send_draft(draft_id, body.text if body else None)

@@ -100,13 +100,18 @@ class WebBridgeDriver(TeamsDriver):
     def selftest(self) -> bool:
         return bool(self.status().get("ready"))
 
-    def _items(self) -> list[dict]:
+    def _items(self, deep: bool = False) -> list[dict]:
         out = []
-        for it in self._rpc("list") or []:
+        seen: set[str] = set()
+        raw = self._rpc("list", timeout=20, deep=True) if deep else self._rpc("list")
+        for it in raw or []:
             label = rail_label.parse(it.get("label") or "")
             if not label.name or rail_label.is_structural(label.name, it.get("aria") or ""):
                 continue
             thread_id = rail_label.stable_id(it.get("id") or "") or f"name:{label.name}"
+            if thread_id in seen:
+                continue
+            seen.add(thread_id)
             # The web label carries no kind: group and meeting chats are told by their id.
             if label.surface == Surface.dm and "@thread." in thread_id:
                 label.surface = Surface.group
@@ -115,9 +120,13 @@ class WebBridgeDriver(TeamsDriver):
             self._kinds[thread_id] = label.surface
         return out
 
-    def list_conversations(self) -> list[WatchEntity]:
+    def list_all_conversations(self) -> list[WatchEntity]:
+        """The whole chat list: Teams only draws its beginning until it is scrolled."""
+        return self.list_conversations(deep=True)
+
+    def list_conversations(self, deep: bool = False) -> list[WatchEntity]:
         out = []
-        for rank, it in enumerate(self._items()):
+        for rank, it in enumerate(self._items(deep)):
             label = it["parsed"]
             self._names[it["thread_id"]] = label.name
             self._kinds[it["thread_id"]] = label.surface

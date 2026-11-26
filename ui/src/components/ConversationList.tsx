@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Circle, Hash, Search, User, Users, X } from "lucide-react";
+import { Check, Circle, Hash, RefreshCw, Search, User, Users, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GroupList, Segment, spring } from "@/components/kit";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Surface, WatchEntity } from "@/types";
 
 type Filter = "all" | Surface | "watched" | "unread";
-type Sort = "recent" | "alpha";
+type Sort = "watched" | "recent" | "alpha";
 
 const FILTERS: { id: Filter; label: string; icon?: React.ElementType }[] = [
   { id: "all", label: "Tous" },
@@ -44,6 +44,7 @@ export function ConversationList({
   items,
   renderRow,
   onBulk,
+  onRefresh,
   filters = true,
   className = "h-[40vh]",
   fewClassName,
@@ -52,6 +53,8 @@ export function ConversationList({
   items: WatchEntity[];
   renderRow: (c: WatchEntity) => React.ReactNode;
   onBulk?: (ids: string[], watch: boolean) => void;
+  /** Relit la liste dans Teams. */
+  onRefresh?: () => Promise<unknown>;
   filters?: boolean;
   className?: string;
   /** Hauteur maximale quand la liste est courte (pas de recherche ni de filtres). */
@@ -64,6 +67,20 @@ export function ConversationList({
   const [filter, setFilter] = useState<Filter>("all");
   const hasRecency = items.some((c) => typeof c.rank === "number");
   const [sort, setSort] = useState<Sort>("recent");
+  // « Suivies d'abord » : l'ordre est figé au moment du choix, pour qu'une ligne
+  // ne saute pas sous le doigt quand on la coche ou la décoche.
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const [refreshing, setRefreshing] = useState(false);
+  const chooseSort = (s: Sort) => {
+    if (s === "watched") setPinned(new Set(items.filter((c) => c.watch).map((c) => c.threadId)));
+    setSort(s);
+  };
+  const refresh = async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    await onRefresh();
+    setRefreshing(false);
+  };
 
   const matchesQuery = (c: WatchEntity) => !query || norm(c.displayName).includes(norm(query));
 
@@ -88,8 +105,12 @@ export function ConversationList({
             filter === "all" ||
             (filter === "watched" ? c.watch : filter === "unread" ? c.unread : c.surface === filter)
         )
-        .sort(sort === "recent" && hasRecency ? byRecent : byName),
-    [items, query, filter, sort, hasRecency]
+        .sort((a, b) => {
+          const base = sort !== "alpha" && hasRecency ? byRecent : byName;
+          const first = sort === "watched" ? Number(pinned.has(b.threadId)) - Number(pinned.has(a.threadId)) : 0;
+          return first || base(a, b);
+        }),
+    [items, query, filter, sort, hasRecency, pinned]
   );
 
   const allVisibleWatched = visible.length > 0 && visible.every((c) => c.watch);
@@ -170,19 +191,18 @@ export function ConversationList({
               </span>
             </button>
           ))}
-          {hasRecency && (
-            <div className="ml-auto">
-              <Segment<Sort>
-                label="Trier"
-                value={sort}
-                onChange={setSort}
-                options={[
-                  { value: "recent", label: "Récentes" },
-                  { value: "alpha", label: "A à Z" },
-                ]}
-              />
-            </div>
-          )}
+          <div className="ml-auto">
+            <Segment<Sort>
+              label="Trier"
+              value={sort}
+              onChange={chooseSort}
+              options={[
+                { value: "watched", label: "Suivies d'abord" },
+                ...(hasRecency ? [{ value: "recent" as const, label: "Récentes" }] : []),
+                { value: "alpha", label: "A à Z" },
+              ]}
+            />
+          </div>
         </div>
       )}
 
@@ -195,11 +215,24 @@ export function ConversationList({
       </GroupList>
 
       <div className="flex items-center justify-between px-1 text-xs text-muted-foreground">
-        {footer ?? (
-          <span className="tabular-nums">
-            {watchedTotal} suivie{watchedTotal > 1 ? "s" : ""} sur {items.length}
-          </span>
-        )}
+        <span className="flex items-center gap-3">
+          {footer ?? (
+            <span className="tabular-nums">
+              {watchedTotal} suivie{watchedTotal > 1 ? "s" : ""} sur {items.length}
+            </span>
+          )}
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={refreshing}
+              className="flex items-center gap-1 font-medium text-link hover:underline disabled:opacity-60 disabled:hover:no-underline"
+            >
+              <RefreshCw className={cn("size-3", refreshing && "animate-spin")} aria-hidden />
+              {refreshing ? "Lecture de Teams…" : "Actualiser"}
+            </button>
+          )}
+        </span>
         {onBulk && visible.length > 0 && (
           <button
             onClick={() => onBulk(visible.map((c) => c.threadId), !allVisibleWatched)}

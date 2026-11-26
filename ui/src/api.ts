@@ -529,6 +529,12 @@ export function useTrame() {
     return { ok: true, settings };
   };
 
+  /** Relit la liste des conversations dans Teams ; l'état arrive ensuite par le flux habituel. */
+  const refreshConversations = async (): Promise<Result<{ count: number }>> => {
+    if (!connectedRef.current) return demo(600, { count: stateRef.current.watchlist.length });
+    return request<{ count: number }>("POST", "/api/conversations/refresh");
+  };
+
   /** Échoue si une conversation n'est plus connue de Teams : rien n'est « suivi » en silence. */
   const saveWatchlist = async (entries: WatchlistEntry[]): Promise<Result<{ count: number }>> => {
     if (!connectedRef.current) return demo(500, { count: entries.length });
@@ -878,6 +884,7 @@ export function useTrame() {
     githubLogin,
     cancelGithubLogin,
     saveWatchlist,
+    refreshConversations,
     uploadSoul,
     getSoul,
     getSoulTemplate,
