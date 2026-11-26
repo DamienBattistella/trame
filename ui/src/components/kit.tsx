@@ -69,12 +69,15 @@ export function Segment<T extends string = "draft" | "auto">({
   disabled,
   label = "Mode",
   options = MODE_OPTIONS as unknown as readonly SegmentOption<T>[],
+  fill = false,
 }: {
   value: T;
   onChange: (v: T) => void;
   disabled?: boolean;
   label?: string;
   options?: readonly SegmentOption<T>[];
+  /** Pleine largeur : chaque option prend une part égale, cibles plus grandes. */
+  fill?: boolean;
 }) {
   const id = useId();
   // Contrôle segmenté accessible : groupe de boutons radio, flèches pour changer.
@@ -90,7 +93,11 @@ export function Segment<T extends string = "draft" | "auto">({
     <div
       role="radiogroup"
       aria-label={label}
-      className={cn("flex rounded-full bg-secondary p-0.5 text-xs font-medium transition-opacity", disabled && "opacity-40")}
+      className={cn(
+        "flex rounded-full bg-secondary p-0.5 font-medium transition-opacity",
+        fill ? "w-full p-1 text-sm" : "text-xs",
+        disabled && "opacity-40"
+      )}
     >
       {options.map((o, i) => (
         <button
@@ -104,6 +111,7 @@ export function Segment<T extends string = "draft" | "auto">({
           onClick={() => onChange(o.value)}
           className={cn(
             "relative rounded-full px-3 py-1 transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            fill && "min-w-0 flex-1 truncate py-1.5 text-center",
             value === o.value
               ? o.tone === "auto"
                 ? "text-warning"
