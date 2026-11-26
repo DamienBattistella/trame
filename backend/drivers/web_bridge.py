@@ -178,6 +178,17 @@ class WebBridgeDriver(TeamsDriver):
     # people search is not offered on its own: only the name the user chose is resolved.
     can_start_chat = True
 
+    def mark_read(self, thread_id: str) -> bool:
+        try:
+            res = self._rpc("markread", name=self._name(thread_id), timeout=8) or {}
+        except Exception as e:
+            self.last_error = str(e)
+            return False
+        if not res.get("ok"):
+            self.last_error = f"Teams intégré : {res.get('error') or 'marquer comme lu refusé'}"
+            return False
+        return True
+
     def start_chat(self, name: str) -> Optional[WatchEntity]:
         name = " ".join((name or "").split())
         try:

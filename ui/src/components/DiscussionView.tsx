@@ -101,10 +101,18 @@ export function DiscussionView({
     const res = await trame.threadMessages(c.threadId, fresh, want.current);
     if (!res.ok) {
       setError(res.error);
-      return;
+      return false;
     }
     setMessages(res.messages);
     if (res.top) setEdge("start");
+    return true;
+  };
+
+  // Lu dans Trame, lu dans Teams : la conversation n'y reste pas en non-lu et tes
+  // collègues voient que tu l'as lue. Seulement quand le fil est affiché sous tes yeux ;
+  // un échec est noté dans le Journal, sans gêner la lecture.
+  const markRead = () => {
+    if (document.hasFocus()) void trame.markRead(c.threadId);
   };
 
   const loadOlder = async () => {
@@ -129,7 +137,8 @@ export function DiscussionView({
     setFresher(null);
     setEdge(null);
     want.current = PAGE;
-    load();
+    const unread = c.unread;
+    load().then((ok) => ok && unread && markRead());
   }, [c.threadId]);
 
   // Fil vivant : tout message reçu dans cette conversation (suivie ou non) la fait
@@ -139,7 +148,7 @@ export function DiscussionView({
   useEffect(() => {
     if (lastNotice === seenNotice.current) return;
     seenNotice.current = lastNotice;
-    if (lastNotice) load();
+    if (lastNotice) load().then((ok) => ok && markRead());
   }, [lastNotice]);
 
   // Remonter en haut du fil charge les messages plus anciens.

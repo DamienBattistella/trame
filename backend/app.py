@@ -299,6 +299,11 @@ def create_app(
     def thread_suggest(thread_id: str):
         return {"ok": True, "text": watcher.suggest_reply(thread_id)}
 
+    @app.post("/api/threads/{thread_id:path}/read")
+    def mark_thread_read(thread_id: str):
+        watcher.mark_read(thread_id)
+        return {"ok": True}
+
     @app.post("/api/threads/{thread_id:path}/show")
     def show_thread(thread_id: str):
         watcher.show_in_teams(thread_id)

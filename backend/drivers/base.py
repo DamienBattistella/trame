@@ -86,6 +86,12 @@ class TeamsDriver(ABC):
                 except Exception:
                     focus.restored = False
 
+    def mark_read(self, thread_id: str) -> bool:
+        """Mark the conversation as read in Teams, without opening it. True once Teams
+        no longer shows it unread (or it already was read); False with last_error otherwise."""
+        self.last_error = "marquer comme lu n'est pas pris en charge par ce pilote"
+        return False
+
     def show_thread(self, thread_id: str) -> bool:
         """Bring Teams to the front on this conversation, for the user to read it there.
         Nothing is typed, so no strict confirmation is needed. False if not found."""

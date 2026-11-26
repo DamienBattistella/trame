@@ -55,6 +55,9 @@
     });
     return exact.sort((a, b) => label(a).length - label(b).length)[0] || null;
   };
+  // Pastille « non lu » d'une ligne de la liste, et entrée lu / non lu de son menu.
+  const UNREAD = '[data-tid="unread"]';
+  const READ_ENTRY = '[data-tid="change-read-status-menu-item"]';
   const sendReady = () => {
     const btn = sendButton();
     return Boolean(btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true");
@@ -280,6 +283,33 @@
       if (await waitFor(() => isOpen(name), 6000)) return { ok: true, title: document.title };
       cancel();
       return { ok: false, title: document.title, error: `Teams affiche « ${titleName() || document.title} »` };
+    },
+    // Marquer comme lu, sans ouvrir la conversation : menu contextuel de la ligne,
+    // entrée « Marquer comme lu ». Cette entrée bascule lu / non lu : on ne clique que
+    // si la ligne est non lue ET que l'entrée dit bien « lu », sinon on referme le menu.
+    markread: async ({ name }) => {
+      const item = findItem(name);
+      if (!item || item.querySelector('[role="treeitem"]')) return { ok: false, error: `« ${name} » absente de la liste` };
+      const unread = () => Boolean(item.isConnected && item.querySelector(UNREAD));
+      if (!unread()) return { ok: true, already: true };
+      const r = item.getBoundingClientRect();
+      item.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, view: window, button: 2, clientX: r.x + 20, clientY: r.y + 10 })
+      );
+      const entry = () => document.querySelector(`[role="menu"] ${READ_ENTRY}`);
+      const close = () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+      if (!(await waitFor(entry, 2000))) {
+        close();
+        return { ok: false, error: "entrée « Marquer comme lu » introuvable" };
+      }
+      const text = label(entry());
+      if (!/^(marquer comme lu|mark as read)$/i.test(text)) {
+        close();
+        return { ok: false, error: `entrée inattendue « ${text} »` };
+      }
+      entry().click();
+      if (await waitFor(() => !unread(), 3000)) return { ok: true };
+      return { ok: false, error: "toujours non lue après le clic" };
     },
     // Teams ne dessine que les derniers messages, et retire du DOM ceux qui sortent de
     // l'écran. Pour remonter plus loin, on fait défiler le fil vers le haut en cumulant
