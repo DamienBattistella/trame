@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, Check, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
+import { BookOpenText, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -88,7 +88,66 @@ function Quote({ target, className, children }: { target: MessageRef; className?
   );
 }
 
-/** Barre de gestes au survol d'un message : le petit jeu de réactions Teams et « Répondre ». */
+/** Écrit dans le presse-papiers. L'API Clipboard peut être refusée (permission de la
+ *  WebView) : repli sur une zone de texte temporaire et la commande « copier ». */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+    const before = document.activeElement as HTMLElement | null;
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    before?.focus?.();
+    return ok;
+  }
+}
+
+/** Copie le texte d'un message ; « copié » s'affiche un instant à la place de l'icône. */
+function CopyButton({ text, separated }: { text: string; separated: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async () => {
+    if (!(await copyText(text))) return void toast.error("Copie impossible", { description: "Le presse-papiers n'est pas accessible." });
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={copied ? "Message copié" : "Copier le message"}
+          onClick={copy}
+          className={cn(
+            "grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+            separated && "ml-0.5 border-l",
+            copied && "text-success hover:text-success"
+          )}
+        >
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{copied ? "Copié" : "Copier"}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Barre de gestes au survol d'un message : le petit jeu de réactions Teams, « Répondre »
+ *  et « Copier » (ce dernier toujours là, il ne passe pas par Teams). */
 function MessageActions({
   message,
   canReact,
@@ -104,7 +163,8 @@ function MessageActions({
   onReact: (r: Reaction) => void;
   onReply: () => void;
 }) {
-  if (!canReact && !canReply) return null;
+  const canCopy = Boolean(message.text.trim());
+  if (!canReact && !canReply && !canCopy) return null;
   const mine = message.reactions ?? [];
   return (
     <div
@@ -153,6 +213,7 @@ function MessageActions({
           <TooltipContent>Répondre à ce message</TooltipContent>
         </Tooltip>
       )}
+      {canCopy && <CopyButton text={message.text} separated={canReact && !canReply} />}
     </div>
   );
 }
@@ -661,7 +722,7 @@ export function DiscussionView({
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i, 10) * 0.02 }}
-                    className={cn("group relative flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start", (canReact || canReply) && "pt-1")}
+                    className={cn("group relative flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start", "pt-1")}
                   >
                     {showName && <span className="ml-1 text-xs text-muted-foreground">{m.sender}</span>}
                     <MessageActions
