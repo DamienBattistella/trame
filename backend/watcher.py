@@ -212,7 +212,20 @@ class Watcher:
         except Exception:
             mine = None
         with self._lock:
+            was = self.state.my_presence
             self.state.my_presence = mine
+            # Kept current for the UI: notifications hide message text while presenting.
+            # Only from the status just read: the driver is not asked again here.
+            guard = self.cfg.get("safety", {}).get("auto_pause_on_screen_share", True)
+            if guard and mine == "presenting":
+                self.state.screen_sharing = True
+            elif was == "presenting":
+                self.state.screen_sharing = False
+        if mine == "presenting" and was != "presenting":
+            self.log("info", "Présentation en cours dans Teams : Trame ne tape rien et masque le texte des notifications")
+        elif was == "presenting" and mine != "presenting":
+            self.log("info", "Présentation terminée : Trame reprend")
+            self._outbox_wake.set()
 
     # --- the user's own status, changed from Trame ---
     def my_status(self) -> dict:
@@ -539,10 +552,15 @@ class Watcher:
             self.log("warn", "Impossible de rouvrir la conversation que tu regardais dans Teams.")
 
     def _screen_sharing(self) -> bool:
+        """A screen share is on. The driver may see it (Teams desktop window); Teams
+        intégré cannot, since the meeting runs in the user's own Teams. Then Teams'
+        own status says it: « En présentation » while the user shares their screen."""
         try:
-            return self.driver.is_screen_sharing()
+            if self.driver.is_screen_sharing():
+                return True
         except Exception:
-            return False
+            pass
+        return self.state.my_presence == "presenting"
 
     def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None) -> None:
         with self._lock:
