@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Check, Dices, Loader2, RotateCcw } from "lucide-react";
+import { Check, Dices, Loader2, RotateCcw, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PRESENCE, PresenceBadge } from "@/components/kit";
 import type { Trame } from "@/api";
 import type { StatusChoice, StatusDuration } from "@/types";
@@ -36,7 +37,7 @@ const fieldClass =
   "h-7 rounded-md border bg-background px-1.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring";
 
 /**
- * En-tête : son propre statut Teams (la pastille), et au clic de quoi le changer sans
+ * Bas du rail : son propre statut Teams (la pastille), et au clic de quoi le changer sans
  * rouvrir Teams, ainsi que le message de statut. Chaque changement est vérifié dans
  * Teams par le moteur : un statut que Teams n'affiche pas est signalé, jamais montré.
  */
@@ -123,17 +124,29 @@ export function OwnStatus({ trame }: { trame: Trame }) {
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-8 gap-2 rounded-full px-2.5 text-xs" aria-label={`Ton statut Teams : ${label}. Changer`}>
-          {presence ? (
-            <PresenceBadge presence={presence} className="ring-0" />
-          ) : (
-            <span className="size-3 rounded-full border-2 border-dashed border-muted-foreground/60" />
-          )}
-          <span className="hidden max-w-28 truncate lg:inline">{label}</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-1.5">
+      {/* Bas du rail, comme l'avatar de Teams ou Slack : la pastille de statut sur un rond de profil. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Ton statut Teams : ${label}. Changer`}
+              className="relative grid size-10 place-items-center rounded-xl outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=open]:bg-secondary"
+            >
+              <span className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground">
+                <UserRound className="size-4" />
+              </span>
+              {presence ? (
+                <PresenceBadge presence={presence} className="absolute right-1 bottom-1 ring-sidebar" />
+              ) : (
+                <span className="absolute right-1 bottom-1 size-3 rounded-full border-2 border-dashed border-muted-foreground/60 bg-sidebar" />
+              )}
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">Ton statut Teams : {label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="right" align="end" sideOffset={24} className="w-80 p-1.5">
         <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">Ton statut dans Teams</div>
         {/* Durée : Teams remet le statut d'avant à la fin (« Rétablir le statut après »). */}
         <label className="mb-1 flex items-center gap-2 px-2 text-xs text-muted-foreground">
