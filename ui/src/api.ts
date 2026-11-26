@@ -9,6 +9,7 @@ import {
   ClaudeStatus,
   ThreadMessage,
   PeopleSummary,
+  Person,
   LogItem,
   Mode,
   Settings,
@@ -146,7 +147,20 @@ function mapPeople(p: any): PeopleSummary {
     generatedAt: typeof p?.generated_at === "string" ? p.generated_at : null,
   };
 }
+const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+function mapPerson(p: any): Person {
+  return {
+    name: String(p?.name ?? ""),
+    aliases: Array.isArray(p?.aliases) ? p.aliases.filter((a: unknown) => typeof a === "string") : [],
+    role: text(p?.role),
+    team: text(p?.team),
+    relation: text(p?.relation),
+    tone: text(p?.tone),
+    note: text(p?.note),
+  };
+}
 let demoPeople: PeopleSummary = { loaded: false, count: 0, source: null, generatedAt: null };
+let demoPeopleList: Person[] = [];
 
 function mapClaudeStatus(c: any): ClaudeStatus {
   return {
@@ -544,6 +558,16 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, people: mapPeople(res.people) };
   };
+  /** L'entourage personne par personne, pour l'annuaire des réglages. */
+  const listPeople = async (): Promise<Result<{ list: Person[] }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, list: [...demoPeopleList] };
+    }
+    const res = await request<{ people: any[] }>("GET", "/api/people/list");
+    if (!res.ok) return res;
+    return { ok: true, list: (res.people ?? []).map(mapPerson).filter((p) => p.name) };
+  };
   const uploadPeople = async (filename: string, content: string): Promise<Result<{ people: PeopleSummary }>> => {
     if (!/\.json$/i.test(filename)) return { ok: false, error: "Le fichier doit être un .json exporté d'Orbite." };
     if (new Blob([content]).size > 512 * 1024) return { ok: false, error: "Le fichier dépasse 512 Ko." };
@@ -551,8 +575,8 @@ export function useTrame() {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(400);
       try {
-        const n = (JSON.parse(content)?.people ?? []).length;
-        demoPeople = { loaded: true, count: n, source: "Orbite", generatedAt: new Date().toISOString() };
+        demoPeopleList = (JSON.parse(content)?.people ?? []).map(mapPerson).filter((p: Person) => p.name);
+        demoPeople = { loaded: true, count: demoPeopleList.length, source: "Orbite", generatedAt: new Date().toISOString() };
       } catch {
         return { ok: false, error: "Fichier illisible : JSON invalide." };
       }
@@ -565,6 +589,7 @@ export function useTrame() {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       demoPeople = { loaded: false, count: 0, source: null, generatedAt: null };
+      demoPeopleList = [];
       return { ok: true };
     }
     return request("DELETE", "/api/people");
@@ -866,6 +891,7 @@ export function useTrame() {
     exportLogs,
     previewSoul,
     getPeople,
+    listPeople,
     uploadPeople,
     removePeople,
     selftest,

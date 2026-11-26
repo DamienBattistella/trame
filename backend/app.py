@@ -331,6 +331,13 @@ def create_app(
     def get_people():
         return {"ok": True, "people": watcher.people_summary().model_dump()}
 
+    @app.get("/api/people/list")
+    def list_people():
+        """The imported entourage, person by person, for the settings directory. The
+        email only serves name matching and stays in the engine."""
+        data = watcher.people.data
+        return {"ok": True, "people": [p.model_dump(exclude={"email"}) for p in (data.people if data else [])]}
+
     @app.post("/api/people")
     def post_people(body: SoulBody):
         if not PurePath(body.filename.strip()).name.lower().endswith(".json"):
