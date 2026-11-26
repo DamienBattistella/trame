@@ -327,6 +327,18 @@
     return waitFor(() => !confirm(), 2000);
   };
   const uploading = (root) => Boolean(root?.querySelector('[role="progressbar"]'));
+  // Teams enchaîne deux barres de progression (téléversement, puis droits de partage)
+  // séparées d'un court répit : terminé seulement quand aucune n'est revenue depuis 1,5 s.
+  const uploaded = async (box, until) => {
+    let quiet = 0;
+    while (Date.now() < until) {
+      if (uploading(composeRoot(box))) quiet = 0;
+      else if (!quiet) quiet = Date.now();
+      else if (Date.now() - quiet >= 1500) return true;
+      await sleep(250);
+    }
+    return !uploading(composeRoot(box));
+  };
   const toFiles = (files) =>
     files.map((f) => {
       const bin = atob(f.data);
@@ -339,6 +351,59 @@
   // images ne convient pas à un document.
   const fileInput = (root) =>
     Array.from(root?.querySelectorAll('input[type="file"]') || []).find((el) => !/^\s*image\//.test(el.accept || "")) || null;
+  // Teams web n'a aucun champ fichier en attente : « Joindre » ouvre un menu dont
+  // « Charger à partir de cet appareil » crée un champ éphémère et l'ouvre par click().
+  // Le temps de ce geste, ce click() est retenu (aucune boîte de dialogue Windows dans
+  // la fenêtre cachée) et le champ rendu au pont, qui y pose les fichiers.
+  const PICKER = '[data-tid="sendMessageCommands-FilePicker"], [data-tid="newMessageCommands-FilePicker"]';
+  const pickerButton = (root) =>
+    root?.querySelector(PICKER) ||
+    Array.from(root?.querySelectorAll("button[aria-label]") || []).find((b) => /^(joindre|attach)\b/i.test(b.getAttribute("aria-label") || "")) ||
+    null;
+  const FROM_DEVICE = /(cet appareil|this device|mon ordinateur|my computer|upload from)/i;
+  const deviceItem = () => {
+    const items = Array.from(document.querySelectorAll('[role="menuitem"]')).filter(visible);
+    return (
+      items.find((el) => FROM_DEVICE.test(`${el.innerText} ${el.getAttribute("aria-label") || ""}`)) ||
+      (items.length === 2 && items.find((el) => !/cloud|onedrive/i.test(el.innerText))) ||
+      null
+    );
+  };
+  const closeMenu = () =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  const pickedInput = async (box) => {
+    const btn = pickerButton(composeRoot(box));
+    if (!btn) throw new Error("pas de bouton Joindre");
+    const proto = HTMLInputElement.prototype;
+    const own = { click: proto.click, showPicker: proto.showPicker };
+    let caught = null;
+    const hold = (name) =>
+      function (...args) {
+        if (this.type === "file") {
+          caught = this;
+          return undefined;
+        }
+        return own[name].apply(this, args);
+      };
+    proto.click = hold("click");
+    if (own.showPicker) proto.showPicker = hold("showPicker");
+    try {
+      btn.click();
+      if (!(await waitFor(() => deviceItem(), 2000))) throw new Error("menu Joindre sans « cet appareil »");
+      deviceItem().click();
+      if (!(await waitFor(() => caught, 2000))) throw new Error("Teams n'a pas ouvert de champ fichier");
+      return caught;
+    } finally {
+      proto.click = own.click;
+      if (own.showPicker) proto.showPicker = own.showPicker;
+      if (!caught) closeMenu();
+    }
+  };
+  const fill = (input, dt) => {
+    input.files = dt.files;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   const attach = async (box, files) => {
     const list = toFiles(files);
     const transfer = () => {
@@ -352,14 +417,13 @@
       return names.every((n) => t.includes(n));
     };
     const tries = [
+      ["menu Joindre", async () => fill(await pickedInput(box), transfer())],
       [
         "champ fichier",
         () => {
           const input = fileInput(composeRoot(box));
           if (!input) throw new Error("pas de champ fichier");
-          input.files = transfer().files;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
+          fill(input, transfer());
         },
       ],
       [
@@ -379,16 +443,17 @@
     for (const [how, run] of tries) {
       if (late()) return null;
       try {
-        run();
+        await run();
       } catch {
         continue;
       }
       if (await waitFor(listed, 5000)) {
-        // Teams téléverse le fichier (OneDrive) avant de permettre l'envoi : on attend la
-        // fin, en gardant de quoi envoyer et confirmer avant que le moteur abandonne.
-        const end = Math.max(Date.now() + 1000, (deadline || Date.now() + 60000) - 20000);
-        while (Date.now() < end && (uploading(composeRoot(box)) || !sendReady())) await sleep(300);
-        if (uploading(composeRoot(box))) return { how, error: "téléversement toujours en cours" };
+        // Teams téléverse le fichier (OneDrive) avant de permettre l'envoi, sans griser
+        // Envoyer : on attend la fin, en gardant de quoi envoyer et confirmer avant que le
+        // moteur abandonne.
+        const end = Math.max(Date.now() + 2000, (deadline || Date.now() + 60000) - 20000);
+        if (!(await uploaded(box, end))) return { how, error: "téléversement toujours en cours" };
+        await waitFor(sendReady, 1500);
         return { how };
       }
     }
@@ -1234,7 +1299,7 @@
       let joined = "";
       if (withFiles) {
         const got = await attach(box, files);
-        if (!got) return fail("Teams n'a pas pris la pièce jointe (champ fichier, dépôt et collage essayés)");
+        if (!got) return fail("Teams n'a pas pris la pièce jointe (menu Joindre, champ fichier, dépôt et collage essayés)");
         if (got.error) return fail(`pièce jointe : ${got.error}`);
         joined = `, pièce jointe : ${got.how}`;
         if (!isOpen(name)) return fail("conversation changée pendant l'ajout de la pièce jointe");
