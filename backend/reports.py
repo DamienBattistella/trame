@@ -97,6 +97,8 @@ class Session:
     report: str = ""
     error: str = ""
     saved_path: str = ""
+    # Pull request GitHub ouverte pour ce compte-rendu (None tant qu'il n'est pas publié).
+    published: Optional[dict] = None
     run_id: str = ""
     # The prompt being sent right now (shown while the brain works).
     pending_prompt: str = ""
@@ -110,7 +112,8 @@ class Session:
             "skillSource": self.skill.source, "vttPath": str(self.vtt_path), "vttChars": len(self.vtt),
             "cues": self.cues, "provider": self.provider, "model": self.model, "status": self.status,
             "turns": [t.as_dict() if prompts else {**t.as_dict(), "prompt": ""} for t in self.turns],
-            "report": self.report, "error": self.error, "savedPath": self.saved_path, "runId": self.run_id,
+            "report": self.report, "error": self.error, "savedPath": self.saved_path,
+            "published": self.published, "runId": self.run_id,
             "pendingPrompt": self.pending_prompt if prompts else "",
             "startedAt": self.started_at, "rev": self.rev,
             "references": [r.rel for r in self.refs],

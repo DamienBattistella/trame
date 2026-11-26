@@ -86,7 +86,7 @@ export interface Settings {
   brain: Brain;
   /** Vide : le réglage par défaut de Claude Code ou de Copilot. */
   models: { claudeModel: string; claudeEffort: Effort; copilotModel: string; copilotEffort: Effort };
-  github: { enabled: boolean; allRepos: boolean };
+  github: { enabled: boolean; allRepos: boolean; write: GithubWriteSettings };
   safety: {
     autoPauseOnScreenShare: boolean;
     selftestGate: boolean;
@@ -114,11 +114,67 @@ export interface Settings {
 
 export type ConversationSort = "watched" | "recent" | "alpha";
 
+/** Ouverture de pull requests GitHub (écriture). Coupée par défaut : tant qu'elle l'est,
+ *  Trame ne fait que lire GitHub. Même activée, elle n'ajoute qu'une branche + un fichier
+ *  + une PR brouillon, jamais de push sur la branche protégée, jamais d'écrasement. */
+export interface GithubWriteSettings {
+  enabled: boolean;
+  allRepos: boolean;
+  reposAllowlist: string[];
+  pathTemplate: string;
+  draft: boolean;
+}
+
+/** Une pull request ouverte pour publier un compte-rendu. */
+export interface PublishedRef {
+  url: string;
+  number: number | null;
+  draft: boolean;
+  repo: string;
+  path: string;
+  branch: string;
+}
+
+/** Le compte-rendu est-il déjà sur le dépôt lié : fusionné (fichier) ou en attente (PR ouverte) ? */
+export interface GithubReportState {
+  /** Dépôt lié à la réunion, ou null si aucun lien sûr n'a pu être établi. */
+  repo: string | null;
+  path?: string;
+  branch?: string;
+  exists?: boolean;
+  url?: string;
+  prUrl?: string;
+  prNumber?: number | null;
+  prDraft?: boolean;
+  reason?: string;
+  /** Le lien réunion → dépôt est sûr (lien GitHub ou association mémorisée), pas une simple correspondance de nom. */
+  repoConfident?: boolean;
+  repoReason?: string;
+}
+
+/** Ce que publierait un « Publier sur GitHub » : dépôt cible, branche, chemin, état déjà-présent, blocage éventuel. */
+export interface PublishPlan {
+  reportId: string;
+  writeEnabled: boolean;
+  repo: string | null;
+  repoReason: string;
+  repoConfident: boolean;
+  path: string;
+  branch: string;
+  base: string;
+  draft: boolean;
+  /** Dépôts où l'utilisateur peut ouvrir une PR (à choisir si le lien n'est pas sûr). */
+  repos: string[];
+  state: GithubReportState | null;
+  /** Pourquoi la publication est impossible pour l'instant (écriture coupée, pas connecté, droit manquant…). */
+  blocked: string;
+}
+
 export interface SettingsPatch {
   onboarded?: boolean;
   brain?: Brain;
   models?: Partial<Settings["models"]>;
-  github?: Partial<Settings["github"]>;
+  github?: { enabled?: boolean; allRepos?: boolean; write?: Partial<GithubWriteSettings> };
   safety?: Partial<Settings["safety"]>;
   brief?: Partial<Settings["brief"]>;
   followUps?: Partial<Settings["followUps"]>;
@@ -485,6 +541,8 @@ export interface ReportSession {
   runId: string;
   /** Le prompt en cours d'envoi (pendant que le cerveau travaille). */
   pendingPrompt: string;
+  /** Pull request ouverte pour ce compte-rendu (null tant qu'il n'est pas publié sur GitHub). */
+  published: PublishedRef | null;
   startedAt: string;
   rev: number;
   references: string[];

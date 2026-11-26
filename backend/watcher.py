@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -28,6 +29,7 @@ import transcripts as transcriptsmod
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
+from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
@@ -120,6 +122,12 @@ class Watcher:
         skillsmod.install(self.skills)
         # Comptes-rendus de réunion (un skill appliqué à un .vtt, en plusieurs tours).
         self.reports = reportsmod.Reports(self.reflections, lambda: self.brain, self.log)
+        # Ouverture de pull requests GitHub pour publier un compte-rendu (écriture, coupée
+        # par défaut). Jamais appelée par le cerveau ni un script : seulement sur un clic.
+        self.github_writer = ghpublish.GithubWriter()
+        # État « déjà publié ? » d'une réunion, mis en cache court (évite d'interroger gh à
+        # chaque rendu de la liste des réunions).
+        self._report_state_cache: dict[str, tuple[float, dict]] = {}
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
         # lists them itself (a brand-new chat only shows up there after its first message).
@@ -2368,6 +2376,162 @@ class Watcher:
             return fn(*args)
         except reportsmod.ReportError as e:
             raise ActionError(e.status, e.message)
+
+    # --- publishing a meeting report to GitHub (write, off by default) ---
+    _ISO_PREFIX = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+    def _report(self, report_id: str):
+        try:
+            return self.reports.get(report_id)
+        except reportsmod.ReportError as e:
+            raise ActionError(e.status, e.message)
+
+    def _write_cfg(self) -> tuple[settingsmod.GithubWriteSettings, dict]:
+        w = self.get_settings().github.write
+        raw = self.cfg.get("context", {}).get("github", {}).get("write", {}) or {}
+        return w, raw if isinstance(raw, dict) else {}
+
+    def _match_repos(self, w: settingsmod.GithubWriteSettings) -> list[str]:
+        """Repos a meeting title / name match may point to: the write allowlist, plus the
+        account's repos when write is set to « all »."""
+        repos = list(w.repos_allowlist)
+        if w.all_repos:
+            try:
+                repos += [r for r in gh.list_repos() if r not in repos]
+            except Exception:
+                pass
+        return repos
+
+    @staticmethod
+    def _scope_ok(scopes: list[str]) -> bool:
+        return any(s in ("repo", "public_repo") for s in scopes)
+
+    def _publish_blocked(self, w, gh_status, has_report: bool) -> str:
+        if not w.enabled:
+            return "L'ouverture de pull requests est désactivée (Réglages › GitHub)."
+        if gh_status is not None and not gh_status.installed:
+            return "gh n'est pas installé sur ce poste."
+        if gh_status is not None and not gh_status.logged_in:
+            return "Connecte-toi d'abord à GitHub (Réglages › GitHub)."
+        if gh_status is not None and not self._scope_ok(gh_status.scopes):
+            return ("Le jeton GitHub n'a pas le droit d'écrire : reconnecte-toi à GitHub avec l'accès "
+                    "« repo » (contents + pull requests). Trame ne touche jamais au jeton.")
+        if not has_report:
+            return "Pas encore de compte-rendu à publier."
+        return ""
+
+    def _date_of(self, s) -> Optional[str]:
+        m = self._ISO_PREFIX.match(s.vtt_path.stem)
+        return m.group(1) if m else None
+
+    def github_publish_plan(self, report_id: str, gh_status=None) -> dict:
+        s = self._report(report_id)
+        w, raw = self._write_cfg()
+        repo_map = raw.get("repo_map", {}) if isinstance(raw.get("repo_map"), dict) else {}
+        guess = ghpublish.resolve_repo(s.title, s.vtt, self._match_repos(w), repo_map)
+        path = ghpublish.report_path(w.path_template, self._date_of(s), s.title)
+        blocked = self._publish_blocked(w, gh_status, bool(s.report))
+        repos: list[str] = []
+        state = None
+        if w.enabled and (gh_status is None or (gh_status.logged_in and self._scope_ok(gh_status.scopes))):
+            try:
+                repos = self.github_writer.writable_repos(w.all_repos, w.repos_allowlist)
+            except Exception:
+                repos = list(w.repos_allowlist)
+            if guess is not None:
+                try:
+                    state = self.github_writer.report_state(guess.repo, path)
+                except ghpublish.PublishError:
+                    state = None
+        plan = ghpublish.PublishPlan(
+            report_id=s.id, write_enabled=w.enabled,
+            repo=guess.repo if guess else None, repo_reason=guess.reason if guess else "",
+            repo_confident=bool(guess and guess.confident), path=path,
+            branch=ghpublish.branch_for(path), base="", draft=w.draft, repos=repos, state=state, blocked=blocked)
+        return plan.as_dict()
+
+    def github_publish(self, report_id: str, repo: str, path: Optional[str], draft: Optional[bool], gh_status=None) -> dict:
+        s = self._report(report_id)
+        w, _raw = self._write_cfg()
+        blocked = self._publish_blocked(w, gh_status, bool(s.report))
+        if blocked:
+            raise ActionError(403 if "jeton" in blocked or "Connecte" in blocked else 409, blocked)
+        repo = (repo or "").strip()
+        if not ghpublish._REPO_RE.match(repo):
+            raise ActionError(422, "Dépôt invalide (attendu : owner/nom).")
+        if not w.all_repos and repo not in w.repos_allowlist:
+            raise ActionError(403, f"Dépôt « {repo} » non autorisé : ajoute-le à la liste des dépôts "
+                                   "autorisés (Réglages › GitHub).")
+        target = (path or "").strip() or ghpublish.report_path(w.path_template, self._date_of(s), s.title)
+        use_draft = w.draft if draft is None else bool(draft)
+        body = (f"Compte-rendu de la réunion « {s.title} », préparé par Trame avec le skill "
+                f"`{s.skill.name}` et relu par l'utilisateur.\n\n"
+                f"- Transcription : `{s.vtt_path.name}` ({s.cues} prises de parole)\n"
+                f"- Brouillon : à relire et compléter avant fusion.\n")
+        try:
+            result = self.github_writer.create_report_pr(repo, target, s.title, s.report, draft=use_draft, pr_body=body)
+        except ghpublish.PublishError as e:
+            raise ActionError(e.status, e.message)
+        self._remember_repo(s.title, repo)
+        published = {"url": result["url"], "number": result.get("number"), "draft": result["draft"],
+                     "repo": repo, "path": result["path"], "branch": result["branch"]}
+        with self._lock:
+            s.published = published
+            s.rev += 1
+        self._report_state_cache.pop(s.meeting_id, None)
+        self.log("info", f"Compte-rendu de « {s.title} » publié sur {repo} : pull request #{result.get('number')}"
+                         f"{' (brouillon)' if result['draft'] else ''}")
+        return {"published": published, "report": self.reports.snapshot(report_id)}
+
+    def github_report_state(self, meeting_id: str, title: str, date: Optional[str], path: Optional[str], gh_status=None) -> dict:
+        if gh_status is not None and (not gh_status.installed or not gh_status.logged_in):
+            return {"repo": None, "reason": "", "repoConfident": False}
+        now = time.time()
+        cached = self._report_state_cache.get(meeting_id) if meeting_id else None
+        if cached and now - cached[0] < 120.0:
+            return cached[1]
+        w, raw = self._write_cfg()
+        repo_map = raw.get("repo_map", {}) if isinstance(raw.get("repo_map"), dict) else {}
+        transcript = ""
+        if path:
+            try:
+                folder = transcriptsmod.chosen_dir(cfgmod._home()).resolve()
+                p = Path(path)
+                if p.suffix.lower() == ".vtt" and p.is_file() and p.resolve().parent == folder:
+                    transcript = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                transcript = ""
+        guess = ghpublish.resolve_repo(title, transcript, self._match_repos(w), repo_map)
+        if guess is None:
+            result = {"repo": None, "reason": "", "repoConfident": False}
+        else:
+            target = ghpublish.report_path(w.path_template, date, title)
+            try:
+                state = self.github_writer.report_state(guess.repo, target)
+                result = {**state.as_dict(), "repoConfident": guess.confident, "repoReason": guess.reason}
+            except ghpublish.PublishError:
+                result = {"repo": guess.repo, "reason": "", "repoConfident": guess.confident, "exists": False}
+        if meeting_id:
+            self._report_state_cache[meeting_id] = (now, result)
+        return result
+
+    def _remember_repo(self, title: str, repo: str) -> None:
+        key = ghpublish.title_key(title)
+        if not key:
+            return
+        with self._lock:
+            cfg = json.loads(json.dumps(self.cfg))
+            write = cfg.setdefault("context", {}).setdefault("github", {}).setdefault("write", {})
+            repo_map = write.get("repo_map")
+            if not isinstance(repo_map, dict):
+                repo_map = {}
+            repo_map[key] = repo
+            write["repo_map"] = repo_map
+            try:
+                cfgmod.save(cfg)
+            except Exception:
+                return
+            self.cfg = cfg
 
     # --- entourage (who's who, exported from Orbite) ---
     def _people_context(self, msg: IncomingMessage, summary: str, entity: Optional[WatchEntity] = None) -> str:

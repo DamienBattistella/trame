@@ -41,6 +41,9 @@ import {
   SavedTranscript,
   SkillsSummary,
   ReportSession,
+  PublishPlan,
+  PublishedRef,
+  GithubReportState,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -299,7 +302,17 @@ function mapSettings(s: any): Settings {
       copilotModel: String(s?.models?.copilot_model ?? "gpt-6-luna"),
       copilotEffort: (s?.models?.copilot_effort ?? "low") as Effort,
     },
-    github: { enabled: Boolean(g.enabled), allRepos: Boolean(g.all_repos) },
+    github: {
+      enabled: Boolean(g.enabled),
+      allRepos: Boolean(g.all_repos),
+      write: {
+        enabled: Boolean(g.write?.enabled),
+        allRepos: Boolean(g.write?.all_repos),
+        reposAllowlist: Array.isArray(g.write?.repos_allowlist) ? g.write.repos_allowlist : [],
+        pathTemplate: String(g.write?.path_template ?? "docs/comptes-rendus/{date}-{slug}.md"),
+        draft: g.write?.draft === undefined ? true : Boolean(g.write.draft),
+      },
+    },
     safety: {
       autoPauseOnScreenShare: Boolean(f.auto_pause_on_screen_share),
       selftestGate: Boolean(f.selftest_gate),
@@ -499,6 +512,15 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     const g: Record<string, unknown> = {};
     if (p.github.enabled !== undefined) g.enabled = p.github.enabled;
     if (p.github.allRepos !== undefined) g.all_repos = p.github.allRepos;
+    if (p.github.write) {
+      const w: Record<string, unknown> = {};
+      if (p.github.write.enabled !== undefined) w.enabled = p.github.write.enabled;
+      if (p.github.write.allRepos !== undefined) w.all_repos = p.github.write.allRepos;
+      if (p.github.write.reposAllowlist !== undefined) w.repos_allowlist = p.github.write.reposAllowlist;
+      if (p.github.write.pathTemplate !== undefined) w.path_template = p.github.write.pathTemplate;
+      if (p.github.write.draft !== undefined) w.draft = p.github.write.draft;
+      g.write = w;
+    }
     out.github = g;
   }
   if (p.safety) {
@@ -552,7 +574,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
     ...(p.onboarded !== undefined && { onboarded: p.onboarded }),
     ...(p.brain !== undefined && { brain: p.brain }),
     models: { ...s.models, ...p.models },
-    github: { ...s.github, ...p.github },
+    github: { ...s.github, ...p.github, write: { ...s.github.write, ...p.github?.write } },
     safety: { ...s.safety, ...p.safety },
     brief: { ...s.brief, ...p.brief },
     followUps: { ...s.followUps, ...p.followUps },
@@ -600,7 +622,11 @@ let localSettings: Settings = {
   onboarded: false,
   brain: "claude",
   models: { claudeModel: "haiku", claudeEffort: "", copilotModel: "gpt-6-luna", copilotEffort: "low" },
-  github: { enabled: true, allRepos: true },
+  github: {
+    enabled: true,
+    allRepos: true,
+    write: { enabled: false, allRepos: false, reposAllowlist: ["Wifsimster/passerelle"], pathTemplate: "docs/comptes-rendus/{date}-{slug}.md", draft: true },
+  },
   safety: {
     autoPauseOnScreenShare: true,
     selftestGate: true,
@@ -656,6 +682,39 @@ function demoGithubStatus(): GithubStatus {
     };
   }
   return localGithub;
+}
+
+// Publication GitHub du mode démo : un dépôt lié déduit, une PR brouillon simulée, et le
+// badge « déjà publié » qui apparaît sur la réunion une fois la PR ouverte.
+const DEMO_WRITE_REPO = "Wifsimster/passerelle";
+const demoPublishedReports: Record<string, PublishedRef> = {};
+const demoPublishedMeetings = new Set<string>();
+function demoPublishPlan(reportId: string, meetingId: string, title: string, date: string | null): PublishPlan {
+  const w = localSettings.github.write;
+  const slug = (title || "compte-rendu").normalize("NFKD").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 60);
+  const path = `docs/comptes-rendus/${date ? date + "-" : ""}${slug}.md`;
+  const branch = `trame/compte-rendu/${date ? date + "-" : ""}${slug}`;
+  const already = demoPublishedReports[reportId] ?? null;
+  const status = demoGithubStatus();
+  const blocked = !w.enabled
+    ? "L'ouverture de pull requests est désactivée (Réglages › GitHub)."
+    : !status.loggedIn
+      ? "Connecte-toi d'abord à GitHub (Réglages › GitHub)."
+      : "";
+  return {
+    reportId, writeEnabled: w.enabled, repo: DEMO_WRITE_REPO,
+    repoReason: "lien GitHub vers Wifsimster/passerelle dans la transcription", repoConfident: true,
+    path, branch, base: "main", draft: w.draft, repos: [DEMO_WRITE_REPO, ...w.reposAllowlist.filter((r) => r !== DEMO_WRITE_REPO)],
+    state: already
+      ? { repo: DEMO_WRITE_REPO, exists: false, prUrl: already.url, prNumber: already.number, prDraft: already.draft, reason: "une pull request ouvre déjà ce compte-rendu", path, branch }
+      : { repo: DEMO_WRITE_REPO, exists: false, path, branch },
+    blocked,
+  };
+}
+function demoReportState(meetingId: string): GithubReportState {
+  const pub = demoPublishedMeetings.has(meetingId);
+  if (!pub) return { repo: null };
+  return { repo: DEMO_WRITE_REPO, exists: false, prUrl: `https://github.com/${DEMO_WRITE_REPO}/pull/215`, prNumber: 215, prDraft: true, reason: "une pull request ouvre déjà ce compte-rendu", repoConfident: true };
 }
 
 export type BriefPrefs = Settings["brief"] & { github: boolean };
@@ -1937,6 +1996,44 @@ export function useTrame() {
     return request("POST", "/api/github/login/cancel");
   };
 
+  /** Ce que « Publier sur GitHub » ferait pour ce compte-rendu : dépôt lié, branche, chemin, état déjà-présent. Ne publie rien. */
+  const githubPublishPlan = async (reportId: string): Promise<Result<{ plan: PublishPlan }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(400);
+      const s = demoReports.current.get(reportId);
+      return { ok: true, plan: demoPublishPlan(reportId, s?.meetingId ?? "", s?.title ?? "Réunion", /20\d\d-\d\d-\d\d/.exec(s?.vttPath ?? "")?.[0] ?? null) };
+    }
+    return request<{ plan: PublishPlan }>("POST", "/api/github/publish/plan", { report_id: reportId });
+  };
+  /** Ouvre une pull request brouillon ajoutant le .md du compte-rendu au dépôt choisi (sur confirmation explicite). */
+  const githubPublish = async (reportId: string, repo: string, opts?: { path?: string; draft?: boolean }): Promise<Result<{ published: PublishedRef; report: ReportSession }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(1300);
+      const s = demoReports.current.get(reportId);
+      if (!s) return { ok: false, error: OFFLINE };
+      const plan = demoPublishPlan(reportId, s.meetingId, s.title, /20\d\d-\d\d-\d\d/.exec(s.vttPath)?.[0] ?? null);
+      const num = 200 + Math.floor(Math.random() * 100);
+      const published: PublishedRef = { url: `https://github.com/${repo}/pull/${num}`, number: num, draft: opts?.draft ?? plan.draft, repo, path: opts?.path ?? plan.path, branch: plan.branch };
+      demoPublishedReports[reportId] = published;
+      demoPublishedMeetings.add(s.meetingId);
+      s.published = published;
+      s.rev++;
+      return { ok: true, published, report: { ...s } };
+    }
+    return request("POST", "/api/github/publish", { report_id: reportId, repo, path: opts?.path ?? null, draft: opts?.draft ?? null });
+  };
+  /** Le compte-rendu de cette réunion est-il déjà sur le dépôt lié (fichier ou PR ouverte) ? Pour la liste des réunions. */
+  const githubReportState = async (m: { meetingId: string; title: string; date: string | null; path?: string }): Promise<Result<{ state: GithubReportState }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(250);
+      return { ok: true, state: demoReportState(m.meetingId) };
+    }
+    return request<{ state: GithubReportState }>("POST", "/api/github/report-state", { meeting_id: m.meetingId, title: m.title, date: m.date, path: m.path ?? null });
+  };
+
   /** Auto-test réel des repères de Teams (fenêtre, messages, zone de saisie). */
   const selftest = async (): Promise<Result<{ selftestOk: boolean }>> => {
     if (!connectedRef.current) return demo(1800, { selftestOk: true });
@@ -2030,6 +2127,9 @@ export function useTrame() {
     cancelClaudeLogin,
     githubLogin,
     cancelGithubLogin,
+    githubPublishPlan,
+    githubPublish,
+    githubReportState,
     saveWatchlist,
     refreshConversations,
     uploadSoul,

@@ -12,6 +12,7 @@ import {
   FileX2,
   FolderOpen,
   FolderSearch,
+  GitPullRequest,
   Loader2,
   Lock,
   MoreHorizontal,
@@ -25,6 +26,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Trame } from "@/api";
+import { openExternal } from "@/desktop";
+import { GithubReportState } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -82,6 +85,9 @@ export function Meetings({ trame }: { trame: Trame }) {
   // Compte-rendu (skill meeting-report) ouvert dans le dialogue, et la réunion qui le prépare.
   const [report, setReport] = useState<ReportSession | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  // « Déjà publié ? » : pour chaque réunion dont le compte-rendu est déjà sur son dépôt lié
+  // (fichier fusionné ou PR ouverte), de quoi l'afficher sans relancer le skill.
+  const [reportStates, setReportStates] = useState<Record<string, GithubReportState>>({});
   // Fenêtre moyenne ou large : la liste et, à côté, le détail de la réunion choisie.
   const split = useMedia("(min-width: 80rem)");
 
@@ -180,6 +186,32 @@ export function Meetings({ trame }: { trame: Trame }) {
 
   const counts = useMemo(() => occurrences(meetings ?? []), [meetings]);
   const visible = useMemo(() => (meetings ?? []).filter((m) => matches(m, query)), [meetings, query]);
+
+  // Pour chaque réunion déjà enregistrée, demander au moteur si son compte-rendu est déjà sur
+  // le dépôt lié. Le moteur met en cache et ne fait d'appel GitHub que s'il relie un dépôt.
+  const githubReady = trame.githubStatus?.loggedIn;
+  const inflightStates = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!githubReady) return;
+    let live = true;
+    const todo = visible.filter((m) => savedOf(m) && !(m.meetingId in reportStates) && !inflightStates.current.has(m.meetingId));
+    void (async () => {
+      for (const m of todo) {
+        inflightStates.current.add(m.meetingId);
+        const res = await trame.githubReportState({ meetingId: m.meetingId, title: m.title, date: m.date, path: savedOf(m)?.path });
+        inflightStates.current.delete(m.meetingId);
+        if (!live) return;
+        if (res.ok) setReportStates((prev) => ({ ...prev, [m.meetingId]: res.state }));
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, githubReady, fetches, reportStates]);
+  // Après une publication, réinterroger l'état de la réunion concernée.
+  const forgetState = (meetingId?: string) =>
+    meetingId && setReportStates((p) => { const n = { ...p }; delete n[meetingId]; return n; });
   const groups = useMemo(() => groupByPeriod(visible, new Date()), [visible]);
   const savedCount = (meetings ?? []).filter((m) => savedOf(m)).length;
   const searchable = (meetings?.length ?? 0) > 6;
@@ -196,7 +228,16 @@ export function Meetings({ trame }: { trame: Trame }) {
 
   return (
     <div className="flex flex-col gap-5 pb-6">
-      {report && <ReportDialog trame={trame} session={report} onClose={() => setReport(null)} />}
+      {report && (
+        <ReportDialog
+          trame={trame}
+          session={report}
+          onClose={() => {
+            forgetState(report.meetingId);
+            setReport(null);
+          }}
+        />
+      )}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">Réunions</h1>
@@ -321,6 +362,7 @@ export function Meetings({ trame }: { trame: Trame }) {
                     onSeries={() => setQuery(m.title)}
                     reporting={starting === m.meetingId}
                     onReport={() => void startReport(m)}
+                    published={reportStates[m.meetingId]}
                     selected={selected?.meetingId === m.meetingId}
                     onSelect={split ? () => setSelectedId(m.meetingId) : undefined}
                   />
@@ -346,6 +388,7 @@ export function Meetings({ trame }: { trame: Trame }) {
           onSeries={() => setQuery(selected.title)}
           reporting={starting === selected.meetingId}
           onReport={() => void startReport(selected)}
+          published={reportStates[selected.meetingId]}
         />
       )}
       </div>
@@ -448,6 +491,8 @@ type RowProps = {
   onSeries: () => void;
   reporting: boolean;
   onReport: () => void;
+  /** État « déjà publié ? » du compte-rendu sur le dépôt lié (absent si non vérifié / pas de dépôt sûr). */
+  published?: GithubReportState;
   /** Fenêtre partagée liste + détail : la ligne se choisit d'un clic. */
   selected?: boolean;
   onSelect?: () => void;
@@ -474,7 +519,7 @@ const STATE_ICON: Record<RowState, { icon: React.ReactNode; label: string }> = {
   error: { icon: <AlertTriangle className="size-4 text-destructive" />, label: "Transcription non récupérée" },
 };
 
-function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport, selected, onSelect }: RowProps) {
+function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport, published, selected, onSelect }: RowProps) {
   const state = rowState(m, fetch, saved);
   const { start, end } = slotOf(m);
   const duration = durationLabel(durationMinutes(start, end));
@@ -548,6 +593,7 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
               <TooltipContent>Réunion récurrente : afficher ses {repeats} occurrences</TooltipContent>
             </Tooltip>
           )}
+          <PublishedBadge state={published} />
         </div>
         <div className="truncate text-xs text-muted-foreground tabular-nums">{when}</div>
         {detail && (
@@ -619,7 +665,7 @@ const longDate = (m: Meeting) => {
 };
 
 /** Fenêtre moyenne ou large : la réunion choisie en entier, titre non tronqué, et ses actions à découvert. */
-function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport }: Omit<RowProps, "relative" | "selected" | "onSelect">) {
+function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, onFetch, onOpen, onReveal, onCopy, onSeries, reporting, onReport, published }: Omit<RowProps, "relative" | "selected" | "onSelect">) {
   const state = rowState(m, fetch, saved);
   const { start, end } = slotOf(m);
   const duration = durationLabel(durationMinutes(start, end));
@@ -658,7 +704,10 @@ function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, 
         </span>
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-balance break-words">{m.title}</h2>
-          <p className="text-sm text-muted-foreground">{STATE_ICON[state].label}</p>
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            {STATE_ICON[state].label}
+            <PublishedBadge state={published} />
+          </p>
         </div>
       </div>
 
@@ -741,6 +790,38 @@ function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, 
         )}
       </div>
     </aside>
+  );
+}
+
+/** Pastille « déjà publié » : le compte-rendu est déjà sur le dépôt lié (fichier fusionné
+ *  ou pull request ouverte), pour éviter de relancer le skill pour rien. */
+function PublishedBadge({ state }: { state?: GithubReportState }) {
+  if (!state || !state.repo) return null;
+  const merged = Boolean(state.exists);
+  const pr = !merged && Boolean(state.prUrl);
+  if (!merged && !pr) return null;
+  const href = merged ? state.url : state.prUrl;
+  const label = merged ? "Compte-rendu publié" : "Pull request ouverte";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (href) void openExternal(href);
+          }}
+          aria-label={`${label} sur ${state.repo}`}
+          className={cn(
+            "pointer-events-auto relative z-[1] inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
+            merged ? "bg-success/10 text-success hover:bg-success/20" : "bg-warning/10 text-warning-foreground hover:bg-warning/20"
+          )}
+        >
+          <GitPullRequest className="size-3" /> {merged ? "Publié" : "PR"}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label} sur {state.repo}{state.prNumber ? ` · #${state.prNumber}` : ""}</TooltipContent>
+    </Tooltip>
   );
 }
 

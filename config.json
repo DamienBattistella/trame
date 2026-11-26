@@ -45,7 +45,15 @@
       "access": "read_only",
       "repos": "all",
       "repos_allowlist": [],
-      "consult": "when_relevant"
+      "consult": "when_relevant",
+      "write": {
+        "enabled": false,
+        "repos": "allowlist",
+        "repos_allowlist": [],
+        "path_template": "docs/comptes-rendus/{date}-{slug}.md",
+        "draft": true,
+        "repo_map": {}
+      }
     }
   },
   "brief": {
