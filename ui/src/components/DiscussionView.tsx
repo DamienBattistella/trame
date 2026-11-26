@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -21,7 +22,7 @@ import { applyMention, matchPeople, mentionQuery, mentionsUsed } from "@/lib/men
 import { wordDiff } from "@/lib/wordDiff";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
-import { CANCELLED, Trame } from "@/api";
+import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
 import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
@@ -75,6 +76,7 @@ const EMOJI = Object.fromEntries(REACTIONS.map((r) => [r.key, r.emoji])) as Reco
 const refOf = (m: ThreadMessage): MessageRef => ({ id: m.id ?? null, sender: m.sender, text: m.text, at: m.at });
 const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
   Boolean(a) && (a!.id && b.id ? a!.id === b.id : a!.text === b.text && a!.sender === b.sender);
+const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 /** Citation d'un message, dans le fil ou au-dessus de la zone de saisie (comme une réponse Teams). */
 function Quote({ target, className, children }: { target: MessageRef; className?: string; children?: React.ReactNode }) {
   return (
@@ -149,25 +151,29 @@ function CopyButton({ text, separated }: { text: string; separated: boolean }) {
   );
 }
 
-/** Barre de gestes au survol d'un message : le petit jeu de réactions Teams, « Répondre »
- *  et « Copier » (ce dernier toujours là, il ne passe pas par Teams). */
+/** Barre de gestes au survol d'un message : le petit jeu de réactions Teams, « Répondre »,
+ *  « Copier » (toujours là, il ne passe pas par Teams) et, sur tes messages, « Supprimer ». */
 function MessageActions({
   message,
   canReact,
   canReply,
+  canDelete,
   pending,
   onReact,
   onReply,
+  onDelete,
 }: {
   message: ThreadMessage;
   canReact: boolean;
   canReply: boolean;
+  canDelete: boolean;
   pending: Reaction | null;
   onReact: (r: Reaction) => void;
   onReply: () => void;
+  onDelete: () => void;
 }) {
-  const canCopy = Boolean(message.text.trim());
-  if (!canReact && !canReply && !canCopy) return null;
+  const canCopy = Boolean(message.text.trim()) && !message.deleted;
+  if (!canReact && !canReply && !canCopy && !canDelete) return null;
   const mine = message.reactions ?? [];
   return (
     <div
@@ -217,6 +223,22 @@ function MessageActions({
         </Tooltip>
       )}
       {canCopy && <CopyButton text={message.text} separated={canReact && !canReply} />}
+      {canDelete && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Supprimer ce message"
+              disabled={Boolean(pending)}
+              onClick={onDelete}
+              className="ml-0.5 grid size-7 place-items-center rounded-full border-l text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Supprimer ce message</TooltipContent>
+        </Tooltip>
+      )}
     </div>
   );
 }
@@ -270,6 +292,9 @@ export function DiscussionView({
   const [check, setCheck] = useState<{ result: FactCheck; text: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [reacting, setReacting] = useState<{ index: number; reaction: Reaction } | null>(null);
+  // Suppression d'un de tes messages : à confirmer dans un dialogue, jamais en un clic.
+  const [toDelete, setToDelete] = useState<ThreadMessage | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const caps = trame.state.capabilities;
   const composer = useRef<HTMLTextAreaElement>(null);
   // Mentions : personnes choisies dans les suggestions « @ », et la liste ouverte.
@@ -552,6 +577,23 @@ export function DiscussionView({
     );
   };
 
+  const deleteMessage = async () => {
+    const m = toDelete;
+    if (!m || deleting) return;
+    setDeleting(true);
+    const res = await trame.deleteInThread(c.threadId, refOf(m));
+    setDeleting(false);
+    if (!res.ok) return void toast.error("Message non supprimé", { description: res.error });
+    setToDelete(null);
+    if (sameRef(replyTo, m)) setReplyTo(null);
+    setMessages((list) =>
+      (list ?? []).map((x) =>
+        sameRef(refOf(m), x) ? { ...x, text: DELETED_TEXT, deleted: true, reactions: [], files: [], images: [] } : x
+      )
+    );
+    toast.success("Message supprimé dans Teams");
+  };
+
   const replyToMessage = (m: ThreadMessage) => {
     setReplyTo(refOf(m));
     requestAnimationFrame(() => composer.current?.focus());
@@ -758,9 +800,11 @@ export function DiscussionView({
               {shown.map((m, i) => {
                 const showName = !m.mine && c.surface !== "dm" && shown[i - 1]?.sender !== m.sender;
                 // Pas de geste sur un message pas encore relu dans Teams, ni sur ce que tu viens d'envoyer.
-                const live = messages !== null && m.at !== "à l'instant";
+                const live = messages !== null && m.at !== "à l'instant" && !m.deleted;
                 const canReact = live && caps.react && !m.mine;
                 const canReply = live && caps.reply;
+                // Seulement tes messages, connus de Teams par leur identifiant.
+                const canDelete = live && caps.delete && m.mine && Boolean(m.id);
                 const targeted = sameRef(replyTo, m);
                 const pending = reacting?.index === i ? reacting.reaction : null;
                 return (
@@ -777,9 +821,11 @@ export function DiscussionView({
                       message={m}
                       canReact={canReact}
                       canReply={canReply}
+                      canDelete={canDelete}
                       pending={pending}
                       onReact={(r) => react(m, i, r)}
                       onReply={() => replyToMessage(m)}
+                      onDelete={() => setToDelete(m)}
                     />
                     <div
                       aria-current={i === foundIndex ? "true" : undefined}
@@ -790,8 +836,17 @@ export function DiscussionView({
                         targeted && "ring-2 ring-link/50"
                       )}
                     >
-                      {m.replyTo && <Quote target={m.replyTo} />}
-                      <MessageText text={m.text} range={i === foundIndex ? findFolded(m.text, foundQuery) : null} github={trame.githubLink} />
+                      {m.deleted ? (
+                        <span className="flex items-center gap-1.5 text-muted-foreground italic">
+                          <Ban className="size-3.5 shrink-0" />
+                          {DELETED_TEXT}
+                        </span>
+                      ) : (
+                        <>
+                          {m.replyTo && <Quote target={m.replyTo} />}
+                          <MessageText text={m.text} range={i === foundIndex ? findFolded(m.text, foundQuery) : null} github={trame.githubLink} />
+                        </>
+                      )}
                       <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
                     </div>
                     {(m.at || (m.reactions?.length ?? 0) > 0) && (
@@ -1146,6 +1201,33 @@ export function DiscussionView({
           </div>
         </div>
       </motion.div>
+
+      <Dialog open={toDelete !== null} onOpenChange={(open) => !open && !deleting && setToDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Supprimer ce message ?</DialogTitle>
+            <DialogDescription>
+              Il sera supprimé dans Teams, pour toi et pour {c.surface === "dm" ? c.displayName : "tous les participants"}. Ils verront
+              « {DELETED_TEXT} » à sa place.
+            </DialogDescription>
+          </DialogHeader>
+          {toDelete && (
+            <blockquote className="rounded-xl border-l-2 border-primary/40 bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+              {excerpt(toDelete.text, 240)}
+              {toDelete.at && <span className="mt-1 block text-xs text-muted-foreground tabular-nums">{toDelete.at}</span>}
+            </blockquote>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleting} onClick={() => setToDelete(null)}>
+              Annuler
+            </Button>
+            <Button variant="destructive" disabled={deleting} onClick={deleteMessage}>
+              {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

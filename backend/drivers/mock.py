@@ -3,7 +3,7 @@ import itertools
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional
-from models import IncomingMessage, MessageRef, Surface, WatchEntity
+from models import DELETED_TEXT, IncomingMessage, MessageRef, Surface, WatchEntity
 from drivers.base import TeamsDriver, same_message
 
 _SEED = [
@@ -151,6 +151,9 @@ class MockTeamsDriver(TeamsDriver):
     supports_reactions = True
     supports_reply = True
     supports_mentions = True
+    supports_delete = True
+    # L'utilisateur de la démo : Teams ne propose « Supprimer » que sur ses messages.
+    ME = "Damien Battistella"
 
     def __init__(self, interval: float = 20.0):
         self.interval = interval
@@ -167,10 +170,14 @@ class MockTeamsDriver(TeamsDriver):
         self.replies: list[tuple[str, str, str, bool]] = []
         self.mentioned: list[tuple[str, str, list[str], bool]] = []
         self.reactions: dict[str, list[str]] = {}
+        # Messages supprimés, par « conversation/id ».
+        self.deleted: set[str] = set()
 
     def _thread(self, thread_id: str) -> list[tuple[str, str, str, str]]:
-        """(id, heure, auteur, texte) : ids stables, à la position du message dans le fil."""
-        return [(f"m{i}", at, sender, text) for i, (at, sender, text) in enumerate(_HISTORY.get(thread_id, []))]
+        """(id, heure, auteur, texte) : ids stables, à la position du message dans le fil.
+        Un message supprimé ne montre plus que DELETED_TEXT, comme dans Teams."""
+        return [(f"m{i}", at, sender, DELETED_TEXT if f"{thread_id}/m{i}" in self.deleted else text)
+                for i, (at, sender, text) in enumerate(_HISTORY.get(thread_id, []))]
 
     def _find(self, thread_id: str, ref: MessageRef) -> Optional[str]:
         """Id of the message ref points at, None unless its author and text match."""
@@ -218,7 +225,8 @@ class MockTeamsDriver(TeamsDriver):
         history = self._thread(thread_id)[-last_n:] if last_n > 0 else []
         return [
             IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at=at, surface=surface,
-                            id=mid, reactions=list(self.reactions.get(f"{thread_id}/{mid}", [])))
+                            id=mid, reactions=list(self.reactions.get(f"{thread_id}/{mid}", [])),
+                            deleted=f"{thread_id}/{mid}" in self.deleted)
             for mid, at, sender, text in history
         ]
 
@@ -335,6 +343,20 @@ class MockTeamsDriver(TeamsDriver):
         if reaction not in mine:
             mine.append(reaction)
         _say(f"[mock] RÉACTION {reaction} -> {thread_id}/{mid}")
+        return True
+
+    def _delete_in_active(self, thread_id: str, target: MessageRef) -> bool:
+        if self._active != thread_id:
+            return False
+        mid = self._find(thread_id, target)
+        if mid is None:
+            raise RuntimeError("message introuvable ou différent de celui choisi")
+        sender = next(r[2] for r in self._thread(thread_id) if r[0] == mid)
+        if sender != self.ME:
+            raise RuntimeError("Teams ne propose pas « Supprimer » sur ce message")
+        self.deleted.add(f"{thread_id}/{mid}")
+        self.reactions.pop(f"{thread_id}/{mid}", None)
+        _say(f"[mock] SUPPRIMÉ -> {thread_id}/{mid}")
         return True
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

@@ -952,6 +952,32 @@
     return null;
   };
 
+  // --- Supprimer un de ses propres messages ---
+  // Ce que Teams montre à la place d'un message supprimé (« Ce message a été supprimé. Annuler »).
+  const DELETED_RE = /^(ce message a ete supprime|this message has been deleted)\b/;
+  const isDeleted = (el) => DELETED_RE.test(norm(flat(el?.innerText || "")));
+  const byId = (mid) => Array.from(document.querySelectorAll(MSGS)).find((el) => msgId(el) === mid) || null;
+  const escape = () =>
+    (document.activeElement || document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  // Teams ne propose « Modifier » que sur tes propres messages : c'est la preuve, lue dans
+  // la barre de CE message, qu'il est à toi (« Supprimer » existe aussi pour un modérateur).
+  const isEdit = (l) => /^(edit|modifier)\b/.test(norm(l));
+  // « Supprimer ce message » (data-tid message-actions-delete) dans le menu « … » du message.
+  const isDelete = (l) => /^(delete|supprimer)( (this|ce) message)?$/.test(norm(l).replace(/[.…]+$/, ""));
+  const deleteEntry = () =>
+    Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"], [role="menu"] button')).find(
+      (b) => visible(b) && (b.getAttribute("data-tid") === "message-actions-delete" || isDelete(label(b)))
+    ) || null;
+  // La confirmation de Teams, quand il en affiche une : son bouton « Supprimer ».
+  const confirmDelete = () => {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).filter(visible);
+    for (const d of dialogs) {
+      const b = Array.from(d.querySelectorAll("button")).find((x) => visible(x) && isDelete(label(x)));
+      if (b) return b;
+    }
+    return null;
+  };
+
   // Son propre statut. Le bouton du profil (avatar en haut à droite) le dit dans son
   // libellé (« Votre profil, statut Ne pas déranger ») et sur son badge (« do not
   // disturb ») : le lire n'ouvre aucun menu. Le changer passe par son menu, entrée
@@ -1355,6 +1381,50 @@
       }, 5000);
       toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
+    },
+    // Supprime un de TES messages : retrouvé par son id, son auteur, son texte et son heure,
+    // « Modifier » présent dans sa barre (message à toi), puis « … » → « Supprimer » et la
+    // confirmation de Teams si elle s'affiche. Fait seulement quand Teams le montre supprimé.
+    delete: async ({ name, message }) => {
+      if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+      const found = await lookup(message);
+      if (!found || !found.id) return { ok: false, error: "message introuvable ou différent de celui choisi : rien n'a été supprimé" };
+      if (isDeleted(found.el)) return { ok: false, error: "message déjà supprimé" };
+      const at = flat(found.el.querySelector("time")?.innerText || "");
+      if (message.at && at && norm(at) !== norm(message.at)) {
+        unhover();
+        toBottom();
+        return { ok: false, error: "heure du message différente de celle choisie : rien n'a été supprimé" };
+      }
+      const fail = (error) => {
+        escape();
+        unhover();
+        toBottom();
+        return { ok: false, error };
+      };
+      const edit = await barAction(found.el, "message-actions-edit", isEdit);
+      if (!edit) return fail("ce message n'est pas à toi (pas de « Modifier » dans Teams) : rien n'a été supprimé");
+      const more = await barAction(found.el, "message-actions-more", () => false);
+      if (!more) return fail("menu « Autres options » introuvable sur ce message");
+      more.click();
+      let entry = null;
+      if (!(await waitFor(() => (entry = deleteEntry()), 1500))) return fail("« Supprimer » introuvable dans le menu du message");
+      // Rien n'a bougé entre-temps : même conversation, même message sous la souris.
+      if (!isOpen(name)) return fail("conversation changée avant la suppression");
+      const again = findMessage(message);
+      if (!again || again.id !== found.id) return fail("message changé avant la suppression");
+      if (late()) return fail("délai dépassé avant la suppression");
+      press(entry);
+      const mid = found.id;
+      const done = () => isDeleted(byId(mid));
+      // Teams demande parfois confirmation : on clique son « Supprimer », pour ce seul message.
+      await waitFor(() => done() || Boolean(confirmDelete()), 2500);
+      const ok = confirmDelete();
+      if (ok && !done()) press(ok);
+      const shown = await waitFor(done, 6000);
+      unhover();
+      toBottom();
+      return shown ? { ok: true } : { ok: false, uncertain: true, error: "message non affiché comme supprimé, vérifie dans Teams" };
     },
     mystatus: async ({ message } = {}) => {
       if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
