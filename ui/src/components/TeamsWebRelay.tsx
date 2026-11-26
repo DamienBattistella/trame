@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { isDesktop, onDesktopEvent, teamsWebEval, teamsWebOpen } from "@/desktop";
+import { ENGINE } from "@/api";
 
-const API = "http://127.0.0.1:8731";
+const API = `http://${ENGINE}`;
 
 /** Teams intégré : relaie les ordres du moteur vers la page Teams cachée, et ses
  *  réponses vers le moteur. Ne fait rien tant que le mode n'est pas activé. */

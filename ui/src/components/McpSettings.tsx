@@ -7,8 +7,9 @@ import { Switch } from "@/components/ui/switch";
 import { GroupList } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Settings } from "@/types";
+import { ENGINE } from "@/api";
 
-const URL = "http://127.0.0.1:8731/mcp";
+const URL = `http://${ENGINE}/mcp`;
 const GROUPS: { title: string; send?: boolean; tools: [string, string][] }[] = [
   {
     title: "Lire",

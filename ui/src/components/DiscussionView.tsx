@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { BookOpenText, ExternalLink, Loader2, PenLine, RotateCcw, SearchX, Send } from "lucide-react";
+import { BookOpenText, ExternalLink, Loader2, PenLine, Reply, RotateCcw, SearchX, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { findFolded, fold } from "@/lib/textSearch";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { DraftItem, MessageHit, ThreadMessage, WatchEntity } from "@/types";
+import { DraftItem, MessageHit, MessageRef, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -63,6 +63,95 @@ function foundAt(shown: ThreadMessage[], found: MessageHit | null): number {
   return -1;
 }
 
+const EMOJI = Object.fromEntries(REACTIONS.map((r) => [r.key, r.emoji])) as Record<Reaction, string>;
+const refOf = (m: ThreadMessage): MessageRef => ({ id: m.id ?? null, sender: m.sender, text: m.text, at: m.at });
+const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
+  Boolean(a) && (a!.id && b.id ? a!.id === b.id : a!.text === b.text && a!.sender === b.sender);
+const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
+
+/** Citation d'un message, dans le fil ou au-dessus de la zone de saisie (comme une réponse Teams). */
+function Quote({ target, className, children }: { target: MessageRef; className?: string; children?: React.ReactNode }) {
+  return (
+    <div className={cn("flex min-w-0 items-start gap-2 rounded-lg border-l-2 border-link/60 bg-background/60 px-2.5 py-1.5 text-xs", className)}>
+      <div className="min-w-0 flex-1">
+        <span className="font-medium">{target.sender || "Message"}</span>
+        {target.at && <span className="ml-1.5 text-muted-foreground tabular-nums">{target.at}</span>}
+        <p className="line-clamp-2 text-muted-foreground">{excerpt(target.text, 160)}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Barre de gestes au survol d'un message : le petit jeu de réactions Teams et « Répondre ». */
+function MessageActions({
+  message,
+  canReact,
+  canReply,
+  pending,
+  onReact,
+  onReply,
+}: {
+  message: ThreadMessage;
+  canReact: boolean;
+  canReply: boolean;
+  pending: Reaction | null;
+  onReact: (r: Reaction) => void;
+  onReply: () => void;
+}) {
+  if (!canReact && !canReply) return null;
+  const mine = message.reactions ?? [];
+  return (
+    <div
+      role="toolbar"
+      aria-label={`Gestes sur le message de ${message.sender}`}
+      className={cn(
+        "absolute -top-4 z-10 flex items-center gap-0.5 rounded-full border bg-popover p-0.5 shadow-sm transition-opacity",
+        message.mine ? "right-2" : "left-2",
+        pending ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      )}
+    >
+      {canReact &&
+        REACTIONS.map((r) => (
+          <Tooltip key={r.key}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Réagir : ${r.label}`}
+                aria-pressed={mine.includes(r.key)}
+                disabled={Boolean(pending) || mine.includes(r.key)}
+                onClick={() => onReact(r.key)}
+                className={cn(
+                  "grid size-7 place-items-center rounded-full text-base leading-none transition-transform hover:scale-125 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:hover:scale-100",
+                  mine.includes(r.key) && "bg-primary/10"
+                )}
+              >
+                {pending === r.key ? <Loader2 className="size-3.5 animate-spin" /> : r.emoji}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{mine.includes(r.key) ? `${r.label} · déjà mis` : r.label}</TooltipContent>
+          </Tooltip>
+        ))}
+      {canReply && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Répondre à ce message de ${message.sender}`}
+              disabled={Boolean(pending)}
+              onClick={onReply}
+              className={cn("grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring", canReact && "ml-0.5 border-l")}
+            >
+              <Reply className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Répondre à ce message</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
 /** Une discussion : historique lu dans Teams, réponse proposée pré-remplie, envoi à la main. */
 export function DiscussionView({
   trame,
@@ -90,6 +179,11 @@ export function DiscussionView({
   const [older, setOlder] = useState(false);
   const want = useRef(PAGE);
   const loading = useRef(false);
+  // Réponse à un message précis (citation Teams), et réaction en cours d'envoi.
+  const [replyTo, setReplyTo] = useState<MessageRef | null>(null);
+  const [reacting, setReacting] = useState<{ index: number; reaction: Reaction } | null>(null);
+  const caps = trame.state.capabilities;
+  const composer = useRef<HTMLTextAreaElement>(null);
   const base = useRef(draft?.proposal ?? "");
   const controls = useAnimationControls();
   const scroller = useRef<StickToBottomContext>(null);
@@ -135,6 +229,8 @@ export function DiscussionView({
     setText(draft?.proposal ?? "");
     base.current = draft?.proposal ?? "";
     setFresher(null);
+    setReplyTo(null);
+    setReacting(null);
     setEdge(null);
     want.current = PAGE;
     const unread = c.unread;
@@ -179,13 +275,33 @@ export function DiscussionView({
     const body = text.trim();
     if (!body || busy !== "idle") return;
     setBusy("send");
-    const res = draft ? await trame.sendDraft(draft.id, body) : await trame.sendInThread(c.threadId, body);
+    const target = replyTo;
+    const res = draft ? await trame.sendDraft(draft.id, body, target) : await trame.sendInThread(c.threadId, body, target);
     setBusy("idle");
     if (!res.ok) return fail(`Envoi impossible à ${c.displayName}`, `${res.error} Ton message est conservé.`);
     if (draft) trame.removeDraft(draft.id);
-    setMessages((m) => [...(m ?? []), { sender: "Toi", text: body, at: "à l'instant", mine: true }]);
+    setMessages((m) => [...(m ?? []), { sender: "Toi", text: body, at: "à l'instant", mine: true, replyTo: target }]);
     setText("");
+    setReplyTo(null);
     base.current = "";
+  };
+
+  const react = async (m: ThreadMessage, index: number, reaction: Reaction) => {
+    if (reacting) return;
+    setReacting({ index, reaction });
+    const res = await trame.reactInThread(c.threadId, refOf(m), reaction);
+    setReacting(null);
+    if (!res.ok) return toast.error(`Réaction ${EMOJI[reaction]} impossible`, { description: res.error });
+    setMessages((list) =>
+      (list ?? []).map((x, i) =>
+        i === index && x.text === m.text && !(x.reactions ?? []).includes(reaction) ? { ...x, reactions: [...(x.reactions ?? []), reaction] } : x
+      )
+    );
+  };
+
+  const replyToMessage = (m: ThreadMessage) => {
+    setReplyTo(refOf(m));
+    requestAnimationFrame(() => composer.current?.focus());
   };
 
   const dismiss = async () => {
@@ -200,7 +316,7 @@ export function DiscussionView({
 
   const suggest = async () => {
     setBusy("suggest");
-    const res = await trame.suggestInThread(c.threadId);
+    const res = await trame.suggestInThread(c.threadId, replyTo);
     setBusy("idle");
     if (!res.ok) return fail("Proposition impossible", res.error);
     setText(res.text);
@@ -316,6 +432,12 @@ export function DiscussionView({
               )}
               {shown.map((m, i) => {
                 const showName = !m.mine && c.surface !== "dm" && shown[i - 1]?.sender !== m.sender;
+                // Pas de geste sur un message pas encore relu dans Teams, ni sur ce que tu viens d'envoyer.
+                const live = messages !== null && m.at !== "à l'instant";
+                const canReact = live && caps.react && !m.mine;
+                const canReply = live && caps.reply;
+                const targeted = sameRef(replyTo, m);
+                const pending = reacting?.index === i ? reacting.reaction : null;
                 return (
                   <motion.div
                     key={keys[i]}
@@ -323,20 +445,48 @@ export function DiscussionView({
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i, 10) * 0.02 }}
-                    className={cn("flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start")}
+                    className={cn("group relative flex max-w-[80%] flex-col gap-0.5", m.mine ? "items-end self-end" : "items-start self-start", (canReact || canReply) && "pt-1")}
                   >
                     {showName && <span className="ml-1 text-xs text-muted-foreground">{m.sender}</span>}
+                    <MessageActions
+                      message={m}
+                      canReact={canReact}
+                      canReply={canReply}
+                      pending={pending}
+                      onReact={(r) => react(m, i, r)}
+                      onReply={() => replyToMessage(m)}
+                    />
                     <div
                       aria-current={i === foundIndex ? "true" : undefined}
                       className={cn(
-                        "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap",
+                        "flex flex-col gap-1.5 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap transition-shadow",
                         m.mine ? "rounded-tr-md border border-primary/30 bg-primary/10 dark:bg-primary/15" : "rounded-tl-md bg-muted",
-                        i === foundIndex && "ring-2 ring-warning/70"
+                        i === foundIndex && "ring-2 ring-warning/70",
+                        targeted && "ring-2 ring-link/50"
                       )}
                     >
+                      {m.replyTo && <Quote target={m.replyTo} />}
                       {i === foundIndex ? <Highlight text={m.text} range={findFolded(m.text, foundQuery)} /> : m.text}
                     </div>
-                    {m.at && <span className="mx-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                    {(m.at || (m.reactions?.length ?? 0) > 0) && (
+                      <div className={cn("mx-1 flex items-center gap-1.5", m.mine && "flex-row-reverse")}>
+                        {m.at && <span className="text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                        <AnimatePresence initial={false}>
+                          {(m.reactions ?? []).map((r) => (
+                            <motion.span
+                              key={r}
+                              initial={{ scale: 0.4, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              transition={{ type: "spring", stiffness: 500, damping: 22 }}
+                              title={`Tu as réagi : ${REACTIONS.find((x) => x.key === r)?.label ?? r}`}
+                              className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5"
+                            >
+                              {EMOJI[r]}
+                            </motion.span>
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                    )}
                   </motion.div>
                 );
               })}
@@ -368,15 +518,36 @@ export function DiscussionView({
               </AnimatePresence>
             </div>
           )}
+          <AnimatePresence initial={false}>
+            {replyTo && (
+              <motion.div key="reply" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+                <Quote target={replyTo} className="bg-muted/60">
+                  <span className="sr-only">Réponse à ce message</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon" className="size-6 shrink-0 rounded-full" aria-label="Ne plus répondre à ce message" onClick={() => setReplyTo(null)}>
+                        <X className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Répondre à la conversation, sans citer</TooltipContent>
+                  </Tooltip>
+                </Quote>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <Textarea
-            aria-label={`Message à ${c.displayName}`}
-            placeholder={`Écrire à ${c.displayName}…`}
+            ref={composer}
+            aria-label={replyTo ? `Réponse au message de ${replyTo.sender}` : `Message à ${c.displayName}`}
+            placeholder={replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 send();
+              } else if (e.key === "Escape" && replyTo) {
+                e.preventDefault();
+                setReplyTo(null);
               }
             }}
             disabled={busy === "send"}
@@ -398,7 +569,7 @@ export function DiscussionView({
               )}
               <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle"} onClick={suggest}>
                 {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
-                {draft ? "Autre proposition" : "Proposer"}
+                {replyTo ? "Proposer une réponse" : draft ? "Autre proposition" : "Proposer"}
               </Button>
               <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || !text.trim()} onClick={send}>
                 {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
