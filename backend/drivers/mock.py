@@ -190,6 +190,25 @@ class MockTeamsDriver(TeamsDriver):
         step = int(time.time() // self.PRESENCE_STEP)
         return {tid: cycle[step % len(cycle)] for tid, cycle in _PRESENCE.items()}
 
+    # Statut simulé : ce que l'utilisateur choisit, « Réinitialiser » le remet à Disponible.
+    can_set_status = True
+    my_presence: Optional[str] = "available"
+    my_message: str = ""
+
+    def my_status(self, with_message: bool = False) -> dict:
+        out: dict = {"presence": self.my_presence}
+        if with_message:
+            out["message"] = self.my_message
+        return out
+
+    def set_my_status(self, choice: str) -> Optional[str]:
+        self.my_presence = "available" if choice == "reset" else choice
+        return self.my_presence
+
+    def set_status_message(self, text: str) -> str:
+        self.my_message = " ".join((text or "").split())
+        return self.my_message
+
     def is_screen_sharing(self) -> bool:
         return False
 

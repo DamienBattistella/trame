@@ -79,3 +79,25 @@ def brain_hint(name: str, presence: Optional[str]) -> str:
         return ""
     return (f"Présence Teams de {name} en ce moment : {LABELS[presence]}. "
             "Fais court, l'essentiel d'abord, sans question qui appelle un long échange.")
+
+
+# --- the user's own status, chosen from Trame ---
+# What Teams offers in its status menu (« Apparaître absent / hors ligne » are away and
+# offline), plus « Réinitialiser le statut », which lets Teams decide again.
+Choice = Literal["available", "busy", "dnd", "brb", "away", "offline", "reset"]
+CHOICES: tuple[str, ...] = ("available", "busy", "dnd", "brb", "away", "offline", "reset")
+
+# Teams limits the status message to 280 characters.
+MESSAGE_MAX = 280
+
+
+def own_from_labels(candidates) -> Optional[Presence]:
+    """The user's status from what the profile button says: « Votre profil, statut Ne
+    pas déranger », « Your profile, status Available », or the badge (« do not disturb »)."""
+    out = []
+    for c in candidates or []:
+        if not isinstance(c, str):
+            continue
+        m = re.search(r"\b(?:statut|status)\b\s*[:\-]?\s*(.+)$", c, re.IGNORECASE)
+        out.append(m.group(1) if m else c)
+    return first_of(out)

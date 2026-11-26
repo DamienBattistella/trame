@@ -132,6 +132,8 @@ class Capabilities(BaseModel):
     react: bool = False
     reply: bool = False
     mentions: bool = False
+    # Changer son propre statut Teams (Disponible, Ne pas déranger…).
+    own_status: bool = False
 
 
 class AppState(BaseModel):
@@ -145,6 +147,8 @@ class AppState(BaseModel):
     logs: list[LogItem] = Field(default_factory=list)
     notices: list[Notice] = Field(default_factory=list)
     capabilities: Capabilities = Field(default_factory=Capabilities)
+    # Son propre statut Teams, tel que Teams l'affiche ; None quand il ne le dit pas.
+    my_presence: Optional[Presence] = None
 
 
 class GithubHit(BaseModel):

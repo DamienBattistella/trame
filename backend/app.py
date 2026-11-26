@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import attachments as attachmod
 import config as cfgmod
+import presence as presencemod
 import journal as journalmod
 import soul_template as soultpl
 from mcp_server import make_router as make_mcp_router
@@ -167,6 +168,14 @@ class StartBody(BaseModel):
 class SearchBody(BaseModel):
     q: str = Field(max_length=200)
     limit: int = Field(default=25, ge=1, le=50)
+
+
+class StatusBody(BaseModel):
+    presence: presencemod.Choice
+
+
+class StatusMessageBody(BaseModel):
+    text: str = Field(default="", max_length=presencemod.MESSAGE_MAX * 2)
 
 
 class BriefBody(BaseModel):
@@ -343,6 +352,19 @@ def create_app(
     @app.post("/api/search/teams")
     def search_teams(body: SearchBody):
         return {"ok": True, **watcher.search_teams(body.q, body.limit)}
+
+    @app.get("/api/me/status")
+    def get_my_status():
+        """Own Teams status and status message (opens Teams' profile menu, then closes it)."""
+        return {"ok": True, **watcher.my_status()}
+
+    @app.post("/api/me/status")
+    def post_my_status(body: StatusBody):
+        return {"ok": True, **watcher.set_my_status(body.presence)}
+
+    @app.post("/api/me/status-message")
+    def post_status_message(body: StatusMessageBody):
+        return {"ok": True, **watcher.set_status_message(body.text)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):

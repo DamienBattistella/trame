@@ -180,6 +180,28 @@ class TeamsDriver(ABC):
         return {"typing": live, "typing_text": typing[1] if live else None,
                 "seen": seen[1] if seen is not None and now - seen[0] <= self.TYPING_TTL else None}
 
+    # --- the user's own status (Disponible, Ne pas déranger…) ---
+    can_set_status: bool = False
+    """True when the driver can read and change the user's own Teams status."""
+    status_unsupported = "ce pilote Teams ne sait pas lire ni changer ton statut"
+
+    def my_status(self, with_message: bool = False) -> dict:
+        """The user's own status as Teams shows it: {"presence": canonical or None,
+        "message": the status message (with_message only; "" when none)}.
+        Raises with the reason when the driver cannot tell."""
+        raise NotSupported(self.status_unsupported)
+
+    def set_my_status(self, choice: str) -> Optional[str]:
+        """Pick choice (presence.CHOICES) in Teams' status menu. Returns the status
+        Teams shows afterwards, checked against the choice by the caller. Raises with
+        the reason when the menu could not be used; menus are closed in any case."""
+        raise NotSupported(self.status_unsupported)
+
+    def set_status_message(self, text: str) -> str:
+        """Set (or, empty, clear) the status message. Returns the message Teams shows
+        afterwards, checked by the caller. Raises when it could not be done."""
+        raise NotSupported(self.status_unsupported)
+
     # --- new conversation: someone who is not in the list yet ---
     can_start_chat: bool = False
     """True when the driver can open a private chat with someone by name."""

@@ -2,6 +2,8 @@ export type Surface = "dm" | "group" | "channel";
 export type Mode = "draft" | "auto";
 /** Présence Teams de la personne d'une conversation privée. */
 export type Presence = "available" | "busy" | "in_call" | "in_meeting" | "presenting" | "dnd" | "brb" | "away" | "ooo" | "offline";
+/** Ce que l'on peut choisir comme statut dans Teams (« Réinitialiser » : Teams décide à nouveau). */
+export type StatusChoice = "available" | "busy" | "dnd" | "brb" | "away" | "offline" | "reset";
 
 export interface WatchEntity {
   threadId: string;
