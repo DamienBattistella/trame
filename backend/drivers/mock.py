@@ -121,6 +121,7 @@ class MockTeamsDriver(TeamsDriver):
     PRESENCE_STEP = 120.0
     can_start_chat = True
     can_search_people = True
+    can_search_messages = True
     supports_reactions = True
     supports_reply = True
 

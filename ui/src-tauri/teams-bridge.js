@@ -195,6 +195,43 @@
     'input[aria-label^="À"]',
     'input[role="combobox"]',
   ].join(", ");
+  // Recherche de Teams : champ du haut, page de résultats, bouton Conversation de la barre
+  // d'applications pour en revenir (l'id est celui de l'application Conversation de Teams).
+  const SEARCH_INPUT = '#ms-searchux-input, [data-tid="AUTOSUGGEST_INPUT"]';
+  const CHAT_APP = [
+    '[data-tid="app-bar-wrapper"] [data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]',
+    '[data-tid="app-bar-wrapper"] [aria-label="Conversation"]',
+    '[data-tid="app-bar-wrapper"] [aria-label="Chat"]',
+  ].join(", ");
+  const searchCards = () => Array.from(document.querySelectorAll('[data-tid="search-message-card"]'));
+  // « Damien Battistella (Vous) » : tes propres messages.
+  const SELF = /\s*\((vous|you)\)\s*$/i;
+  // Une carte est une ligne de grille : en-tête (conversation), une cellule expéditeur et
+  // date, puis la cellule du texte du message.
+  const readCard = (card) => {
+    const row = card.closest('[role="row"]') || card;
+    const header = row.querySelector('[data-tid="message-app-card-header"]');
+    const conversation = header?.querySelector("[title]")?.getAttribute("title") || "";
+    const meta = row.querySelector('[id^="serp-message-card-content"]');
+    const body = Array.from(row.querySelectorAll('[role="gridcell"]'))
+      .filter((cell) => !cell.contains(meta) && !cell.contains(header))
+      .map((cell) => cell.textContent)
+      .join(" ");
+    const who = flat(meta?.firstElementChild?.textContent);
+    const mine = SELF.test(who);
+    const sender = who.replace(SELF, "");
+    // Conversation privée : l'en-tête porte ton propre nom ou « Conversation », pas celui
+    // de l'autre personne. C'est alors l'expéditeur, sauf pour tes propres messages.
+    let name = flat(conversation);
+    if (!name || SELF.test(name) || /^(conversation|chat)$/i.test(name)) name = mine ? "" : sender;
+    return {
+      conversation: name,
+      sender,
+      mine,
+      at: meta && meta.lastElementChild !== meta.firstElementChild ? flat(meta.lastElementChild.textContent) : "",
+      text: flat(body),
+    };
+  };
   const MSGS ='[data-tid="chat-pane-item"], [role="main"] [role="list"] > [role="listitem"]';
   const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
   let deadline = 0;
@@ -399,6 +436,61 @@
       if (await waitFor(() => isOpen(name), 6000)) return { ok: true, title: document.title };
       cancel();
       return { ok: false, title: document.title, error: `Teams affiche « ${titleName() || document.title} »` };
+    },
+    // Recherche native de Teams (tout l'historique) : la requête dans le champ du haut,
+    // l'onglet Messages, les cartes lues, puis retour à Conversation, où Teams rouvre la
+    // conversation affichée avant. Rien n'est saisi ailleurs que dans le champ de recherche.
+    search: async ({ query, limit = 25 }) => {
+      const input = Array.from(document.querySelectorAll(SEARCH_INPUT)).find(visible);
+      if (!input) return { ok: false, error: "champ de recherche de Teams introuvable" };
+      const back = async () => {
+        const chat = Array.from(document.querySelectorAll(CHAT_APP)).find(visible);
+        if (chat && !rail()) {
+          chat.click();
+          await waitFor(() => rail(), 8000);
+        }
+      };
+      try {
+        input.focus();
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await sleep(300);
+        const form = input.closest("form");
+        if (form?.requestSubmit) form.requestSubmit();
+        else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+        const tab = () => document.querySelector('[data-tid="messages-tab"]');
+        if (!(await waitFor(tab, 10000))) return { ok: false, error: "page de résultats de Teams non affichée" };
+        tab().click();
+        await waitFor(() => tab()?.getAttribute("aria-selected") === "true", 3000);
+        // Les cartes arrivent par lots : la première, puis on attend qu'il n'en arrive plus.
+        // Sans aucun résultat, Teams n'affiche aucune carte : on s'arrête au délai.
+        // Une page que Chromium croit cachée ne dessine pas ses résultats : ne pas le
+        // confondre avec « aucun résultat » (la fenêtre de Trame est garée hors écran, visible).
+        if (!(await waitFor(() => searchCards().length > 0, 10000)) && document.visibilityState !== "visible") {
+          return { ok: false, error: "la page Teams est en arrière-plan, Teams n'affiche pas ses résultats" };
+        }
+        let count = -1;
+        for (let still = 0, end = Date.now() + 10000; still < 3 && Date.now() < end && !late(); ) {
+          await sleep(500);
+          const n = searchCards().length;
+          still = n === count ? still + 1 : 0;
+          count = n;
+        }
+        // Teams dessine parfois deux fois la même carte.
+        const seen = new Set();
+        const results = searchCards()
+          .map(readCard)
+          .filter((r) => {
+            const key = `${r.conversation}|${r.sender}|${r.at}|${r.text}`;
+            if (!r.text || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .slice(0, limit);
+        return { ok: true, results };
+      } finally {
+        await back();
+      }
     },
     // Marquer comme lu, sans ouvrir la conversation : menu contextuel de la ligne,
     // entrée « Marquer comme lu ». Cette entrée bascule lu / non lu : on ne clique que

@@ -139,6 +139,11 @@ class StartBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+class SearchBody(BaseModel):
+    q: str = Field(max_length=200)
+    limit: int = Field(default=25, ge=1, le=50)
+
+
 class BriefBody(BaseModel):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
 
@@ -303,6 +308,10 @@ def create_app(
     @app.get("/api/search")
     def search_messages(q: str = "", limit: int = 50):
         return {"ok": True, **watcher.search_messages(q, max(1, min(200, limit)))}
+
+    @app.post("/api/search/teams")
+    def search_teams(body: SearchBody):
+        return {"ok": True, **watcher.search_teams(body.q, body.limit)}
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: TextBody):

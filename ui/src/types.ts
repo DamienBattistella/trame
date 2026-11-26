@@ -152,17 +152,19 @@ export interface ThreadMessage {
   replyTo?: MessageRef | null;
 }
 
-/** Un message trouvé par la recherche dans l'historique déjà lu par Trame. */
+/** Un message trouvé : dans l'historique déjà lu par Trame, ou par la recherche de Teams. */
 export interface MessageHit {
-  threadId: string;
+  /** null : conversation que Trame ne sait pas relier à sa liste (recherche de Teams). */
+  threadId: string | null;
   conversation: string;
   sender: string;
   at: string;
   mine: boolean;
   text: string;
-  /** Extrait sur une ligne, `match` y situe la correspondance [début, fin). */
+  /** Extrait sur une ligne, `match` y situe la correspondance [début, fin) ; null quand
+   *  Teams a trouvé le message sans ces mots exacts (formes voisines). */
   excerpt: string;
-  match: [number, number];
+  match: [number, number] | null;
 }
 
 /** Jusqu'où va la recherche : messages lus par le moteur depuis son démarrage. */

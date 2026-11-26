@@ -160,6 +160,17 @@ class TeamsDriver(ABC):
         self.last_error = self.start_chat_unsupported
         return None
 
+    # --- Teams' own search: messages older than what Trame has read ---
+    can_search_messages: bool = False
+    """True when the driver can run Teams' own message search."""
+    search_messages_unsupported = "ce pilote Teams ne sait pas lancer la recherche de Teams"
+
+    def search_messages(self, query: str, limit: int = 25) -> list[dict]:
+        """Messages Teams' own search finds for query, as Teams lists them: dicts with
+        conversation, sender, mine, at and text. Teams' view is put back afterwards.
+        Raises with the reason when the search could not run."""
+        raise RuntimeError(self.search_messages_unsupported)
+
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         """Calibration report (structure only, no message text)."""
         return {"driver": type(self).__name__}
