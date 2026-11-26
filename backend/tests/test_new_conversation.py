@@ -111,6 +111,28 @@ def test_start_refused_when_teams_does_not_confirm(make_client):
     assert len(watcher.state.watchlist) == before
 
 
+def test_start_accepts_the_name_teams_shows_with_accents(make_client):
+    # Vrai Teams : « Sebastien Hug de larauze » tapé, « Sébastien Hug De Larauze » affiché.
+    class Accented(MockTeamsDriver):
+        def start_chat(self, name):
+            return WatchEntity(thread_id="19:sh@unq.gbl.spaces", display_name="Sébastien Hug De Larauze", surface=Surface.dm)
+
+    client, watcher, _d = make_client(driver=Accented(interval=9999))
+    r = client.post("/api/conversations/start", json={"name": "Sebastien Hug de larauze"}).json()
+    assert r["ok"] and r["conversation"]["display_name"] == "Sébastien Hug De Larauze"
+    # Une fois dans la liste, le même nom sans accents la retrouve sans repasser par Teams.
+    again = client.post("/api/conversations/start", json={"name": "sebastien hug de larauze"}).json()
+    assert again["conversation"]["thread_id"] == "19:sh@unq.gbl.spaces"
+
+
+def test_bridge_start_chat_confirms_the_accented_title():
+    driver = WebBridgeDriver()
+    driver._rpc = lambda op, **a: {"ok": True, "title": "Conversation | Sébastien Hug De Larauze | Microsoft Teams"}
+    driver._items = lambda: []
+    entity = driver.start_chat("Sebastien Hug de larauze")
+    assert entity is not None and entity.display_name == "Sébastien Hug De Larauze"
+
+
 def test_start_unknown_person_is_refused(make_client):
     driver = MockTeamsDriver(interval=9999)
     driver.allow_anyone = False
