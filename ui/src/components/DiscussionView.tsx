@@ -24,7 +24,7 @@ import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
 import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
-import { acceptOf, addFiles, humanSize, limitsText, pastedFiles } from "@/lib/attachments";
+import { acceptOf, addFiles, humanSize, limitsShort, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
 const KIND = { dm: "Conversation privée", group: "Groupe", channel: "Canal" } as const;
@@ -47,17 +47,18 @@ function keysOf(messages: ThreadMessage[]): string[] {
     .reverse();
 }
 
-function IconAction({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+/** Bouton-icône : `label` est son nom accessible, `hint` (s'il diffère) l'explication en infobulle. */
+function IconAction({ label, hint, onClick, disabled, children }: { label: string; hint?: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="inline-flex">
-          <Button variant="ghost" size="icon" className="size-8 rounded-full" aria-label={label} disabled={disabled} onClick={onClick}>
+          <Button variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground hover:text-foreground" aria-label={label} disabled={disabled} onClick={onClick}>
             {children}
           </Button>
         </span>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent className="max-w-72">{hint ?? label}</TooltipContent>
     </Tooltip>
   );
 }
@@ -314,6 +315,7 @@ export function DiscussionView({
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [limits, setLimits] = useState<AttachmentLimits | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [focused, setFocused] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
 
   const load = async (fresh = false) => {
@@ -505,7 +507,7 @@ export function DiscussionView({
     ? "Pièces jointes indisponibles : moteur injoignable"
     : !limits.canAttach
       ? `Pièces jointes indisponibles : ${limits.unsupported ?? "pilote Teams sans pièces jointes"}`
-      : `Joindre un fichier, ou Ctrl+V d'une capture · ${limitsText(limits)}`;
+      : `Joindre un fichier, ou Ctrl+V d'une capture. ${limitsText(limits)}`;
 
   const pick = async (picked: File[]) => {
     if (!limits?.canAttach || !picked.length || busy === "send") return;
@@ -689,7 +691,7 @@ export function DiscussionView({
     ? ghost
       ? ghostHidden
         ? "Réponse proposée · masquée"
-        : "Réponse proposée · Tab pour l'utiliser"
+        : "Réponse proposée"
       : "Réponse proposée · ignorée"
     : edited
       ? "Ta réponse · modifiée"
@@ -1034,6 +1036,16 @@ export function DiscussionView({
                 </motion.ul>
               )}
             </AnimatePresence>
+            {/* Une seule carte : la saisie, les pièces jointes et les actions. Le focus
+                se lit sur la carte entière, pas sur la zone de texte seule. */}
+            <div
+              data-testid="composer"
+              className={cn(
+                "rounded-2xl border border-input bg-transparent shadow-xs transition-[color,box-shadow,border-color] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30",
+                draft && "border-primary/30 bg-primary/5 dark:bg-primary/10",
+                dragging && "border-dashed border-primary"
+              )}
+            >
             {/* Zone de saisie et texte fantôme dans la même case de grille : la zone
                 grandit à la hauteur de la proposition, sur plusieurs lignes si besoin. */}
             <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
@@ -1051,7 +1063,11 @@ export function DiscussionView({
                 followMention(e.target.value, e.target.selectionStart);
               }}
               onClick={(e) => followMention(text, e.currentTarget.selectionStart)}
-              onBlur={() => setMentioning(null)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => {
+                setFocused(false);
+                setMentioning(null);
+              }}
               onPaste={(e) => {
                 // Ctrl+V d'une capture d'écran ou de fichiers copiés : ils rejoignent les
                 // pièces jointes, comme par le trombone. Un texte collé reste un texte.
@@ -1081,18 +1097,14 @@ export function DiscussionView({
               }}
               disabled={busy === "send" || busy === "correct"}
               rows={2}
-              className={cn(
-                "field-sizing-content max-h-48 min-h-16 resize-none rounded-xl",
-                draft && "border-primary/30 bg-primary/5 dark:bg-primary/10",
-                dragging && "border-dashed border-primary"
-              )}
+              className="field-sizing-content max-h-48 min-h-14 resize-none rounded-2xl border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
             {showGhost && (
               <div
                 id={ghostId}
                 data-testid="ghost-proposal"
                 // Mêmes bordure, marges et corps que la zone : le fantôme est à la place du texte.
-                className="pointer-events-none z-10 max-h-48 overflow-hidden border border-transparent px-3 py-2 text-base break-words whitespace-pre-wrap text-muted-foreground md:text-sm"
+                className="pointer-events-none z-10 max-h-48 overflow-hidden px-3 py-2 text-base break-words whitespace-pre-wrap text-muted-foreground md:text-sm"
               >
                 <span className="sr-only">Réponse proposée, Tab pour l'utiliser : </span>
                 {ghost}
@@ -1113,13 +1125,10 @@ export function DiscussionView({
               </div>
             )}
             </div>
-          </div>
-          {dragging && <p className="text-center text-xs text-primary">Dépose ici pour joindre · {limits && limitsText(limits)}</p>}
-          {files.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <ul aria-label="Pièces jointes" className="flex flex-wrap gap-2">
+            {files.length > 0 && (
+              <ul aria-label="Pièces jointes" className="flex flex-wrap gap-1.5 px-2.5 pb-1">
                 {files.map((f) => (
-                  <li key={f.id} className="flex max-w-64 items-center gap-1.5 rounded-full border bg-muted/50 py-1 pr-1 pl-2.5 text-xs">
+                  <li key={f.id} className="flex max-w-64 items-center gap-1.5 rounded-full border bg-muted/50 py-0.5 pr-0.5 pl-2.5 text-xs">
                     <FileText className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate" title={f.name}>{f.name}</span>
                     <span className="shrink-0 text-muted-foreground tabular-nums">{humanSize(f.size)}</span>
@@ -1127,7 +1136,7 @@ export function DiscussionView({
                       type="button"
                       aria-label={`Retirer ${f.name}`}
                       disabled={busy === "send"}
-                      className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50"
                       onClick={() => setFiles((x) => x.filter((y) => y.id !== f.id))}
                     >
                       <X className="size-3.5" />
@@ -1135,70 +1144,82 @@ export function DiscussionView({
                   </li>
                 ))}
               </ul>
-              {limits && <span className="text-xs text-muted-foreground">{limitsText(limits)}</span>}
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              hidden
-              accept={limits ? acceptOf(limits) : undefined}
-              onChange={(e) => {
-                void pick(Array.from(e.target.files ?? []));
-                e.target.value = "";
-              }}
-            />
-            <IconAction label={attachHint} disabled={!canAttach || busy === "send"} onClick={() => picker.current?.click()}>
-              <Paperclip className="size-4" />
-            </IconAction>
-            <span className="hidden items-center gap-1 whitespace-nowrap text-xs text-muted-foreground sm:flex" title="Entrée pour envoyer, Maj+Entrée pour aller à la ligne">
-              <Kbd>Entrée</Kbd> envoyer
-              <span className="hidden items-center gap-1 xl:flex">· <Kbd>Maj</Kbd>+<Kbd>Entrée</Kbd> à la ligne</span>
-            </span>
-            <div className="ml-auto flex gap-2">
-              {draft && (
-                <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground" disabled={busy !== "idle"} onClick={dismiss}>
-                  Ignorer
-                </Button>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={!text.trim() ? 0 : undefined}>
+            )}
+            {/* Outils de rédaction à gauche, en icônes ; décision à droite, Envoyer seul en plein. */}
+            <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+              <input
+                ref={picker}
+                type="file"
+                multiple
+                hidden
+                accept={limits ? acceptOf(limits) : undefined}
+                onChange={(e) => {
+                  void pick(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <IconAction label={attachHint} disabled={!canAttach || busy === "send"} onClick={() => picker.current?.click()}>
+                <Paperclip className="size-4" />
+              </IconAction>
+              <IconAction
+                label="Corriger"
+                hint="Corriger l'orthographe, la grammaire et la typographie, sans changer ton ton ni tes mots"
+                disabled={busy !== "idle" || !text.trim() || !!review}
+                onClick={correct}
+              >
+                {busy === "correct" ? <Loader2 className="size-4 animate-spin" /> : <SpellCheck className="size-4" />}
+              </IconAction>
+              <IconAction
+                label="Vérifier"
+                hint="Vérifier les dates, chiffres, noms et engagements contre le fil, l'entourage et GitHub. N'envoie rien."
+                disabled={busy !== "idle" || checking || !text.trim()}
+                onClick={verify}
+              >
+                {checking ? <Loader2 className="size-4 animate-spin" /> : <ListChecks className="size-4" />}
+              </IconAction>
+              {/* Rappel clavier : seulement pendant la saisie, là où il sert. */}
+              <span
+                aria-hidden
+                className={cn(
+                  // Hauteur d'une ligne : ce qui ne tient pas passe à la ligne, donc hors de vue.
+                  "ml-2 hidden h-5 min-w-0 flex-1 flex-wrap items-center gap-x-1 overflow-hidden text-xs text-muted-foreground transition-opacity duration-200 sm:flex [&>span]:flex [&>span]:items-center [&>span]:gap-1 [&>span]:whitespace-nowrap",
+                  focused && !dragging ? "opacity-100" : "opacity-0"
+                )}
+              >
+                <span><Kbd>Entrée</Kbd> envoyer</span>
+                <span>· <Kbd>Maj</Kbd>+<Kbd>Entrée</Kbd> à la ligne</span>
+              </span>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                {draft && (
+                  <Button variant="ghost" size="sm" className="rounded-full text-muted-foreground" disabled={busy !== "idle"} onClick={dismiss}>
+                    Ignorer
+                  </Button>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
                       className="rounded-full"
-                      disabled={busy !== "idle" || !text.trim() || !!review}
-                      onClick={correct}
+                      aria-label={replyTo ? "Proposer une réponse à ce message" : draft ? "Autre proposition" : "Proposer une réponse"}
+                      disabled={busy !== "idle"}
+                      onClick={suggest}
                     >
-                      {busy === "correct" ? <Loader2 className="size-4 animate-spin" /> : <SpellCheck className="size-4" />}
-                      Corriger
+                      {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
+                      {draft && !replyTo ? "Autre proposition" : "Proposer"}
                     </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>Orthographe, grammaire et typographie, sans changer ton ton ni tes mots</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle" || checking || !text.trim()} onClick={verify}>
-                    {checking ? <Loader2 className="size-4 animate-spin" /> : <ListChecks className="size-4" />}
-                    Vérifier
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Relire les dates, chiffres, noms et engagements contre le fil, l'entourage et GitHub. N'envoie rien.</TooltipContent>
-              </Tooltip>
-              <Button variant="outline" size="sm" className="rounded-full" disabled={busy !== "idle"} onClick={suggest}>
-                {busy === "suggest" ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
-                {replyTo ? "Proposer une réponse" : draft ? "Autre proposition" : "Proposer"}
-              </Button>
-              <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || (!text.trim() && !files.length) || !!review} onClick={send}>
-                {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                Envoyer
-              </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{replyTo ? "Proposer une réponse à ce message" : draft ? "Proposer une autre réponse" : "Proposer une réponse dans ta voix"}</TooltipContent>
+                </Tooltip>
+                <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || (!text.trim() && !files.length) || !!review} onClick={send}>
+                  {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                  Envoyer
+                </Button>
+              </div>
+            </div>
             </div>
           </div>
+          {dragging && limits && <p className="text-center text-xs text-primary">Dépose ici pour joindre · {limitsShort(limits)}</p>}
         </div>
       </motion.div>
 
