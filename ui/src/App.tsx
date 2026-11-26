@@ -13,6 +13,8 @@ import { TeamsWebRelay } from "@/components/TeamsWebRelay";
 import { WhatsNew } from "@/components/Changelog";
 import { UpdateLed } from "@/components/UpdateLed";
 import { OwnStatus } from "@/components/OwnStatus";
+import { ShortcutsHelp } from "@/components/ShortcutsHelp";
+import { isSwitcherKey, requestSwitcher } from "@/lib/shortcuts";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
 import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
@@ -116,11 +118,23 @@ export default function App() {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  // Ctrl+K depuis Journal ou Réglages : retour aux Discussions, où la palette s'ouvre
+  // (dans l'onglet Discussions, c'est la liste elle-même qui l'écoute).
+  const switchToInbox = useRef<() => boolean>(() => false);
+  switchToInbox.current = () => {
+    if (!configured || panelTab === "inbox") return false;
+    requestSwitcher();
+    setPanelTab("inbox");
+    return true;
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.altKey && (e.key === "d" || e.key === "D")) {
+      if (e.altKey && !e.shiftKey && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
         setDark((v) => !v);
+      } else if (isSwitcherKey(e) && !e.defaultPrevented && switchToInbox.current()) {
+        e.preventDefault();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -241,6 +255,7 @@ export default function App() {
       <TeamsWebRelay />
       <WhatsNew />
       <Toaster richColors position="bottom-right" />
+      <ShortcutsHelp />
     </TooltipProvider>
     </MotionConfig>
   );

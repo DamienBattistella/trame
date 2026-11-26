@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronRight, History, Inbox as InboxIcon, Loader2, Search, SquarePen, Timer, X } from "lucide-react";
 import { toast } from "sonner";
@@ -15,6 +15,8 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { MessageText } from "@/components/MessageText";
+import { QuickSwitcher } from "@/components/QuickSwitcher";
+import { isSwitcherKey, isTyping, overlayOpen, takeSwitcherRequest } from "@/lib/shortcuts";
 import { DraftItem, MessageHit, WatchEntity } from "@/types";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -70,17 +72,25 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
     ];
   }, [watchlist, draftOf]);
 
-  const groups = useMemo(() => {
+  const groupOf = (c: WatchEntity): GroupId => (draftOf.has(c.threadId) ? "review" : c.unread ? "unread" : c.watch ? "followed" : "others");
+
+  const grouped = useMemo(() => {
     const out: Record<GroupId, WatchEntity[]> = { review: [], unread: [], followed: [], others: [] };
-    for (const c of items.filter((c) => !query || norm(c.displayName).includes(norm(query)))) {
-      const id: GroupId = draftOf.has(c.threadId) ? "review" : c.unread ? "unread" : c.watch ? "followed" : "others";
-      out[id].push(c);
-    }
+    for (const c of items) out[groupOf(c)].push(c);
     for (const g of Object.values(out)) g.sort(byRecent);
     return out;
-  }, [items, query, draftOf]);
+  }, [items, draftOf]);
+
+  const groups = useMemo(() => {
+    if (!query) return grouped;
+    const q = norm(query);
+    const keep = (list: WatchEntity[]) => list.filter((c) => norm(c.displayName).includes(q));
+    return { review: keep(grouped.review), unread: keep(grouped.unread), followed: keep(grouped.followed), others: keep(grouped.others) };
+  }, [grouped, query]);
 
   const all = [...groups.review, ...groups.unread, ...groups.followed, ...groups.others];
+  // Pour Ctrl+K : toutes les conversations, même celles qu'une recherche cache.
+  const everything = useMemo(() => [...grouped.review, ...grouped.unread, ...grouped.followed, ...grouped.others], [grouped]);
   // From every conversation, not the filtered ones: searching must not close the
   // open discussion and lose a reply being written.
   const current = items.find((c) => c.threadId === selected) ?? null;
@@ -89,6 +99,93 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   useEffect(() => {
     if (!selected && groups.review[0]) select(groups.review[0].threadId);
   }, [groups.review.length]);
+
+  // ── Clavier ────────────────────────────────────────────────────────────
+  const [switching, setSwitching] = useState(takeSwitcherRequest);
+  const sidebar = useRef<HTMLElement>(null);
+  const discussion = useRef<HTMLElement>(null);
+  const itemButton = (threadId: string) =>
+    sidebar.current?.querySelector<HTMLButtonElement>(`[data-conv="${CSS.escape(threadId)}"]`) ?? null;
+
+  /** Ouvre une conversation au clavier ; son groupe se déplie s'il était replié. */
+  const goTo = (threadId: string, focus: "keep" | "composer") => {
+    const target = items.find((c) => c.threadId === threadId);
+    if (!target) return;
+    const inList = sidebar.current?.contains(document.activeElement) ?? false;
+    setCollapsed((s) => ({ ...s, [groupOf(target)]: false }));
+    select(threadId);
+    // Le focus suit : sur la conversation dans la liste si on y était, sinon dans la zone de réponse.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (focus === "composer") discussion.current?.querySelector<HTMLTextAreaElement>("textarea:not([disabled])")?.focus();
+        else if (inList) itemButton(threadId)?.focus();
+      })
+    );
+  };
+
+  /** Alt+↓/↑ : non lue (ou à relire) suivante ; Alt+Maj+↓/↑ : suivante dans la liste. */
+  const step = (dir: 1 | -1, anyConversation: boolean) => {
+    const pool = anyConversation ? all : all.filter((c) => draftOf.has(c.threadId) || c.unread);
+    if (!pool.length) {
+      if (!anyConversation) toast.info("Aucune conversation non lue");
+      return;
+    }
+    const here = current ? all.findIndex((c) => c.threadId === current.threadId) : -1;
+    let next: WatchEntity | undefined;
+    if (here < 0) next = dir === 1 ? pool[0] : pool[pool.length - 1];
+    else {
+      // Première de la réserve après (ou avant) la conversation ouverte, en bouclant.
+      const pos = (c: WatchEntity) => all.indexOf(c);
+      const after = pool.filter((c) => (dir === 1 ? pos(c) > here : pos(c) < here));
+      next = after.length ? (dir === 1 ? after[0] : after[after.length - 1]) : dir === 1 ? pool[0] : pool[pool.length - 1];
+    }
+    if (next && next.threadId !== current?.threadId) goTo(next.threadId, "keep");
+  };
+
+  const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKeyRef.current = (e) => {
+    if (e.defaultPrevented) return;
+    if (isSwitcherKey(e)) {
+      if (overlayOpen() && !switching) return;
+      e.preventDefault();
+      setSwitching((o) => !o);
+      return;
+    }
+    if (overlayOpen()) return;
+    if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      // Échap dans la discussion : retour à la liste, sur la conversation ouverte.
+      // La discussion reste ouverte : un brouillon en cours n'est jamais perdu.
+      if (!current || sidebar.current?.contains(document.activeElement)) return;
+      const button = itemButton(current.threadId) ?? sidebar.current?.querySelector<HTMLButtonElement>("[data-conv]");
+      if (!button) return;
+      e.preventDefault();
+      (document.activeElement as HTMLElement | null)?.blur();
+      button.focus();
+      return;
+    }
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowDown" || e.key === "ArrowUp") && !isTyping(e)) {
+      e.preventDefault();
+      step(e.key === "ArrowDown" ? 1 : -1, e.shiftKey);
+    }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => onKeyRef.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /** ↑/↓ dans la liste : d'une conversation à l'autre, sans l'ouvrir (Entrée l'ouvre). */
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+    const buttons = [...(sidebar.current?.querySelectorAll<HTMLButtonElement>("[data-conv]") ?? [])];
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0 || !buttons.length) return;
+    e.preventDefault();
+    const to = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : Math.min(Math.max(at + (e.key === "ArrowDown" ? 1 : -1), 0), buttons.length - 1);
+    buttons[to].focus();
+    buttons[to].scrollIntoView({ block: "nearest" });
+  };
 
   const catchUp = async () => {
     setCatching(true);
@@ -101,7 +198,18 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-72 shrink-0 flex-col border-r">
+      <QuickSwitcher
+        open={switching}
+        onOpenChange={setSwitching}
+        items={everything}
+        status={(c) => (draftOf.has(c.threadId) ? "review" : c.unread ? "unread" : null)}
+        onPick={(threadId) => {
+          // Une recherche en cours pourrait cacher la conversation choisie dans la liste.
+          if (query && !all.some((c) => c.threadId === threadId)) setQuery("");
+          goTo(threadId, "composer");
+        }}
+      />
+      <aside ref={sidebar} className="flex w-72 shrink-0 flex-col border-r">
         <div className="flex items-center gap-1.5 p-3">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -152,7 +260,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
           />
         </div>
         <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
-          <nav aria-label="Discussions" className="flex flex-col gap-3 px-2 pb-3">
+          <nav aria-label="Discussions" onKeyDown={onListKey} className="flex flex-col gap-3 px-2 pb-3">
             {GROUPS.map((g) => {
               const list = groups[g.id];
               if (list.length === 0) return null;
@@ -196,7 +304,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
         </ScrollArea>
       </aside>
 
-      <main className="min-w-0 flex-1">
+      <main ref={discussion} className="min-w-0 flex-1">
         {current ? (
           <DiscussionView
             key={current.threadId}
@@ -278,9 +386,16 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
 
 function SidebarItem({ c, draft, active, onClick }: { c: WatchEntity; draft: DraftItem | null; active: boolean; onClick: () => void }) {
   const preview = draft ? draft.incoming : c.namedPeople.length ? `réagit à ${c.namedPeople.join(", ")}` : KIND[c.surface];
+  // Ouverte au clavier (Alt+↓, Ctrl+K), la conversation peut être hors de vue : on l'y ramène.
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [active]);
   return (
     <button
+      ref={ref}
       type="button"
+      data-conv={c.threadId}
       onClick={onClick}
       aria-current={active ? "true" : undefined}
       className={cn(
