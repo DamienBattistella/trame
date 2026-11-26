@@ -40,7 +40,7 @@ class ClaudeBrain(Brain):
         self.timeout = timeout or self.TIMEOUTS.get(effort, 60.0)
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
-        return clean_reply(self.complete(build_prompt(soul, thread_summary, incoming, github_context, people_context)))
+        return clean_reply(self.ask(build_prompt(soul, thread_summary, incoming, github_context, people_context)))
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         if reflection.active():

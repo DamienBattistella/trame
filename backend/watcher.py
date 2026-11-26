@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -18,6 +19,7 @@ import search as searchmod
 import journal as journalmod
 import outbox_store as outboxstore
 import reflection
+import skills as skillsmod
 import telemetry
 import teams_check as teamscheck
 import transcripts as transcriptsmod
@@ -109,6 +111,9 @@ class Watcher:
         self._in_flight: set[str] = set()
         # What the model does during the reply-box actions, for the reflection panel.
         self.reflections = reflection.Reflections()
+        # Agent skills offered to the brain (Réglages › Skills).
+        self.skills = skillsmod.Registry(cfgmod.HOME, lambda: self.cfg)
+        skillsmod.install(self.skills)
         self._sent_recent: dict[str, list[tuple[float, str]]] = {}
         # Conversations started from Trame: kept in the list even unfollowed, until Teams
         # lists them itself (a brand-new chat only shows up there after its first message).
@@ -1294,7 +1299,7 @@ class Watcher:
             prompt = followmod.build_prompt(self.soul, name, entry.question, entry.asked_at, context)
             try:
                 with telemetry.span("brain.follow_up", provider=self.state.brain):
-                    waiting, text = followmod.parse_answer(self.brain.complete(prompt, timeout=90), entry.question)
+                    waiting, text = followmod.parse_answer(self.brain.ask(prompt, timeout=90), entry.question)
             except Exception as e:
                 self._follow_up_failed[entry.id] = now
                 self.log("warn", f"Relance pour {name} pas encore proposée : {e}")
@@ -1984,8 +1989,8 @@ class Watcher:
         transcript = "\n".join(f"[{m.received_at}] {m.sender}: {m.text}" if m.received_at else f"{m.sender}: {m.text}" for m in msgs)
 
         try:
-            raw = self.brain.complete(build_brief_prompt(name, transcript),
-                                      timeout=max(self.BRIEF_TIMEOUT, 2 * float(getattr(self.brain, "timeout", 0) or 0)))
+            raw = self.brain.ask(build_brief_prompt(name, transcript),
+                                 timeout=max(self.BRIEF_TIMEOUT, 2 * float(getattr(self.brain, "timeout", 0) or 0)))
         except Exception as e:
             self.log("warn", f"Résumé impossible pour {name} : le cerveau a échoué ({str(e)[:120]})")
             raise ActionError(502, "Le cerveau n'a pas pu produire le résumé. Rien n'a été perdu, tu peux réessayer.")
@@ -2054,7 +2059,7 @@ class Watcher:
         timeout = max(self.BRIEF_TIMEOUT, 2 * float(getattr(self.brain, "timeout", 0) or 0))
         with telemetry.span("brain.factcheck", provider=self.state.brain, history_chars=len(transcript),
                             github=bool(github)):
-            raw = self.brain.complete(build_factcheck_prompt(text, transcript, people, github, _today()), timeout=timeout)
+            raw = self.brain.ask(build_factcheck_prompt(text, transcript, people, github, _today()), timeout=timeout)
         return parse_factcheck(raw)
 
     def fact_check(self, thread_id: str, text: str, target: Optional[MessageRef] = None) -> FactCheck:
@@ -2200,6 +2205,76 @@ class Watcher:
             self.state.brain = merged.brain
             self.state.onboarded = merged.onboarded
             return merged
+
+    # --- agent skills ---
+    def skills_summary(self) -> dict:
+        return self.skills.summary()
+
+    def _save_skills(self, change: Callable[[dict], None]) -> None:
+        with self._lock:
+            cfg = json.loads(json.dumps(self.cfg))
+            section = cfg.get("skills") if isinstance(cfg.get("skills"), dict) else {}
+            section.setdefault("dirs", ["~/.agents/skills"])
+            section.setdefault("repos", [])
+            section.setdefault("state", {})
+            change(section)
+            cfg["skills"] = section
+            try:
+                cfgmod.save(cfg)
+            except Exception as e:
+                raise ActionError(500, f"Sauvegarde des réglages impossible : {e}")
+            self.cfg = cfg
+
+    def set_skill_enabled(self, name: str, enabled: bool) -> dict:
+        if self.skills.find(name) is None:
+            raise ActionError(404, "Skill introuvable.")
+        self._save_skills(lambda s: s["state"].__setitem__(name, bool(enabled)))
+        self.log("info", f"Skill {name} {'activé' if enabled else 'désactivé'}")
+        return self.skills.summary()
+
+    def set_skill_dirs(self, dirs: list[str]) -> dict:
+        clean = list(dict.fromkeys(d.strip() for d in dirs if d.strip()))
+        if len(clean) > 10 or any(len(d) > 300 or "\n" in d for d in clean):
+            raise ActionError(422, "Dix dossiers au plus, un chemin par ligne.")
+        self._save_skills(lambda s: s.__setitem__("dirs", clean))
+        self.skills.reload()
+        return self.skills.summary()
+
+    def reload_skills(self) -> dict:
+        self.skills.reload()
+        summary = self.skills.summary()
+        self.log("info", f"Skills rechargés : {len(summary['skills'])} trouvé(s), {len(summary['ignored'])} ignoré(s)")
+        return summary
+
+    def sync_skill_repo(self, url: str, branch: str) -> dict:
+        """Install or update a git repository of skills (shallow clone, nothing run)."""
+        try:
+            url, branch = skillsmod.check_repo(url, branch)
+        except ValueError as e:
+            raise ActionError(422, str(e))
+        target = self.skills.repos_dir / skillsmod.repo_slug(url, branch)
+        try:
+            commit = skillsmod.sync_repo(target, url, branch)
+        except Exception as e:
+            self.log("warn", f"Dépôt de skills {url} : {e}")
+            raise ActionError(502, f"Récupération impossible : {e}")
+
+        def add(s: dict) -> None:
+            if not any(r.get("url") == url and (r.get("branch") or "") == branch for r in s["repos"]):
+                s["repos"].append({"url": url, "branch": branch})
+        self._save_skills(add)
+        self.skills.reload()
+        self.log("info", f"Dépôt de skills {url} à jour ({commit or 'commit inconnu'})")
+        return self.skills.summary()
+
+    def remove_skill_repo(self, url: str, branch: str) -> dict:
+        target = self.skills.repos_dir / skillsmod.repo_slug(url, branch)
+        self._save_skills(lambda s: s.__setitem__(
+            "repos", [r for r in s["repos"] if not (r.get("url") == url and (r.get("branch") or "") == branch)]))
+        if target.is_dir() and target.resolve().parent == self.skills.repos_dir.resolve():
+            shutil.rmtree(target, ignore_errors=True)
+        self.skills.reload()
+        return self.skills.summary()
 
     # --- entourage (who's who, exported from Orbite) ---
     def _people_context(self, msg: IncomingMessage, summary: str, entity: Optional[WatchEntity] = None) -> str:

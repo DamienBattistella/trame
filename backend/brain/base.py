@@ -29,6 +29,8 @@ def clean_reply(text: str) -> str:
 class Brain(ABC):
     # Who answers, as the reflection panel names it.
     label = ""
+    # Longest prompt this brain takes (None: no limit of its own).
+    max_prompt_chars: int | None = None
 
     @abstractmethod
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
@@ -38,10 +40,16 @@ class Brain(ABC):
         """Run a free-form prompt and return the raw text answer."""
         raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
 
+    def ask(self, prompt: str, timeout: float | None = None) -> str:
+        """`complete`, with the active skills offered to the model: it may ask for the
+        text of one before answering (skills.run). Without active skill, the same call."""
+        import skills
+        return skills.run(lambda p: self.complete(p, timeout), prompt, budget=self.max_prompt_chars)
+
     def correct(self, text: str) -> str:
         """Spelling, grammar and typography fixed; tone and wording untouched."""
         from brain.correct import build_correct_prompt, parse_correction
-        return parse_correction(self.complete(build_correct_prompt(text)), text)
+        return parse_correction(self.ask(build_correct_prompt(text)), text)
 
 
 def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "") -> str:

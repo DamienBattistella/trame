@@ -27,3 +27,7 @@ ui/gallery.html
 .DS_Store
 *.local
 *.tsbuildinfo
+
+# agent skills (dev runs keep their data in the repo root)
+/skills/
+/skill-repos/

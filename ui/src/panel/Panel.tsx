@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -27,6 +27,7 @@ import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
 import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
+import { SkillsSettings } from "@/components/SkillsSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
 import { GraphSettings } from "@/components/GraphSettings";
 import { TeamsCheckBanner } from "@/components/TeamsCheck";
@@ -266,7 +267,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "mcp" | "advanced";
+type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "skills" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
@@ -633,6 +634,13 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
           />
         </motion.div>
       ),
+    },
+    {
+      id: "skills",
+      label: "Skills",
+      icon: Puzzle,
+      desc: "Des guides de méthode (SKILL.md) que le cerveau peut suivre quand il rédige.",
+      body: <SkillsSettings trame={trame} />,
     },
     {
       id: "mcp",

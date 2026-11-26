@@ -384,7 +384,35 @@ export interface ReflectionRun {
   durationMs: number | null;
   /** Le cerveau a transmis le texte de sa réflexion (sinon : étapes de Trame seulement). */
   reasoning: boolean;
+  /** Skills dont le texte a été donné au modèle pendant l'action. */
+  skills?: string[];
   rev: number;
+}
+
+/** Un skill d'agent (dossier avec SKILL.md) que Trame peut proposer au cerveau. */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  /** « Trame », le dossier partagé (~/.agents/skills…) ou « git <url> ». */
+  source: string;
+  path: string;
+  version: string;
+  size: number;
+  enabled: boolean;
+  /** Le skill contient des scripts : Trame ne les exécute jamais. */
+  hasScripts: boolean;
+  scripts: string[];
+  references: string[];
+}
+
+export interface SkillsSummary {
+  ownDir: string;
+  dirs: string[];
+  repos: { url: string; branch: string }[];
+  sources: { label: string; path: string; exists: boolean; defaultOn: boolean }[];
+  skills: SkillInfo[];
+  ignored: { folder: string; source: string; reason: string }[];
+  limits: { skillKb: number; fileKb: number; maxActive: number };
 }
 
 /** Une réunion Teams terminée (carte « récapitulatif » d'une conversation de réunion). */

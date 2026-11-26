@@ -39,6 +39,7 @@ import {
   ReflectionRun,
   Meeting,
   SavedTranscript,
+  SkillsSummary,
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
@@ -49,6 +50,7 @@ import { DEFAULT_LIMITS } from "@/lib/attachments";
 import { filterLogs, isFiltered, logParams } from "@/lib/logFilters";
 import { demoCorrect } from "@/lib/demoCorrect";
 import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
+import { demoSkills } from "@/lib/demoSkills";
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
@@ -704,6 +706,9 @@ async function request<T = {}>(method: string, path: string, body?: unknown): Pr
   }
 }
 
+// Mode démo : skills fictifs, activation gardée le temps de la page.
+const demoSkillState: SkillsSummary = demoSkills();
+
 // Mode démo : réunions fictives, rien n'est lu ni écrit.
 const DEMO_TRANSCRIPTS_DIR = String.raw`C:\Users\vous\Documents\Trame\Transcriptions`;
 /** Nom du .vtt, comme le moteur le forme (« 2026-11-24 Titre.vtt »). */
@@ -1075,6 +1080,33 @@ export function useTrame() {
     }
     return { ok: true, count: res.count };
   };
+
+  /** Skills d'agent : liste, sources, activation. En démo, des skills fictifs. */
+  const skillsCall = async (method: string, path: string, body?: unknown, change?: (s: SkillsSummary) => void): Promise<Result<{ summary: SkillsSummary }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      change?.(demoSkillState);
+      await wait(150);
+      return { ok: true, summary: { ...demoSkillState, skills: demoSkillState.skills.map((x) => ({ ...x })) } };
+    }
+    const res = await request<SkillsSummary>(method, path, body);
+    if (!res.ok) return res;
+    const { ok: _ok, ...summary } = res;
+    return { ok: true, summary: summary as SkillsSummary };
+  };
+  const getSkills = () => skillsCall("GET", "/api/skills");
+  const reloadSkills = () => skillsCall("POST", "/api/skills/reload");
+  const setSkillEnabled = (name: string, enabled: boolean) =>
+    skillsCall("POST", `/api/skills/${encodeURIComponent(name)}`, { enabled }, (s) => {
+      const sk = s.skills.find((x) => x.name === name);
+      if (sk) sk.enabled = enabled;
+    });
+  const setSkillDirs = (dirs: string[]) => skillsCall("PUT", "/api/skills/dirs", { dirs }, (s) => (s.dirs = dirs));
+  const syncSkillRepo = async (url: string, branch: string): Promise<Result<{ summary: SkillsSummary }>> => {
+    if (!connectedRef.current && demoRef.current) return { ok: false, error: "Démo : aucun dépôt n'est récupéré." };
+    return skillsCall("POST", "/api/skills/repos", { url, branch });
+  };
+  const removeSkillRepo = (url: string, branch: string) => skillsCall("POST", "/api/skills/repos/remove", { url, branch });
 
   /** Entourage (ENTOURAGE.json exporté d'Orbite) : qui est qui, pour adapter les réponses. */
   const getPeople = async (): Promise<Result<{ people: PeopleSummary }>> => {
@@ -1506,6 +1538,7 @@ export function useTrame() {
             : `${who} demande une relecture de la PR #214 avant ce soir. Le fil montre que c'est attendu aujourd'hui : je m'engage sur un créneau précis plutôt qu'un « je regarde ». Ton direct, tutoiement, une phrase.`,
           after: `Réponse reçue et nettoyée (${text.length} caractères)`,
           result: text,
+          skill: !target && demoSkillState.skills.some((x) => x.name === "relecture-pr" && x.enabled) ? "relecture-pr" : undefined,
         },
         { text }
       );
@@ -1552,6 +1585,7 @@ export function useTrame() {
           thinking: "Je relis l'orthographe, les accords et la typographie française : espaces insécables, apostrophes, guillemets. Je garde le ton, les mentions, les liens et les emoji tels quels, je ne réécris aucune phrase.",
           after: changed ? "Réponse reçue et validée : liens, mentions et code intacts" : "Réponse reçue : rien à corriger",
           result: fixed,
+          skill: demoSkillState.skills.some((x) => x.name === "typographie-francaise" && x.enabled) ? "typographie-francaise" : undefined,
         },
         { text: fixed, changed }
       );
@@ -1866,6 +1900,12 @@ export function useTrame() {
     catchUp,
     getSettings,
     updateSettings,
+    getSkills,
+    reloadSkills,
+    setSkillEnabled,
+    setSkillDirs,
+    syncSkillRepo,
+    removeSkillRepo,
     briefPrefs,
     conversationSort,
     setConversationSort,
