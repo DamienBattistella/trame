@@ -24,6 +24,7 @@ import { EntourageSection } from "@/components/EntourageSection";
 import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
+import { LogExportButtons } from "@/components/LogExportButtons";
 import { Inbox } from "@/components/Inbox";
 import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
@@ -128,7 +129,7 @@ export function Panel({
           <Inbox trame={trame} onBrief={setBriefFor} />
         </TabsContent>
         <TabsContent value="logs" className="flex-1 overflow-auto">
-          <Logs logs={state.logs} />
+          <Logs logs={state.logs} trame={trame} />
         </TabsContent>
         <TabsContent value="settings" className="min-h-0 flex-1 overflow-hidden">
           <SettingsView trame={trame} onRestartSetup={onRestartSetup} onBrief={setBriefFor} />
@@ -206,11 +207,16 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
   );
 }
 
-function Logs({ logs }: { logs: LogItem[] }) {
+function Logs({ logs, trame }: { logs: LogItem[]; trame: Trame }) {
   const dot = { info: "bg-muted-foreground", warn: "bg-warning", sent: "bg-success", draft: "bg-primary" } as const;
   return (
     <div className="flex flex-col gap-3 py-5">
-      <SectionLabel>Activité</SectionLabel>
+      <div className="flex items-end justify-between gap-3">
+        <SectionLabel>Activité</SectionLabel>
+        <div className="mb-2">
+          <LogExportButtons trame={trame} />
+        </div>
+      </div>
       <GroupList>
         <ScrollArea className="h-[58vh]">
           {logs.length === 0 && (
@@ -509,6 +515,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       body: (
         <motion.div animate={telemetryCtl}>
           <TelemetrySettingsBody
+            trame={trame}
             value={settings.telemetry}
             onChange={(telemetry) => update("telemetry", { telemetry: { ...settings.telemetry, ...telemetry } })}
           />
@@ -600,9 +607,11 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
 }
 
 function TelemetrySettingsBody({
+  trame,
   value,
   onChange,
 }: {
+  trame: Trame;
   value: Settings["telemetry"];
   onChange: (t: Partial<Settings["telemetry"]>) => void;
 }) {
@@ -641,6 +650,15 @@ function TelemetrySettingsBody({
         <div className="px-4 py-2.5 text-xs text-muted-foreground">
           Service « trame » : une trace par message traité (rédaction, recherche GitHub, lecture et saisie dans Teams) et
           chaque ligne du Journal. Sans cette option, le texte des messages n'est jamais exporté.
+        </div>
+      </GroupList>
+      <GroupList>
+        <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2.5">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-sm font-medium">Export manuel</span>
+            <span className="text-xs text-muted-foreground">Journal, erreurs du moteur et dernières traces, en un seul texte.</span>
+          </div>
+          <LogExportButtons trame={trame} />
         </div>
       </GroupList>
     </div>

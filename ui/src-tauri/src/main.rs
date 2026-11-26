@@ -81,7 +81,10 @@ fn spawn_backend(app: &AppHandle) {
     let spawned = app
         .shell()
         .sidecar("trame-backend")
-        .map(|cmd| cmd.env("TRAME_PARENT_PID", std::process::id().to_string()))
+        .map(|cmd| {
+            cmd.env("TRAME_PARENT_PID", std::process::id().to_string())
+                .env("TRAME_VERSION", app.package_info().version.to_string())
+        })
         .and_then(|cmd| cmd.spawn());
     match spawned {
         Ok((mut rx, child)) => {

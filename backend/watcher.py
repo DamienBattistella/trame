@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import threading
 import time
 import uuid
@@ -721,6 +722,33 @@ class Watcher:
             if w.thread_id not in found and w.thread_id not in legacy and w.watch:
                 out.append(w)
         return out
+
+    def export_logs(self, tail_lines: int = 300, otel_records: int = 200) -> str:
+        """Everything useful to debug, as one text: Journal, end of backend.log, last
+        OpenTelemetry records. Message text quoted « … » stays masked unless allowed."""
+        def tail(path, n):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    return f.readlines()[-n:]
+            except OSError:
+                return []
+
+        out = [
+            "# Trame : journaux",
+            f"Version : {os.environ.get('TRAME_VERSION', 'dev')} · exporté le {datetime.now():%d/%m/%Y %H:%M:%S}",
+            f"Cerveau : {self.state.brain} · Teams vérifié : {'oui' if self.state.selftest_ok else 'non'} · "
+            f"en pause : {'oui' if self.state.paused else 'non'} · conversations suivies : "
+            f"{sum(1 for w in self.state.watchlist if w.watch)}",
+            "",
+            "## Journal",
+        ]
+        out += [f"{l.at}  {l.level:<5}  {telemetry.redact(l.text)}" for l in reversed(self.state.logs)] or ["(vide)"]
+        backend_log = tail(cfgmod.HOME / "backend.log", tail_lines)
+        out += ["", "## backend.log (fin)"] + ([l.rstrip("\n") for l in backend_log] or ["(absent)"])
+        telemetry.flush()
+        otel = tail(telemetry.file_path(), otel_records)
+        out += ["", "## OpenTelemetry (otel.jsonl, fin)"] + ([l.rstrip("\n") for l in otel] or ["(désactivé ou vide)"])
+        return "\n".join(out) + "\n"
 
     def log(self, level, text: str) -> None:
         telemetry.event(level, text)

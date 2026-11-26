@@ -378,3 +378,14 @@ def test_diagnostics_endpoint(make_client):
     client, _w, _d = make_client()
     r = client.post("/api/diagnostics/teams", json={})
     assert r.status_code == 200 and r.json()["report"]["driver"] == "MockTeamsDriver"
+
+
+def test_logs_export(make_client, fresh_home):
+    client, watcher, _driver = make_client()
+    watcher.log("sent", "Envoyé à Lucas : « mot de passe 1234 »")
+    (fresh_home / "backend.log").write_text("Traceback: boom\n", encoding="utf-8")
+    r = client.get("/api/logs/export").json()
+    assert r["ok"] and r["filename"].startswith("trame-journaux-") and r["filename"].endswith(".txt")
+    text = r["text"]
+    assert "## Journal" in text and "Envoyé à Lucas" in text and "mot de passe 1234" not in text
+    assert "Traceback: boom" in text and "## OpenTelemetry" in text

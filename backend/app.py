@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime
 import re
 from contextlib import asynccontextmanager
 from pathlib import PurePath
@@ -345,6 +346,10 @@ def create_app(
     def reset(body: ResetBody):
         watcher.factory_reset()
         return {"ok": True}
+
+    @app.get("/api/logs/export")
+    def logs_export():
+        return {"ok": True, "filename": f"trame-journaux-{datetime.now():%Y%m%d-%H%M%S}.txt", "text": watcher.export_logs()}
 
     @app.post("/api/diagnostics/teams")
     def diagnostics(body: DiagnosticBody):

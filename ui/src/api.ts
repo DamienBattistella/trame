@@ -605,6 +605,16 @@ export function useTrame() {
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/show`);
   };
 
+  /** Journal, fin du backend.log et dernières traces OpenTelemetry, en un seul texte. */
+  const exportLogs = async (): Promise<Result<{ filename: string; text: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const lines = stateRef.current.logs.map((l) => `${l.at}  ${l.level.padEnd(5)}  ${l.text}`);
+      return { ok: true, filename: "trame-journaux-demo.txt", text: ["# Trame : journaux (démo)", "", "## Journal", ...lines].join("\n") + "\n" };
+    }
+    return request<{ filename: string; text: string }>("GET", "/api/logs/export");
+  };
+
   /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
   const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
     if (!connectedRef.current) {
@@ -811,6 +821,7 @@ export function useTrame() {
     suggestInThread,
     showInTeams,
     diagnoseTeams,
+    exportLogs,
     previewSoul,
     getPeople,
     uploadPeople,
