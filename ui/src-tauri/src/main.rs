@@ -62,7 +62,7 @@ fn stop_backend(app: &AppHandle) {
 /// (its exe must be replaceable and it must not act on Teams meanwhile), install it
 /// and restart. Any failure leaves the current version running. Release builds only.
 async fn update_on_launch(app: AppHandle) {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) || is_trial(&app) {
         return;
     }
     let Some(_guard) = UpdateGuard::take() else { return };
@@ -94,17 +94,61 @@ async fn update_on_launch(app: AppHandle) {
     app.restart();
 }
 
+/// Trial instance (`npm run tauri:essai`, tauri.essai.conf.json): its own identifier,
+/// hence its own single-instance lock, window state and Teams web profile, so it runs
+/// beside the installed Trame without touching it.
+const TRIAL_SUFFIX: &str = ".essai";
+/// Engine port of the trial instance. Must match VITE_TRAME_PORT in ui/.env.essai.
+const TRIAL_PORT: &str = "8732";
+
+fn is_trial(app: &AppHandle) -> bool {
+    app.config().identifier.ends_with(TRIAL_SUFFIX)
+}
+
+/// The installed app runs its sidecar. The trial instance runs the engine from the
+/// sources of this checkout (backend/.venv, or TRAME_PYTHON), on its own port and with
+/// its own data folder (%APPDATA%\ovh.battistella.trame.essai), never %APPDATA%\Trame.
+fn engine_command(app: &AppHandle) -> Result<tauri_plugin_shell::process::Command, String> {
+    let cmd = if is_trial(app) {
+        let backend = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../backend");
+        let venv = backend.join(".venv/Scripts/python.exe");
+        let python = std::env::var("TRAME_PYTHON")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| if venv.exists() { venv.to_string_lossy().into_owned() } else { "python".into() });
+        let home = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        app.shell()
+            .command(python)
+            .arg("run.py")
+            .current_dir(backend)
+            .env("TRAME_PORT", TRIAL_PORT)
+            .env("TRAME_HOME", home)
+            .env("PYTHONIOENCODING", "utf-8")
+    } else {
+        app.shell().sidecar("trame-backend").map_err(|e| e.to_string())?
+    };
+    Ok(cmd
+        .env("TRAME_PARENT_PID", std::process::id().to_string())
+        .env("TRAME_VERSION", app.package_info().version.to_string()))
+}
+
+/// The trial instance's icon: the Trame icon in amber, to tell the two apart in the
+/// tray and the taskbar.
+fn trial_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let mut rgba = icon.rgba().to_vec();
+    for px in rgba.chunks_exact_mut(4) {
+        let l = (px[0] as u16 * 3 + px[1] as u16 * 6 + px[2] as u16) / 10;
+        px[0] = (127 + l / 2) as u8;
+        px[1] = (60 + l / 3) as u8;
+        px[2] = (l / 8) as u8;
+    }
+    tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+}
+
 /// Start the Python engine (sidecar). A missing or quarantined engine must not take
 /// the window and tray down: the UI then shows that the engine does not start.
 fn spawn_backend(app: &AppHandle) {
-    let spawned = app
-        .shell()
-        .sidecar("trame-backend")
-        .map(|cmd| {
-            cmd.env("TRAME_PARENT_PID", std::process::id().to_string())
-                .env("TRAME_VERSION", app.package_info().version.to_string())
-        })
-        .and_then(|cmd| cmd.spawn());
+    let spawned = engine_command(app).and_then(|cmd| cmd.spawn().map_err(|e| e.to_string()));
     match spawned {
         Ok((mut rx, child)) => {
             *app.state::<Backend>().0.lock().unwrap() = Some(child);
@@ -155,7 +199,7 @@ impl From<&tauri_plugin_updater::Update> for UpdateInfo {
 /// Trame lives in the tray and is rarely relaunched: look for a new release every
 /// 15 minutes too, and let the UI light its LED (once per version).
 async fn watch_updates(app: AppHandle) {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) || is_trial(&app) {
         return;
     }
     let mut announced: Option<String> = None;
@@ -178,9 +222,14 @@ async fn pause_for(d: std::time::Duration) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
 }
 
+const TRIAL_NO_UPDATE: &str = "Pas de mise à jour dans l'instance d'essai.";
+
 /// Réglages › Mises à jour : « Rechercher ».
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    if is_trial(&app) {
+        return Err(TRIAL_NO_UPDATE.into());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
         Ok(Some(update)) => Ok(Some(UpdateInfo::from(&update))),
@@ -192,6 +241,9 @@ async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
 /// « Installer et redémarrer » : download, stop the engine, install, restart.
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
+    if is_trial(&app) {
+        return Err(TRIAL_NO_UPDATE.into());
+    }
     let _guard = UpdateGuard::take().ok_or_else(|| "Une mise à jour est déjà en cours.".to_string())?;
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
@@ -247,7 +299,7 @@ async fn teams_web_open(app: AppHandle, visible: bool) -> Result<(), String> {
     let url = TEAMS_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
     let profile = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("teams-web");
     let w = tauri::WebviewWindowBuilder::new(&app, TEAMS_WEB, tauri::WebviewUrl::External(url))
-        .title("Teams · Trame")
+        .title(if is_trial(&app) { "Teams · Trame (essai)" } else { "Teams · Trame" })
         .inner_size(1100.0, 760.0)
         .visible(false)
         .data_directory(profile)
@@ -349,12 +401,15 @@ fn quit(app: &AppHandle) {
 }
 
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
-        ))
+    let context = tauri::generate_context!();
+    let trial = context.config().identifier.ends_with(TRIAL_SUFFIX);
+    let mut builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+    // No autostart for the trial instance: it must never launch with Windows.
+    if !trial {
+        builder = builder.plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])));
+    }
+    builder
         // The Teams web window is not restored: the plugin would bring it back visible
         // at every launch. It stays hidden unless the user asks to see it.
         .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[TEAMS_WEB]).build())
@@ -383,9 +438,16 @@ fn main() {
             let exit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &pause, &sep, &exit])?;
 
+            let mut icon = app.default_window_icon().unwrap().clone();
+            if is_trial(app.handle()) {
+                icon = trial_icon(&icon);
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_icon(icon.clone());
+                }
+            }
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Trame")
+                .icon(icon)
+                .tooltip(if is_trial(app.handle()) { "Trame (essai)" } else { "Trame" })
                 .menu(&menu)
                 .menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -431,7 +493,7 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("erreur au lancement de Trame")
         .run(|app, event| {
             if let RunEvent::Exit = event {

@@ -146,6 +146,34 @@ npm run tauri dev                        # application de bureau (Windows, Rust 
 
 Sans moteur, l'interface (dans un navigateur) fonctionne avec des données d'exemple.
 
+### Instance d'essai, à côté du Trame installé
+
+`npm run tauri dev` se bat avec le Trame installé (même port 8731, instance unique). Pour vérifier une modification dans la vraie application sans quitter son Trame, lancer **Trame (essai)** :
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+cd ..\ui
+npm run tauri:essai
+```
+
+| | Trame installé | Trame (essai) |
+|---|---|---|
+| Moteur | sidecar embarqué, `127.0.0.1:8731` | sources de ce dépôt (`backend/.venv`, ou `TRAME_PYTHON`), `127.0.0.1:8732` |
+| Interface | `tauri://localhost` | Vite sur `http://localhost:5174` (`ui/.env.essai`) |
+| Identifiant, instance unique | `ovh.battistella.trame` | `ovh.battistella.trame.essai` |
+| Données (`TRAME_HOME`) | `%APPDATA%\Trame` | `%APPDATA%\ovh.battistella.trame.essai` |
+| Profil Teams intégré | `%LOCALAPPDATA%\ovh.battistella.trame\teams-web` | `%LOCALAPPDATA%\ovh.battistella.trame.essai\teams-web` |
+| Démarrage auto, mises à jour | oui | non |
+| Icône | bleue | ambre, info-bulle « Trame (essai) » |
+
+La configuration vient de `ui/src-tauri/tauri.essai.conf.json`, fusionnée à `tauri.conf.json` seulement par `npm run tauri:essai` : le build de production ne change pas. `cargo` a besoin des icônes générées (`npx tauri icon src-tauri/icons/source.png`) et d'un fichier `src-tauri/binaries/trame-backend-x86_64-pc-windows-msvc.exe`, même vide (non utilisé par l'essai).
+
+**Se connecter à Teams dans l'essai (une seule fois)** : le profil Teams intégré de l'essai est neuf. Au premier lancement, suivre l'accueil (ou cliquer sur « Afficher » à la ligne Teams des Réglages), se connecter dans la fenêtre « Teams · Trame (essai) », puis la masquer. La session est gardée pour les lancements suivants. Le Trame installé garde sa propre session, sans interruption.
+
+Arrêter l'essai : *Quitter* dans le menu de son icône (ambre) ou `Ctrl+C` dans le terminal. Le moteur d'essai s'arrête avec lui.
+
 ### Versions et releases
 
 Les releases sont automatiques et suivent le [versionnage sémantique](https://semver.org/lang/fr/). Après chaque CI verte sur `main`, `build.yml` déduit la version suivante des messages de commit ([Conventional Commits](https://www.conventionalcommits.org/fr/)) depuis le dernier tag, construit l'installeur Windows et publie une Release GitHub avec le manifeste de mise à jour automatique :
