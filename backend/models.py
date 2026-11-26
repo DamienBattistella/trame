@@ -121,6 +121,9 @@ class Notice(BaseModel):
     text: str
     at: str
     surface: Surface
+    # Pour filtrer les notifications : on te mentionne, et la conversation est suivie.
+    mentioned: bool = False
+    followed: bool = False
 
     model_config = ConfigDict(populate_by_name=True)
 

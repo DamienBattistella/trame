@@ -45,6 +45,10 @@ export interface Notice {
   text: string;
   at: string;
   surface: Surface;
+  /** On te mentionne dans ce message. */
+  mentioned?: boolean;
+  /** La conversation est suivie dans Trame. */
+  followed?: boolean;
 }
 
 export type LogLevel = "info" | "warn" | "sent" | "draft";

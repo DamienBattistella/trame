@@ -41,6 +41,7 @@ import {
 } from "@/types";
 import { mockBrief, mockConversations, mockDrafts, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
+import { loadPrefs, toasts } from "@/lib/notifyPrefs";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import type { GithubRef } from "@/lib/linkify";
 import { DEFAULT_LIMITS } from "@/lib/attachments";
@@ -236,6 +237,8 @@ function mapState(s: any): TrameState {
       text: n.text,
       at: n.at,
       surface: n.surface as Surface,
+      mentioned: Boolean(n.mentioned),
+      followed: Boolean(n.followed),
     })),
     capabilities: {
       react: Boolean(s.capabilities?.react),
@@ -717,10 +720,8 @@ export function useTrame() {
       announced = new Set(next.notices.map((n) => n.id));
       // Trame au premier plan : la liste montre déjà le message.
       if (!fresh.length || !notificationsEnabled() || document.hasFocus()) return;
-      for (const n of fresh.reverse()) {
-        const title = n.conversation && n.conversation !== n.from ? `${n.from} · ${n.conversation}` : n.from;
-        notify(title, next.screenSharing ? "Nouveau message" : n.text);
-      }
+      // Filtrées (portée, heures calmes) et regroupées selon les réglages de notification.
+      for (const t of toasts(fresh.reverse(), loadPrefs(), new Date(), next.screenSharing)) notify(t.title, t.body);
     };
 
     const connect = () => {
