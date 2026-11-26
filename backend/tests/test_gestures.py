@@ -233,3 +233,25 @@ def test_bridge_refused_reaction(make_client, monkeypatch):
     finally:
         page.stop = True
         page.thread.join(timeout=5)
+
+
+def test_bridge_gives_time_to_scroll_up_to_an_older_message(monkeypatch):
+    # Citer ou réagir à un message que Teams n'a pas encore dessiné : la page remonte le
+    # fil jusqu'à lui (15 s au plus), le moteur doit l'attendre au-delà.
+    from models import MessageRef
+    d = WebBridgeDriver()
+    d._names["name:Romain CUREAU"] = "Romain CUREAU"
+    calls = []
+
+    def fake_rpc(op, timeout=None, **args):
+        calls.append((op, timeout, args))
+        return {"ok": True}
+
+    monkeypatch.setattr(d, "_rpc", fake_rpc)
+    ref = MessageRef(id="1700", sender="Romain CUREAU", text="Tu as vu ?")
+    assert d._react_in_active("name:Romain CUREAU", ref, "like") is True
+    assert d._reply_in_active("name:Romain CUREAU", ref, "Oui", True) is True
+    assert d._type_into_active("name:Romain CUREAU", "Oui", True) is True
+    (_, react_t, _), (_, quote_t, quote_args), (_, plain_t, plain_args) = calls
+    assert react_t >= 20 and quote_t > react_t and quote_args["quote"]["id"] == "1700"
+    assert plain_t == 15 and "quote" not in plain_args
