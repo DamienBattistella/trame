@@ -60,10 +60,12 @@ def _unique(ids: Iterable[str]) -> list[str]:
 class ActionError(Exception):
     """An API-triggered action failed; carries the HTTP status and a French message."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: Optional[str] = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        # Pour l'interface : « maybe_sent », un envoi identique est peut-être déjà parti.
+        self.code = code
 
 
 class Watcher:
@@ -116,6 +118,9 @@ class Watcher:
         # File d'envoi : pièces jointes et mentions des messages en attente (hors de l'état
         # diffusé à l'interface), et réveil du renvoi.
         self._outbox_payload: dict[str, dict] = {}
+        # Dernier envoi à la main resté « non confirmé », par conversation : (heure, texte,
+        # noms des fichiers). Un nouvel essai du même contenu relit d'abord la conversation.
+        self._unconfirmed: dict[str, tuple[float, str, tuple[str, ...]]] = {}
         self._outbox_wake = threading.Event()
         # Réponses envoyées seules (horodatage, conversation, nom, texte) : plafond et « aujourd'hui ».
         self._auto_sent: list[tuple[float, str, str, str]] = []
@@ -835,6 +840,39 @@ class Watcher:
             self._sent_recent[thread_id] = self._sent_recent[thread_id][-10:]
         self._track(thread_id, [followmod.Seen(sender="moi", text=text, mine=True)])
 
+    UNCONFIRMED_TTL = 2 * 3600.0
+
+    @staticmethod
+    def _same_text(text: str) -> str:
+        return " ".join((text or "").split())
+
+    def _not_sent_already(self, thread_id: str, text: str, files: Sequence[Attachment]) -> None:
+        """Before sending again what was left « non confirmé » in this conversation: reread it.
+        If one of the user's last messages shows the same text and files, say so instead of
+        sending a duplicate (the UI offers « Renvoyer quand même »). Not there: send."""
+        rec = self._unconfirmed.get(thread_id)
+        if not rec or time.monotonic() - rec[0] > self.UNCONFIRMED_TTL:
+            return
+        _at, before_text, before_names = rec
+        names = tuple(f.name for f in files)
+        if before_text != self._same_text(text) or sorted(before_names) != sorted(names):
+            return
+        what = ("Ces fichiers semblent déjà partis" if len(names) > 1 else "Ce fichier semble déjà parti") if names \
+            else "Ce message semble déjà parti"
+        try:
+            msgs = self.thread_messages(thread_id, 10, fresh=True)
+        except ActionError as e:
+            raise ActionError(409, f"Ton envoi précédent n'a pas été confirmé et Teams n'a pas pu être relu ({e.message}) : "
+                                   "vérifie dans Teams, puis renvoie quand même si besoin.", code="maybe_sent") from None
+        sent = next((m for m in reversed(msgs) if m.get("mine") and attachmod.shows(m, text, names)), None)
+        if sent is None:
+            # Finalement pas parti : on envoie.
+            self._unconfirmed.pop(thread_id, None)
+            return
+        at = f" à {sent['at']}" if sent.get("at") else ""
+        self.log("warn", f"Envoi identique retenu : {what[0].lower() + what[1:]}{at} dans Teams.")
+        raise ActionError(409, f"{what}{at} : renvoyer quand même ?", code="maybe_sent")
+
     def _because(self) -> str:
         reason = getattr(self._why, "reason", None)
         return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
@@ -878,6 +916,7 @@ class Watcher:
                 self.log("warn", f"Envoi non confirmé, à vérifier dans Teams : {e}")
                 if auto:
                     return False
+                self._unconfirmed[thread_id] = (time.monotonic(), self._same_text(text), tuple(f.name for f in files))
                 what = "le message et ses pièces jointes sont peut-être partis" if files else "le message est peut-être parti"
                 raise ActionError(409, f"Envoi non confirmé : {what}. Vérifie dans Teams avant de renvoyer.")
             except Exception as e:
@@ -891,6 +930,7 @@ class Watcher:
             if focus.ok and send and text.strip():
                 self._remember_sent(thread_id, text)
             if focus.ok and send:
+                self._unconfirmed.pop(thread_id, None)
                 self._touch(thread_id)
         self._warn_if_not_restored(focus)
         return focus.ok
@@ -1192,7 +1232,8 @@ class Watcher:
         self._outbox_wake.set()
 
     def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None,
-                   mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> Optional[QueuedSend]:
+                   mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = (),
+                   force: bool = False) -> Optional[QueuedSend]:
         if reply_to is not None:
             self._require("reply")
         self._attach_allowed(files)
@@ -1205,16 +1246,19 @@ class Watcher:
             queued = None
             if why:
                 queued = self._enqueue(d.thread_id, self._name_of(d.thread_id, d.from_), body, reply_to, names, files, why)
-            elif not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
-                                   files=files):
-                if self._transient():
-                    queued = self._enqueue(d.thread_id, self._name_of(d.thread_id, d.from_), body, reply_to, names, files,
-                                           self._why.reason)
-                else:
-                    with self._lock:
-                        d.proposal = body
-                    self.log("warn", f"Envoi à {d.from_} refusé, réponse conservée.{self._because()}")
-                    raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
+            else:
+                if not force:
+                    self._not_sent_already(d.thread_id, body, files)
+                if not self._deliver(d.thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
+                                     files=files):
+                    if self._transient():
+                        queued = self._enqueue(d.thread_id, self._name_of(d.thread_id, d.from_), body, reply_to, names,
+                                               files, self._why.reason)
+                    else:
+                        with self._lock:
+                            d.proposal = body
+                        self.log("warn", f"Envoi à {d.from_} refusé, réponse conservée.{self._because()}")
+                        raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
         if queued:
@@ -1447,7 +1491,8 @@ class Watcher:
                 **attachmod.limits()}
 
     def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None,
-                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = ()) -> Optional[QueuedSend]:
+                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = (),
+                    force: bool = False) -> Optional[QueuedSend]:
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body and not files:
@@ -1460,6 +1505,8 @@ class Watcher:
         why = self._not_ready(thread_id)
         if why:
             return self._enqueue(thread_id, entity.display_name, body, reply_to, names, files, why)
+        if not force:
+            self._not_sent_already(thread_id, body, files)
         if not self._deliver(thread_id, body, send=True, restore=True, reply_to=reply_to, mentions=names,
                              files=files):
             if self._transient():

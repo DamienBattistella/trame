@@ -585,18 +585,27 @@ export function DiscussionView({
     if (res.refused.length) toast.error("Fichier refusé", { description: `${res.refused.join(" ; ")}. Accepté : ${limitsText(limits)}.` });
   };
 
-  const send = async () => {
+  const send = async (force = false) => {
     const body = text.trim();
     if ((!body && !files.length) || busy !== "idle" || review) return;
     setBusy("send");
     const target = replyTo;
     const mentions = caps.mentions ? mentionsUsed(body, chosen) : [];
     const res = draft
-      ? await trame.sendDraft(draft.id, body, target, mentions, files)
-      : await trame.sendInThread(c.threadId, body, target, mentions, files);
+      ? await trame.sendDraft(draft.id, body, target, mentions, files, force)
+      : await trame.sendInThread(c.threadId, body, target, mentions, files, force);
     setBusy("idle");
     if (!res.ok) {
       const kept = files.length ? "Ton message et tes fichiers sont conservés." : "Ton message est conservé.";
+      // Le même envoi, resté « non confirmé », est déjà dans le fil : rien n'est renvoyé
+      // sans que l'utilisateur le demande.
+      if (res.code === "maybe_sent") {
+        return void toast.warning(`Déjà envoyé à ${c.displayName} ?`, {
+          description: `${res.error} ${kept}`,
+          duration: 20000,
+          action: { label: "Renvoyer quand même", onClick: () => void send(true) },
+        });
+      }
       // Quelque chose occupe déjà la zone de saisie dans Teams (reste d'un envoi raté,
       // brouillon tapé dans Teams) : tant qu'il y est, aucun envoi ne passe. On propose
       // de la vider, en le disant.
@@ -1395,7 +1404,7 @@ export function DiscussionView({
                   </TooltipTrigger>
                   <TooltipContent>{replyTo ? "Proposer une réponse à ce message" : draft ? "Proposer une autre réponse" : "Proposer une réponse dans ta voix"}</TooltipContent>
                 </Tooltip>
-                <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || (!text.trim() && !files.length) || !!review} onClick={send}>
+                <Button size="sm" className="min-w-24 rounded-full" disabled={busy !== "idle" || (!text.trim() && !files.length) || !!review} onClick={() => send()}>
                   {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                   Envoyer
                 </Button>

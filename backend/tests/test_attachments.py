@@ -257,3 +257,97 @@ def test_files_with_mentions_refused_and_nothing_sent(make_client):
                     json={"text": "@Lucas Bernard voici", "mentions": ["Lucas Bernard"], "attachments": [pdf()]})
     assert r.status_code == 422 and "mention" in r.json()["error"]
     assert driver.sent_files == [] and driver.typed == [] and driver.opened == []
+
+
+# --- anti-doublon après un « Envoi non confirmé » ---
+
+def png(name: str = "capture.png") -> dict:
+    return {"name": name, "type": "image/png", "data": b64(b"\x89PNG" + b"x" * 60)}
+
+
+def unsure_then_sure(shown: list):
+    """Teams intégré dont le premier envoi n'est pas confirmé, et dont le fil montre `shown`."""
+    from drivers.mock import MockTeamsDriver
+    from models import FileRef
+
+    class Driver(MockTeamsDriver):
+        unsure = True
+
+        def _send_files_into_active(self, thread_id, text, files, reply_to=None):
+            if self.unsure:
+                self.unsure = False
+                raise SendUncertain("message non visible dans la conversation")
+            return super()._send_files_into_active(thread_id, text, files, reply_to)
+
+        def read_history(self, thread_id, last_n):
+            self.reads = getattr(self, "reads", 0) + 1
+            return [IncomingMessage(thread_id=thread_id, sender=m.get("sender", "Vous"), text=m.get("text", ""),
+                                    received_at=m.get("at", "18:22"), surface=Surface.dm, id=str(i),
+                                    files=[FileRef(name=n) for n in m.get("files", [])])
+                    for i, m in enumerate(shown)], True
+
+    return Driver(interval=9999)
+
+
+def test_retry_of_an_unconfirmed_file_finds_it_already_sent(make_client):
+    # Le cas réel : image seule « non confirmée », mais bien partie (renommée « 1 » au renvoi).
+    driver = unsure_then_sure([{"text": "", "files": ["capture 1.png"], "at": "18:22"}])
+    client, watcher, _ = make_client(driver=driver)
+    first = client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]})
+    assert first.status_code == 409 and "peut-être partis" in first.json()["error"]
+    again = client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]})
+    assert again.status_code == 409
+    assert again.json() == {"ok": False, "code": "maybe_sent", "error": "Ce fichier semble déjà parti à 18:22 : renvoyer quand même ?"}
+    assert driver.sent_files == [] and driver.reads == 1
+    # L'utilisateur a vu l'avertissement et renvoie quand même.
+    forced = client.post(f"/api/threads/{DM}/send", json={"attachments": [png()], "force": True})
+    assert forced.json() == {"ok": True}
+    assert driver.sent_files == [(DM, "", [("capture.png", 64)])]
+    # Confirmé : plus d'avertissement ensuite.
+    assert client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]}).json() == {"ok": True}
+
+
+def test_retry_sends_when_the_message_is_finally_not_there(make_client):
+    # Le fil ne montre qu'un message de quelqu'un d'autre avec le même fichier : on envoie.
+    driver = unsure_then_sure([{"sender": "Sofia Marino", "files": ["capture.png"]}])
+    client, _, _ = make_client(driver=driver)
+    client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]})
+    assert client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]}).json() == {"ok": True}
+    assert driver.sent_files == [(DM, "", [("capture.png", 64)])]
+
+
+def test_retry_with_text_and_image_checks_both(make_client):
+    driver = unsure_then_sure([{"text": "Voici la capture de l'écran", "files": ["capture.png"], "at": "18:40"}])
+    client, _, _ = make_client(driver=driver)
+    body = {"text": "Voici la capture de l'écran", "attachments": [png()]}
+    client.post(f"/api/threads/{DM}/send", json=body)
+    r = client.post(f"/api/threads/{DM}/send", json=body)
+    assert r.json()["code"] == "maybe_sent" and "18:40" in r.json()["error"]
+    assert driver.sent_files == []
+
+
+def test_retry_of_several_files_needs_all_of_them_shown(make_client):
+    driver = unsure_then_sure([{"files": ["compte-rendu.pdf"]}])
+    client, _, _ = make_client(driver=driver)
+    body = {"attachments": [pdf("compte-rendu.pdf"), png("schema.png")]}
+    client.post(f"/api/threads/{DM}/send", json=body)
+    # Seul le PDF est dans le fil : le message entier n'est pas parti, on envoie.
+    assert client.post(f"/api/threads/{DM}/send", json=body).json() == {"ok": True}
+    assert len(driver.sent_files) == 1
+
+
+def test_other_content_after_an_unconfirmed_send_is_not_reread(make_client):
+    driver = unsure_then_sure([{"files": ["capture.png"]}])
+    client, _, _ = make_client(driver=driver)
+    client.post(f"/api/threads/{DM}/send", json={"attachments": [png()]})
+    assert client.post(f"/api/threads/{DM}/send", json={"attachments": [png("autre.png")]}).json() == {"ok": True}
+    assert getattr(driver, "reads", 0) == 0
+
+
+def test_same_file_tolerates_teams_renaming():
+    assert attachmod.same_file("capture-20261126-182223.png", "capture-20261126-182223 1.png")
+    assert attachmod.same_file("Rapport été.PDF", "rapport ete (2).pdf")
+    assert not attachmod.same_file("capture-20261126-18222.png", "capture-20261126-182223.png")
+    assert not attachmod.same_file("capture.png", "autre-capture.png")
+    assert attachmod.shows({"text": "", "files": [], "images": [{"name": "image"}]}, "", ["capture.png"])
+    assert not attachmod.shows({"text": "", "files": [], "images": [{"name": "image"}]}, "", ["notes.pdf"])
