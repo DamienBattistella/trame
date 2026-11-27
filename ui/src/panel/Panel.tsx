@@ -35,6 +35,7 @@ import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Inbox } from "@/components/Inbox";
 import { Meetings } from "@/components/Meetings";
+import { Calendar } from "@/components/Calendar";
 import { AutoToggle, CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
@@ -74,7 +75,7 @@ function ContextButton({ trame, target, onBrief, compact }: { trame: Trame; targ
   );
 }
 
-export type PanelTab = "inbox" | "meetings" | "logs" | "settings";
+export type PanelTab = "inbox" | "meetings" | "calendar" | "logs" | "settings";
 
 export function Panel({
   trame,
@@ -147,6 +148,11 @@ export function Panel({
         {tab === "meetings" && (
           <div className="flex-1 overflow-auto">
             <Meetings trame={trame} />
+          </div>
+        )}
+        {tab === "calendar" && (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <Calendar trame={trame} />
           </div>
         )}
         {tab === "logs" && (

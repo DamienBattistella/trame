@@ -25,15 +25,15 @@ export const isHelpKey = (e: KeyboardEvent) =>
   ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "/" || e.code === "Slash" || e.code === "NumpadDivide")) ||
   (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey && !isTyping(e));
 
-/** Sections du rail : Ctrl+1, 2, 3 (rangée du haut ou pavé, par le code de la touche : en AZERTY, Ctrl+1 donne « & »). */
-const SECTION_KEYS = ["inbox", "meetings", "logs"] as const;
+/** Sections du rail : Ctrl+1 à 4 (rangée du haut ou pavé, par le code de la touche : en AZERTY, Ctrl+1 donne « & »). */
+const SECTION_KEYS = ["inbox", "meetings", "calendar", "logs"] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number] | "settings";
 
-/** Ctrl+1, 2, 3 : Discussions, Réunions, Journal ; Ctrl+, : Réglages. Null pour toute autre frappe. */
+/** Ctrl+1, 2, 3, 4 : Discussions, Réunions, Calendrier, Journal ; Ctrl+, : Réglages. Null pour toute autre frappe. */
 export function sectionFromKey(e: KeyboardEvent): SectionKey | null {
   if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return null;
   if (e.key === "," || e.code === "Comma") return "settings";
-  const m = /^(?:Digit|Numpad)([1-3])$/.exec(e.code);
+  const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
   return m ? SECTION_KEYS[Number(m[1]) - 1] : null;
 }
 
@@ -55,7 +55,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
   {
     title: "Navigation",
     items: [
-      { keys: [["Ctrl", "1"], ["Ctrl", "2"], ["Ctrl", "3"]], label: "Discussions, Réunions, Journal" },
+      { keys: [["Ctrl", "1"], ["Ctrl", "2"], ["Ctrl", "3"], ["Ctrl", "4"]], label: "Discussions, Réunions, Calendrier, Journal" },
       { keys: [["Ctrl", ","]], label: "Réglages" },
       { keys: [["Ctrl", "K"]], label: "Aller à une conversation" },
       { keys: [["Alt", "↓"], ["Alt", "↑"]], label: "Conversation non lue ou à relire suivante / précédente" },

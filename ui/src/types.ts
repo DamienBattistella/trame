@@ -113,11 +113,13 @@ export interface Settings {
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
   /** Préférences d'interface, gardées dans config.json : une mise à jour ne les perd pas. */
-  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound };
+  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound; calendarView: CalendarView };
 }
 
 export type ConversationSort = "watched" | "recent" | "alpha";
 export type Theme = "dark" | "light";
+/** Vue du calendrier : la semaine en colonnes, ou un seul jour. */
+export type CalendarView = "week" | "day";
 /** Son des notifications Windows : « off » (muet) ou un son du système. */
 export type NotificationSound = "off" | "Default" | "IM" | "Mail" | "Reminder" | "SMS";
 export const NOTIFICATION_SOUNDS: readonly NotificationSound[] = ["off", "Default", "IM", "Mail", "Reminder", "SMS"];

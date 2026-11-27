@@ -50,6 +50,7 @@ import {
   GithubReportState,
   NOTIFICATION_SOUNDS,
   type NotificationSound,
+  type CalendarView,
   type FileLink,
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
@@ -386,6 +387,7 @@ function mapSettings(s: any): Settings {
       updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes),
       theme: s?.ui?.theme === "light" ? "light" : "dark",
       notificationSound: toSound(s?.ui?.notification_sound),
+      calendarView: s?.ui?.calendar_view === "day" ? "day" : "week",
     },
   };
 }
@@ -631,6 +633,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.ui.updateCheckMinutes !== undefined) u.update_check_minutes = p.ui.updateCheckMinutes;
     if (p.ui.theme !== undefined) u.theme = p.ui.theme;
     if (p.ui.notificationSound !== undefined) u.notification_sound = p.ui.notificationSound;
+    if (p.ui.calendarView !== undefined) u.calendar_view = p.ui.calendarView;
     out.ui = u;
   }
   return out;
@@ -716,7 +719,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off" },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off", calendarView: "week" },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -926,12 +929,15 @@ export function useTrame() {
   }, [theme]);
   // Son des notifications Windows, enregistré dans config.json ; lu par une ref à l'arrivée des messages.
   const [notificationSound, setNotificationSoundState] = useState<NotificationSound>(localSettings.ui.notificationSound);
+  // Vue du calendrier (semaine ou jour), enregistrée dans config.json.
+  const [calendarView, setCalendarViewState] = useState<CalendarView>(localSettings.ui.calendarView);
   const soundRef = useRef(notificationSound);
   soundRef.current = notificationSound;
   const applyPrefs = (s: Settings) => {
     setBriefPrefs(prefsOf(s));
     setThemeState(s.ui.theme);
     setNotificationSoundState(s.ui.notificationSound);
+    setCalendarViewState(s.ui.calendarView);
     setConversationSortState(s.ui.conversationSort);
     setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
     void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
@@ -1231,6 +1237,11 @@ export function useTrame() {
   const setNotificationSound = (next: NotificationSound) => {
     setNotificationSoundState(next);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { notificationSound: next } });
+  };
+  /** Optimiste, comme le tri : la vue change tout de suite, puis est enregistrée. */
+  const setCalendarView = (next: CalendarView) => {
+    setCalendarViewState(next);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { calendarView: next } });
   };
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -2331,6 +2342,8 @@ export function useTrame() {
     setTheme,
     toggleTheme,
     notificationSound,
+    calendarView,
+    setCalendarView,
     setNotificationSound,
     getBrief,
     generateBrief,
