@@ -230,6 +230,8 @@ y est refusé).
 | mon statut et ma note | `GET https://presence.teams.microsoft.com/v1/me/presence` |
 | présence d'autres personnes | `POST …/v1/presence/getpresence/` `[{"mri": …}]` (100 au plus) |
 | note de statut | `PUT …/v1/me/publishnote` `{"message": "<p>…</p>", "expiry": "…Z"}` |
+| changer mon statut | `PUT …/v1/me/forceavailability/` `{"availability": "DoNotDisturb", "desiredExpirationTime": "…Z"}` (Hors ligne : `"activity": "OffWork"` en plus) |
+| réinitialiser mon statut | `PUT …/v1/me/forceavailability/` sans corps |
 | recherche de personnes | `POST {middletier}/beta/users/searchV2?…&source=newChat` corps : la requête en chaîne JSON |
 
 - La note est stockée en **HTML** : lue en texte avec l'extracteur des messages, écrite en un
@@ -237,8 +239,13 @@ y est refusé).
   à Paris) ; écrite puis relue.
 - Présence des tête-à-tête : pour **toute** la liste (la page ne voit que les lignes dessinées),
   par l'interlocuteur connu grâce à `chatlist`, au plus une fois par minute.
-- Le **changement de disponibilité** (Disponible, Occupé, Ne pas déranger…, avec durée) reste sur
-  la page : non vérifiable en direct sans changer le statut visible de l'utilisateur.
+- **Changement de statut** (Disponible, Occupé, Ne pas déranger, De retour bientôt, Absent, Hors
+  ligne, Réinitialiser), requête relevée dans le code de Teams (`setPresence` / `resetPresence`).
+  Prouvé en relisant `me/presence` : `forcedAvailability` doit porter le statut choisi et la même
+  échéance (l'activité du moment, une réunion, peut s'afficher par-dessus : ce n'est pas un échec).
+  Durées en heure locale : 30 min, 1 h, 2 h ; « aujourd'hui » jusqu'à 23:59:59 ; « cette semaine »
+  jusqu'à dimanche 23:59:59 ; « Personnalisé » à l'heure donnée. Rien n'est parti ou refus net : le
+  menu de la page, comme avant ; parti sans preuve : jamais refait (« vérifie dans Teams »).
 - La **recherche de messages** reste sur la page : elle passe par `substrate.office.com`, dont la
   page n'expose pas le jeton.
 
@@ -248,6 +255,6 @@ y est refusé).
 2. ~~Session chatsvc dans la page~~ (#121).
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
 4. ~~Écritures simples~~ (#128) ; restent la réponse citée et les mentions par le service.
-5. ~~Présence, mon statut, note, recherche de personnes~~ (cette PR) ; restent le changement de
-   disponibilité, la recherche de messages, la nouvelle conversation.
+5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
+   restent la recherche de messages, la nouvelle conversation.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).

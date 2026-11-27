@@ -2569,11 +2569,14 @@
     const fields = (p) => {
       p = p || {};
       const note = p.note || {};
+      const forced = p.forcedAvailability || {};
       return {
         availability: String(p.availability || ""),
         activity: String(p.activity || ""),
         ooo: Boolean(p.calendarData && p.calendarData.isOutOfOffice),
         note: { message: noteText(note.message), expiry: String(note.expiry || "") },
+        // Statut choisi par l'utilisateur (« forcé ») et son échéance ; vide : Teams décide.
+        forced: { availability: String(forced.availability || ""), expiry: String(forced.expiry || "") },
       };
     };
     const me = async () => {
@@ -2603,6 +2606,33 @@
       }
       return { ok: false, attempted: true, uncertain: true, error: "note non confirmée par le service de présence" };
     };
+    // Statut choisi (Disponible, Occupé…), comme le menu de Teams : `PUT me/forceavailability/`
+    // avec { availability, activity: "OffWork" pour Hors ligne, desiredExpirationTime } ; sans
+    // corps, le statut est réinitialisé (Teams décide à nouveau). Écrit une fois, puis relu.
+    const AVAILABILITY = ["Available", "Busy", "DoNotDisturb", "BeRightBack", "Away", "Offline"];
+    const writeForce = async (body, proven) => {
+      const w = await call("PUT", `${PRESENCE}/me/forceavailability/`, body);
+      if (!w.sent) return { ok: false, attempted: false, error: w.error };
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `statut refusé (HTTP ${w.status})` };
+      for (const wait of [0, 700, 1500]) {
+        if (wait) await sleep(wait);
+        const r = await me();
+        if (r.ok && proven(r)) return r;
+      }
+      return { ok: false, attempted: true, uncertain: true, error: "statut non confirmé par le service de présence" };
+    };
+    const force = async ({ availability, expiry } = {}) => {
+      const a = String(availability || "");
+      if (!AVAILABILITY.includes(a)) return { ok: false, attempted: false, error: "statut inconnu" };
+      const until = expiry == null || expiry === "" ? "" : String(expiry);
+      if (until && !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(until)) return { ok: false, attempted: false, error: "échéance du statut invalide" };
+      const body = { availability: a, ...(a === "Offline" ? { activity: "OffWork" } : {}), ...(until ? { desiredExpirationTime: until } : {}) };
+      // Preuve : le service garde CE statut comme choisi (l'activité du moment, une réunion par
+      // exemple, peut s'afficher par-dessus), et la même échéance à la minute près.
+      const sameExpiry = (got) => !until || Math.abs(Date.parse(got) - Date.parse(until)) < 60000;
+      return writeForce(body, (r) => r.forced.availability === a && sameExpiry(r.forced.expiry));
+    };
+    const reset = async () => writeForce(undefined, (r) => !r.forced.availability);
     // Personnes que Teams propose pour une saisie (comme « Nouvelle conversation »).
     const search = async ({ query, limit = 8 } = {}) => {
       const q = String(query || "").replace(/\s+/g, " ").trim().slice(0, 100);
@@ -2618,14 +2648,16 @@
         .slice(0, Math.max(1, Math.min(25, Number(limit) || 8)));
       return { ok: true, people };
     };
-    const run = { me, of, note, search };
+    const run = { me, of, note, search, force, reset };
+    const WRITES = ["note", "force", "reset"];
     return async (args) => {
       const kind = String((args && args.kind) || "");
       if (!run[kind]) return { ok: false, attempted: false, error: "opération inconnue" };
       try {
         return await run[kind](args || {});
       } catch (err) {
-        return { ok: false, attempted: kind === "note", uncertain: kind === "note", error: String((err && err.message) || err) };
+        const write = WRITES.includes(kind);
+        return { ok: false, attempted: write, uncertain: write, error: String((err && err.message) || err) };
       }
     };
   })();

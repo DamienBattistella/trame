@@ -906,6 +906,12 @@ const presenceServer = (p: any, state: any) => {
       state.me.note = { message: body.message, expiry: body.expiry };
       return fakeResponse("", { status: 200 });
     }
+    if (url.endsWith("/v1/me/forceavailability/")) {
+      if (state.refuse) return fakeResponse("{}", { status: state.refuse });
+      if (!state.ignore) state.me.forcedAvailability = body ? { availability: body.availability, expiry: body.desiredExpirationTime } : undefined;
+      if (body) state.me.availability = body.availability;
+      return fakeResponse("", { status: 200 });
+    }
     if (url.endsWith("/presence/getpresence/")) return fakeResponse(JSON.stringify(body.map((x: any) => ({ mri: x.mri, presence: { availability: "Busy", activity: "InAMeeting" } }))));
     if (url.includes("/users/searchV2")) return fakeResponse(JSON.stringify({ value: [{ displayName: "Ana Martin", mri: "8:orgid:ana", email: "ana@x" }, { displayName: "" }] }));
     return fakeResponse("{}", { status: 404 });
@@ -918,7 +924,7 @@ test("teamspeople : présence et note lues avec le bearer de Teams, rien d'autre
   await withTeamsBearer(p);
   const calls = presenceServer(p, { me: { availability: "Busy", activity: "InAMeeting", note: { message: "<p>Atelier &amp; démo</p><p>&nbsp;</p>", expiry: "2099-01-01T10:00:00.000Z" } } });
   const r = (await p.run("teamspeople", { kind: "me" })).result;
-  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, availability: "Busy", activity: "InAMeeting", ooo: false, note: { message: "Atelier & démo", expiry: "2099-01-01T10:00:00.000Z" } });
+  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, availability: "Busy", activity: "InAMeeting", ooo: false, note: { message: "Atelier & démo", expiry: "2099-01-01T10:00:00.000Z" }, forced: { availability: "", expiry: "" } });
   assert.equal(calls[0].url, "https://presence.teams.microsoft.com/v1/me/presence");
   assert.equal(calls[0].auth, "Bearer MT-SECRET");
   assert.ok(!/MT-SECRET/.test(JSON.stringify(r)));
@@ -945,6 +951,63 @@ test("teamspeople note : écrite avec l'échéance donnée, prouvée en relisant
   assert.equal(bad.ok, false);
   assert.equal(bad.attempted, false);
   assert.equal(calls.length, before);
+});
+
+test("teamspeople force : le statut choisi part comme le menu de Teams et se prouve en relisant", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const state: any = { me: { availability: "Available", activity: "Available" } };
+  const calls = presenceServer(p, state);
+  const r = (await p.run("teamspeople", { kind: "force", availability: "DoNotDisturb", expiry: "2099-01-01T10:00:00.000Z" })).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.forced.availability, "DoNotDisturb");
+  const put = calls.find((c) => c.method === "PUT")!;
+  assert.equal(put.url, "https://presence.teams.microsoft.com/v1/me/forceavailability/");
+  assert.equal(put.auth, "Bearer MT-SECRET");
+  assert.deepEqual(put.body, { availability: "DoNotDisturb", desiredExpirationTime: "2099-01-01T10:00:00.000Z" });
+  assert.ok(!/MT-SECRET/.test(JSON.stringify(r)));
+  // Hors ligne : l'activité « OffWork », comme Teams ; sans échéance : pas de desiredExpirationTime.
+  await p.run("teamspeople", { kind: "force", availability: "Offline", expiry: "" });
+  assert.deepEqual(calls.filter((c) => c.method === "PUT").pop()!.body, { availability: "Offline", activity: "OffWork" });
+});
+
+test("teamspeople reset : PUT sans corps, prouvé quand plus aucun statut n'est choisi", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const state: any = { me: { availability: "Busy", forcedAvailability: { availability: "Busy", expiry: "2099-01-01T10:00:00.000Z" } } };
+  const calls = presenceServer(p, state);
+  const r = (await p.run("teamspeople", { kind: "reset" })).result;
+  assert.equal(r.ok, true);
+  const put = calls.find((c) => c.method === "PUT")!;
+  assert.equal(put.body, null);
+});
+
+test("teamspeople force : statut inconnu ou échéance invalide, rien ne part ; refus net, attempted sans doute", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const state: any = { me: { availability: "Available" } };
+  const calls = presenceServer(p, state);
+  for (const args of [{ availability: "Lunch" }, { availability: "Busy", expiry: "ce soir" }]) {
+    const bad = (await p.run("teamspeople", { kind: "force", ...args })).result;
+    assert.equal(bad.ok, false);
+    assert.equal(bad.attempted, false);
+  }
+  assert.equal(calls.length, 0);
+  state.refuse = 403;
+  const refused = (await p.run("teamspeople", { kind: "force", availability: "Busy" })).result;
+  assert.equal(refused.ok, false);
+  assert.equal(refused.attempted, true);
+  assert.ok(!refused.uncertain);
+});
+
+test("teamspeople force : parti mais jamais relu tel quel, incertain (jamais refait)", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const state: any = { me: { availability: "Available" }, ignore: true };
+  presenceServer(p, state);
+  const r = (await p.run("teamspeople", { kind: "force", availability: "Away" })).result;
+  assert.equal(r.ok, false);
+  assert.equal(r.uncertain, true);
 });
 
 test("teamspeople search : requête en chaîne JSON sur le middletier du locataire, noms seulement", async () => {
