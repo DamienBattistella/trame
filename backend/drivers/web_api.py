@@ -365,6 +365,8 @@ class WebApiDriver:
     # groupe, « name:… » pour un tête-à-tête) : rien à migrer quand la page les montre ensuite.
     RECENT_DAYS = 30
     MAX_EXTRA = 150
+    # Nom affiché de tes notes quand elles viennent du service (Teams les nomme d'après toi).
+    SELF_NAME = "Mes notes"
 
     def _service_entities(self, known: Iterable[WatchEntity], start_rank: int) -> list[WatchEntity]:
         st = self._chat
@@ -374,6 +376,8 @@ class WebApiDriver:
         # Conversations déjà montrées par la page (celles ajoutées au tour précédent ne comptent pas).
         seen_cids = {c for t, c in st.mapped.items() if t in seen_ids}
         seen_names = {e.display_name.casefold() for e in known if e.surface == Surface.dm}
+        # Tes notes (conversation avec toi-même) : ajoutées seulement si la page n'en montre aucune.
+        self_shown = any(e.is_self for e in known)
         dm_count: dict[str, int] = {}
         for r in list(st.rows.values()):
             if r.get("kind") == "dm" and r.get("name"):
@@ -391,6 +395,8 @@ class WebApiDriver:
                 continue
             if r.get("kind") == "group" and str(r.get("topic") or "").strip():
                 tid, name, surface = f"title-{cid}", str(r["topic"]).strip(), Surface.group
+            elif r.get("kind") == "self" and cid == "48:notes" and not self_shown:
+                tid, name, surface = "48:notes", self.SELF_NAME, Surface.dm
             elif r.get("kind") == "dm" and r.get("name") and dm_count.get(str(r["name"]).casefold()) == 1:
                 name = str(r["name"]).strip()
                 if name.casefold() in seen_names:
@@ -408,7 +414,8 @@ class WebApiDriver:
                 kinds.setdefault(tid, surface)
             last = r.get("last") or {}
             out.append(WatchEntity(thread_id=tid, display_name=name, surface=surface, rank=start_rank + len(out),
-                                   last_activity=_list_label(last.get("ts")), unread=self._unread(r)))
+                                   last_activity=_list_label(last.get("ts")), unread=self._unread(r),
+                                   is_self=tid == "48:notes"))
             if len(out) >= self.MAX_EXTRA:
                 break
         return out
