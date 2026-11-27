@@ -375,3 +375,16 @@ def test_read_history_api_sends_the_teams_id_without_the_list_prefix():
     d._rpc = lambda op, **kw: sent.update(kw) or {"ok": True, "messages": [], "top": True}
     d.read_history_api("title-19:abc123@thread.v2", 10)
     assert sent["thread"] == "19:abc123@thread.v2"
+
+
+def test_preview_of_a_row_drawn_later_is_not_a_new_message_unless_from_today():
+    # Constaté en direct : la liste de Teams dessine des lignes en défilant ; leur aperçu
+    # (message du 10/11) était annoncé comme nouveau au démarrage.
+    w = PreviewWatcher()
+    convs = {t: WatchEntity(thread_id=t, display_name=t, surface=Surface.dm) for t in ("a", "b", "c")}
+    w.diff([("a", "Chat Alice Away Last message salut 10:00")], convs)
+    assert w.diff([("a", "Chat Alice Away Last message salut 10:00"),
+                   ("b", "Chat Bob Away Last message vieux message 10/11")], convs) == []
+    # Une conversation vraiment nouvelle, avec un message d'aujourd'hui, est annoncée.
+    new = w.diff([("c", "Chat Carole Away Last message tu es dispo ? 13:41")], convs)
+    assert [m.text for m in new] == ["tu es dispo ?"]

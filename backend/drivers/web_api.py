@@ -27,6 +27,16 @@ from models import IncomingMessage, Surface, WatchEntity
 _OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
 
 
+def _newer(lid: str, prev: Optional[str]) -> bool:
+    """Ids de messages Teams : des horodatages en ms, croissants. Sans précédent : nouveau."""
+    if not prev:
+        return True
+    try:
+        return int(lid) > int(prev)
+    except ValueError:
+        return lid != prev
+
+
 class _ChatState:
     """Ce que le service de chat a dit de la liste : lignes par id Teams, syncState pour la
     prochaine lecture incrémentale, dernier message vu par conversation."""
@@ -49,6 +59,8 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread"})
+    # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
+    CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
 
     def __init__(self, inner: TeamsDriver) -> None:
@@ -215,9 +227,10 @@ class WebApiDriver:
             st.seen_last[cid] = lid
             if st.primed_at is None or prev == lid:
                 continue
-            # Conversation reliée depuis le premier passage : son message ne compte que s'il est
-            # arrivé après ce premier passage (jamais une rafale d'anciens messages).
-            if prev is None and int(last.get("ts") or 0) / 1000 < st.primed_at:
+            # Nouveau seulement s'il est arrivé depuis le début de la surveillance ET plus récent que
+            # le précédent : le dernier message d'une conversation peut redevenir un plus ancien (le
+            # dernier supprimé, une conversation reliée plus tard) — jamais un ancien message rejoué.
+            if int(last.get("ts") or 0) / 1000 < st.primed_at - self.CLOCK_SKEW or not _newer(lid, prev):
                 continue
             if not last.get("user") or (st.me and last.get("from") == st.me):
                 continue

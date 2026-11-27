@@ -139,3 +139,24 @@ def test_refusal_falls_back_to_the_page_exactly_and_restarts_with_a_full_list():
     page.fail = None
     tick(d)
     assert page.syncs[-1] == ""  # reprise par une liste complète
+
+
+def test_last_message_going_back_to_an_older_one_is_not_a_new_message():
+    # Le dernier message supprimé : la conversation redonne le précédent (plus ancien).
+    page = FakePage([row(GROUP, "group", "Projet X", 9_999_999_999_000)])
+    d = WebApiDriver(page)
+    tick(d)
+    page.rows = [row(GROUP, "group", "Projet X", 9_999_999_998_000, text="message d'avant")]
+    assert tick(d) == []
+
+
+def test_old_messages_are_never_replayed_when_a_conversation_is_linked_later():
+    # Constaté en direct : des messages du 10/11 et du 16/11 annoncés au démarrage.
+    page = FakePage([row(GROUP, "group", "Projet X", 1000)])
+    d = WebApiDriver(page)
+    tick(d)
+    page.rows = [row(GROUP, "group", "Projet X", 1000), row(DM, "dm", "Ana Martin", 1_731_200_000_000, text="vieux")]
+    assert tick(d) == []
+    # Et même si un ancien message remplace un autre ancien message, rien n'est annoncé.
+    page.rows = [row(GROUP, "group", "Projet X", 1_731_300_000_000), row(DM, "dm", "Ana Martin", 1_731_200_000_000)]
+    assert tick(d) == []
