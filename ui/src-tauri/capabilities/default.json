@@ -38,6 +38,7 @@
     "allow-teams-web-visible",
     "allow-teams-web-close",
     "allow-teams-web-eval",
-    "allow-notify"
+    "allow-notify",
+    "allow-set-tray-badge"
   ]
 }

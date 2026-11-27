@@ -14,7 +14,7 @@ import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 import { isSwitcherKey, overlayOpen, requestSwitcher, sectionFromKey } from "@/lib/shortcuts";
 import type { PanelTab } from "@/panel/Panel";
 import { toast } from "sonner";
-import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart } from "@/desktop";
+import { isDesktop, onDesktopEvent, onTrayTogglePause, restartBackend, setAutostart, setTrayBadge } from "@/desktop";
 import { cn } from "@/lib/utils";
 import { UndoAutoToasts } from "@/components/UndoAuto";
 
@@ -72,6 +72,10 @@ export default function App() {
   const togglePauseRef = useRef(togglePause);
   togglePauseRef.current = togglePause;
   useEffect(() => onTrayTogglePause(() => togglePauseRef.current(!pausedRef.current)), []);
+  // Pastille de l'icône de la zone de notification, comme Teams : une conversation attend
+  // tant qu'elle est non lue ou qu'un brouillon est à relire. Moteur injoignable : éteinte.
+  const pending = trame.connected ? pendingCount(trame.state.watchlist, trame.state.drafts) : 0;
+  useEffect(() => void setTrayBadge(pending), [pending]);
   // Mise à jour au lancement (faite par l'application de bureau) : on prévient, sans rien demander.
   // Celles trouvées ensuite (toutes les 15 min) allument l'icône de mise à jour de l'en-tête (UpdateLed).
   useEffect(() => {
@@ -229,6 +233,12 @@ export default function App() {
  * le démarrage et l'écran « moteur injoignable » s'en chargent) ; « Données d'exemple »
  * en démo navigateur. Teams déconnecté ou modifié a son propre bandeau dans le panneau.
  */
+function pendingCount(watchlist: { threadId: string; unread?: boolean }[], drafts: { threadId: string }[]): number {
+  const ids = new Set(drafts.map((d) => d.threadId));
+  for (const c of watchlist) if (c.unread) ids.add(c.threadId);
+  return ids.size;
+}
+
 function ConnectionBadge({ connected, demo, lost }: { connected: boolean; demo: boolean; lost: boolean }) {
   const state = demo ? "demo" : !connected && lost ? "offline" : null;
   return (

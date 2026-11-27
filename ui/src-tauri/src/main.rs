@@ -14,6 +14,10 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct Backend(Mutex<Option<CommandChild>>);
 
+/// Icône de la zone de notification sans pastille (variante essai comprise), d'où
+/// `set_tray_badge` repart à chaque changement.
+struct TrayBase(Mutex<Option<tauri::image::Image<'static>>>);
+
 static UPDATING: AtomicBool = AtomicBool::new(false);
 
 struct UpdateGuard;
@@ -144,6 +148,58 @@ fn trial_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
         px[2] = (l / 8) as u8;
     }
     tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+}
+
+/// Pastille rouge en haut à droite, comme Teams quand un message attend : un disque
+/// d'environ 40 % de l'icône, lissé sur ses bords, cerclé d'un liseré transparent pour
+/// se détacher du logo sur toutes les couleurs de barre des tâches.
+fn badge_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let (w, h) = (icon.width() as usize, icon.height() as usize);
+    let mut rgba = icon.rgba().to_vec();
+    let r = w.min(h) as f32 * 0.21;
+    let ring = (w.min(h) as f32 * 0.06).max(1.0);
+    let (cx, cy) = (w as f32 - r - 0.5, r + 0.5);
+    let (red, green, blue) = (0xC4u8, 0x31u8, 0x4Bu8);
+    for y in 0..h {
+        for x in 0..w {
+            let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let px = &mut rgba[(y * w + x) * 4..(y * w + x) * 4 + 4];
+            // Liseré : on efface le logo autour du disque.
+            let clear = (r + ring + 0.5 - d).clamp(0.0, 1.0);
+            px[3] = (px[3] as f32 * (1.0 - clear)) as u8;
+            // Disque : couverture anti-crénelée, composée par-dessus ce qui reste.
+            let cover = (r + 0.5 - d).clamp(0.0, 1.0);
+            if cover > 0.0 {
+                let a = px[3] as f32 / 255.0;
+                let out = cover + a * (1.0 - cover);
+                let mix = |c: u8, b: u8| ((c as f32 * cover + b as f32 * a * (1.0 - cover)) / out) as u8;
+                px[0] = mix(red, px[0]);
+                px[1] = mix(green, px[1]);
+                px[2] = mix(blue, px[2]);
+                px[3] = (out * 255.0) as u8;
+            }
+        }
+    }
+    tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+}
+
+/// Pastille de l'icône de la zone de notification : allumée tant qu'au moins une
+/// conversation attend (non lue ou brouillon à relire), avec le compte dans l'infobulle.
+#[tauri::command]
+fn set_tray_badge(app: AppHandle, count: u32) -> Result<(), String> {
+    let base = app.state::<TrayBase>().0.lock().map_err(|e| e.to_string())?.clone();
+    let (Some(base), Some(tray)) = (base, app.tray_by_id("main")) else {
+        return Ok(());
+    };
+    let icon = if count > 0 { badge_icon(&base) } else { base };
+    tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
+    let name = if is_trial(&app) { "Trame (essai)" } else { "Trame" };
+    let tip = match count {
+        0 => name.to_string(),
+        1 => format!("{name} · 1 conversation en attente"),
+        n => format!("{name} · {n} conversations en attente"),
+    };
+    tray.set_tooltip(Some(tip)).map_err(|e| e.to_string())
 }
 
 /// Start the Python engine (sidecar). A missing or quarantined engine must not take
@@ -506,6 +562,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(Backend(Mutex::new(None)))
+        .manage(TrayBase(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             restart_backend,
             check_update,
@@ -518,7 +575,8 @@ fn main() {
             teams_web_eval,
             teams_bridge_reply,
             teams_type_trusted,
-            notify
+            notify,
+            set_tray_badge
         ])
         .setup(|app| {
             spawn_backend(app.handle());
@@ -536,6 +594,8 @@ fn main() {
                     let _ = w.set_icon(icon.clone());
                 }
             }
+            *app.state::<TrayBase>().0.lock().unwrap() =
+                Some(tauri::image::Image::new_owned(icon.rgba().to_vec(), icon.width(), icon.height()));
             TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip(if is_trial(app.handle()) { "Trame (essai)" } else { "Trame" })

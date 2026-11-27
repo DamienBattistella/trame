@@ -152,6 +152,15 @@ export function onDesktopEvent<T = unknown>(name: string, cb: (payload: T) => vo
   };
 }
 
+/** Pastille de l'icône de la zone de notification : `count` conversations en attente (0 l'éteint). */
+export async function setTrayBadge(count: number): Promise<void> {
+  try {
+    await tauri()?.core?.invoke("set_tray_badge", { count });
+  } catch {
+    /* hors application, ou application plus ancienne sans pastille */
+  }
+}
+
 export function onTrayTogglePause(cb: () => void): () => void {
   let unlisten: (() => void) | undefined;
   tauri()?.event?.listen("tray-toggle-pause", cb).then((u) => (unlisten = u));
