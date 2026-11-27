@@ -399,6 +399,17 @@ export interface FactCheck {
 export interface ReceivedFile {
   name: string;
   url: string;
+  /** « video » : lue dans Trame (lien de partage résolu en téléchargement direct). */
+  kind?: "video" | "";
+}
+
+/** Téléchargement direct d'un fichier reçu : adresse pré-signée par SharePoint pour ce
+ *  fichier seul, valable environ une heure. Jamais enregistrée. */
+export interface FileLink {
+  name: string;
+  size: number;
+  mime: string;
+  url: string;
 }
 
 /** Image d'un message reçu ; `data` absent quand Teams ne l'affichait pas à la lecture. */

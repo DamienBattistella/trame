@@ -60,6 +60,7 @@ const teamsPage = () => {
     document: doc,
     URL,
     URLSearchParams,
+    btoa, // API du navigateur (filelink encode le lien de partage pour Graph)
     atob,
     // Comme la vraie page Teams (Trusted Types) : DOMParser refuse une chaîne HTML brute.
     DOMParser: class {
@@ -465,6 +466,78 @@ test("chatread remonte l'échec du service pour que le moteur lise la page", asy
   assert.equal(r.result.status, 403);
 });
 
+test("chatread : une vidéo jointe porte kind « video », un document non", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const T = Date.UTC(2026, 10, 27, 9, 0);
+  const files = JSON.stringify([
+    { fileName: "demo.mp4", fileType: "mp4", objectUrl: "https://example-my.sharepoint.com/personal/a/Documents/demo.mp4" },
+    { fileName: "notes.pdf", fileType: "pdf", objectUrl: "https://example-my.sharepoint.com/personal/a/Documents/notes.pdf" },
+  ]);
+  const page = { messages: [msg(T, "", { properties: { files } })], _metadata: {} };
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse(JSON.stringify(page))));
+  const r = await p.run("chatread", { thread: "19:a@thread.v2", last: 5 });
+  assert.deepEqual(JSON.parse(JSON.stringify(r.result.messages[0].files)), [
+    { name: "demo.mp4", url: "https://example-my.sharepoint.com/personal/a/Documents/demo.mp4", kind: "video" },
+    { name: "notes.pdf", url: "https://example-my.sharepoint.com/personal/a/Documents/notes.pdf" },
+  ]);
+});
+
+// --- Lien de téléchargement d'un fichier joint (op filelink) ---------------------------
+const SHARE = "https://example-my.sharepoint.com/:v:/g/personal/a/IQAxDemo";
+// Teams appelle lui-même Graph pour l'aperçu d'un fichier : c'est là que la page apprend l'auth.
+const withGraphBearer = async (p: any) => {
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/shares/u!x/driveItem/preview", {
+    method: "POST",
+    headers: { authorization: "Bearer GRAPH-SECRET" },
+  });
+  await new Promise((r) => setImmediate(r));
+};
+
+test("filelink sans auth Graph : no_auth, sans appeler Graph", async () => {
+  const p = teamsPage();
+  const before = p.fetchCalls.length;
+  const r = await p.run("filelink", { url: SHARE });
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.reason, "no_auth");
+  assert.equal(p.fetchCalls.length, before);
+});
+
+test("filelink refuse un lien hors SharePoint / OneDrive sans appel réseau", async () => {
+  const p = teamsPage();
+  await withGraphBearer(p);
+  const before = p.fetchCalls.length;
+  for (const url of ["https://evil.example.com/x.mp4", "http://example-my.sharepoint.com/x", "https://sharepoint.com.evil.com/x"]) {
+    const r = await p.run("filelink", { url });
+    assert.equal(r.result.ok, false, url);
+  }
+  assert.equal(p.fetchCalls.length, before);
+});
+
+test("filelink : Graph signé sans cookies, seule l'adresse pré-signée sort de la page", async () => {
+  const p = teamsPage();
+  await withGraphBearer(p);
+  const download = "https://example-my.sharepoint.com/personal/a/_layouts/15/download.aspx?UniqueId=1&tempauth=T";
+  p.setResponse(fakeResponse(JSON.stringify({ name: "demo.mp4", size: 2048, file: { mimeType: "video/mp4" }, "@microsoft.graph.downloadUrl": download })));
+  const before = p.fetchCalls.length;
+  const r = await p.run("filelink", { url: SHARE });
+  assert.deepEqual(JSON.parse(JSON.stringify(r.result)), { ok: true, name: "demo.mp4", size: 2048, mime: "video/mp4", url: download });
+  const call = p.fetchCalls.slice(before)[0];
+  const share = "u!" + Buffer.from(SHARE).toString("base64").replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
+  assert.equal(call.url, `https://graph.microsoft.com/v1.0/shares/${share}/driveItem`);
+  assert.equal(call.init.credentials, "omit"); // Graph refuse un appel avec cookies (CORS)
+  assert.equal(call.init.headers.Authorization, "Bearer GRAPH-SECRET");
+  assert.ok(!JSON.stringify(r).includes("GRAPH-SECRET"));
+});
+
+test("filelink refuse une adresse de téléchargement hors SharePoint", async () => {
+  const p = teamsPage();
+  await withGraphBearer(p);
+  p.setResponse(fakeResponse(JSON.stringify({ name: "x.mp4", "@microsoft.graph.downloadUrl": "https://evil.example.com/x.mp4" })));
+  const r = await p.run("filelink", { url: SHARE });
+  assert.equal(r.result.ok, false);
+  assert.ok(!JSON.stringify(r).includes("evil.example.com"));
+});
 
 // --- Liste des conversations par le service de chat (op chatlist) ------------------------
 const ME_GUID = "11111111-2222-3333-4444-555555555555";

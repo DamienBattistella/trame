@@ -92,3 +92,18 @@ test("tableau d'une seule colonne : texte, pas de Markdown", () => {
   const root = parse("<div><table><tr><td>a</td></tr><tr><td>b</td></tr></table></div>").childNodes[0] as MiniElement;
   assert.equal(messageParts(root).text, "a\nb");
 });
+
+test("vidéo jointe : ni son nom ni le texte d'attente de Teams dans le texte du message", () => {
+  const files = parse(readFileSync(new URL("./fixtures/teams-message-files.html", import.meta.url), "utf8"));
+  const find = (el: MiniElement): MiniElement | null => {
+    if (el.getAttribute("data-tid") === "chat-pane-message" && el.getAttribute("data-mid") === "1006") return el;
+    for (const c of el.childNodes) if (c.nodeType === 1) {
+      const hit = find(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  // Comme partsOf : la bulle du message (chat-pane-message), où Teams pose la grille des pièces jointes.
+  const p = messageParts(find(files)!);
+  assert.equal(p.text, "La démo du compte-rendu");
+});

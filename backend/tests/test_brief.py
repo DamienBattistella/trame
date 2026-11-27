@@ -92,7 +92,9 @@ def test_brief_happy_path_with_github(make_client, fake_gh):
     assert len(brain.prompts) == 1
     searches = [c for c in fake_gh.calls if c[0] == "search"]
     assert searches and all("--owner" in c and "acme" in c for c in searches)
-    assert not any(c[0] in ("api",) or c[1:2] in (["create"], ["comment"], ["edit"]) for c in fake_gh.calls)
+    # Only reads: the account and its orgs (search scope), never a write.
+    assert not any((c[0] == "api" and c[1] not in ("user", "user/orgs")) or c[1:2] in (["create"], ["comment"], ["edit"])
+                   for c in fake_gh.calls)
     assert any("Résumé généré pour Lucas Bernard" in log.text for log in watcher.state.logs)
 
 

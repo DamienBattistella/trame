@@ -165,6 +165,8 @@
   // de la page, il ne doit sortir ni vers un autre domaine ni (pour l'auth) vers le moteur.
   const API_HOSTS =
     /(^|\.)(teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|msg\.teams\.microsoft\.com|asyncgw\.teams\.microsoft\.com|presence\.teams\.microsoft\.com|substrate\.office\.com|graph\.microsoft\.com|outlook\.office365\.com|teams\.events\.data\.microsoft\.com)$/i;
+  // Hôtes des fichiers joints (liens de partage, téléchargements pré-signés) : `filelink`.
+  const FILE_HOSTS = /(^|\.)(sharepoint\.com|onedrive\.live\.com|onedrive\.com|1drv\.ms)$/i;
   // En-têtes d'authentification : on note leur PRÉSENCE, jamais leur valeur, et webfetch
   // refuse de les poser (c'est la page, pas le moteur, qui porte l'auth).
   const AUTH_HEADER = /^(authorization|authentication|cookie|x-skypetoken|x-ms-\S*token|.*[-_]?token|.*bearer.*)$/i;
@@ -1545,7 +1547,9 @@
         }
         if (n.nodeType !== 1) return;
         const t = tag(n);
-        if (SKIP.has(t) || SKIP_ROLES.has(attr(n, "role")) || isCard(n)) return;
+        // Pièces jointes : lues à part (messageFiles) ; leur grille porte aussi le texte
+        // d'attente de Teams (« Le chargement est en cours… »), jamais celui du message.
+        if (SKIP.has(t) || SKIP_ROLES.has(attr(n, "role")) || isCard(n) || attr(n, "data-tid") === "file-attachment-grid") return;
         if (t === "BR") {
           out += "\n";
           return;
@@ -1685,13 +1689,31 @@
     const fold = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
     const isGrid = (el) => attr(el, "data-tid") === "file-attachment-grid";
     const isBody = (el) => attr(el, "data-tid") === "chat-pane-message";
+    const isCard = (el) => attr(el, "role") === "group" && Boolean(attr(el, "aria-label").trim());
+    // Puce de fichier (vidéo Stream, notamment) : pas de carte « group », un bouton dont le
+    // title porte « nom \n lien ». Son aria-label (« Pièce jointe nom. Appuyez… ») ne sert pas de nom.
+    const isChiclet = (el) => attr(el, "data-testid") === "file-attachment" && !isCard(el);
+    const VIDEO = /\.(mp4|m4v|mov|webm|wmv|avi|mkv)$/i;
+    const kindOf = (el, name) => (/video/i.test(attr(el, "filepreviewtype")) || VIDEO.test(name) ? "video" : "");
     const filesOf = (root) => {
-      const cards = all(root, isGrid).flatMap((grid) => all(grid, (el) => attr(el, "role") === "group" && attr(el, "aria-label").trim()));
-      return Array.from(new Set(cards)).map((card) => {
-        const title = attr(all(card, (el) => attr(el, "data-testid") === "content-card-custom-title")[0], "aria-label");
-        const url = (title.match(/https:\/\/\S+/) || [""])[0];
-        return { name: attr(card, "aria-label").trim(), url, labels: [attr(card, "aria-label"), attr(card, "title"), title].filter(Boolean) };
-      });
+      const grids = all(root, isGrid);
+      const cards = Array.from(new Set(grids.flatMap((grid) => all(grid, isCard))));
+      const inCard = new Set(cards.flatMap((card) => all(card, isChiclet)));
+      const chiclets = Array.from(new Set(grids.flatMap((grid) => all(grid, isChiclet)))).filter((el) => !inCard.has(el));
+      return [
+        ...cards.map((card) => {
+          const title = attr(all(card, (el) => attr(el, "data-testid") === "content-card-custom-title")[0], "aria-label");
+          const url = (title.match(/https:\/\/\S+/) || [""])[0];
+          const name = attr(card, "aria-label").trim();
+          return { name, url, kind: kindOf(card, name), labels: [attr(card, "aria-label"), attr(card, "title"), title].filter(Boolean) };
+        }),
+        ...chiclets.map((el) => {
+          const [first = "", ...rest] = attr(el, "title").split(/\r?\n/);
+          const name = first.trim() || attr(el, "data-tid").replace(/^file-chiclet-/, "").trim();
+          const url = (rest.join(" ").match(/https:\/\/\S+/) || [""])[0];
+          return { name, url, kind: kindOf(el, name), labels: [attr(el, "title"), attr(el, "aria-label")].filter(Boolean) };
+        }),
+      ].filter((f) => f.name);
     };
     const imagesOf = (root) =>
       all(root, isBody).flatMap((body) =>
@@ -1730,7 +1752,7 @@
         return !(i >= 0 && imgs.splice(i, 1).length > 0);
       });
     };
-    return { filesOf: (root) => filesOf(root).map(({ name, url }) => ({ name, url })), imagesOf, missing, sameFile };
+    return { filesOf: (root) => filesOf(root).map(({ name, url, kind }) => (kind ? { name, url, kind } : { name, url })), imagesOf, missing, sameFile };
   })();
   // <<< message-files
   const filesOf = messageFiles.filesOf;
@@ -1787,6 +1809,78 @@
       return null;
     }
   };
+  // >>> thread-climb
+  // Lit le fil affiché de la fin vers le début. Teams ne dessine qu'une fenêtre du fil et
+  // rouvre une conversation là où on l'avait laissée : on descend d'abord tout en bas
+  // (jusqu'à ce que Teams ne charge plus rien), puis on remonte par pas qui se recouvrent.
+  // Une vue ne s'ajoute que si elle recoupe ce qui est déjà lu : sans message commun, Teams
+  // a sauté plus loin que l'écran lu (des messages manqueraient au milieu), alors on
+  // redescend d'un demi-pas pour retrouver le raccord, et sinon on s'arrête là plutôt que
+  // de laisser un trou. `snap()` : messages affichés, dans l'ordre, chacun avec sa `key`.
+  // `enough(acc)` : assez lu. top : le début de la conversation est atteint.
+  const climb = async (box, snap, enough, late = () => false, budget = 20000) => {
+    if (!box) {
+      const acc = snap();
+      return { acc, top: !enough(acc), gap: false };
+    }
+    const end = Date.now() + budget;
+    // En bas : stable quand ni la hauteur ni le dernier message dessiné ne bougent plus
+    // (Teams dessine après le défilement, et charge parfois des messages plus récents).
+    for (let seen = "", tries = 0; tries < 12; tries++) {
+      box.scrollTop = box.scrollHeight;
+      await sleep(250);
+      const view = snap();
+      const now = `${box.scrollHeight}|${view.length ? view[view.length - 1].key : ""}`;
+      if (now === seen) break;
+      seen = now;
+    }
+    let acc = snap();
+    // "more" : des messages plus anciens ajoutés ; "gap" : vue sans message commun.
+    const merge = () => {
+      const known = new Set(acc.map((m) => m.key));
+      const view = snap();
+      const cut = view.findIndex((m) => known.has(m.key));
+      if (cut < 0) return view.length ? "gap" : "";
+      const older = view.slice(0, cut).filter((m) => !known.has(m.key));
+      if (older.length) acc = [...older, ...acc];
+      return older.length ? "more" : "";
+    };
+    const step = () => Math.max(120, Math.floor(box.clientHeight * 0.6));
+    let top = false;
+    let gap = false;
+    for (let stalls = 0; !enough(acc) && Date.now() < end && !late(); ) {
+      const height = box.scrollHeight;
+      const atTop = box.scrollTop <= 0;
+      if (atTop) {
+        // Teams charge la suite quand on arrive en haut : un petit aller-retour pour qu'il
+        // voie un défilement même si l'on y est déjà.
+        box.scrollTop = Math.min(200, height);
+        await sleep(50);
+        box.scrollTop = 0;
+      } else box.scrollTop = Math.max(0, box.scrollTop - step());
+      let res = "";
+      await waitFor(() => (res = merge()) === "more" || box.scrollHeight !== height, atTop ? 1500 : 400);
+      res = merge() || res;
+      if (res === "gap") {
+        box.scrollTop = Math.min(box.scrollHeight, box.scrollTop + Math.floor(step() / 2));
+        await sleep(200);
+        if (merge() === "gap") {
+          gap = true;
+          break;
+        }
+      }
+      if (res === "more" || box.scrollHeight !== height) stalls = 0;
+      else if (atTop && ++stalls >= 3) {
+        // Trois essais en haut sans rien de nouveau : c'est le début de la conversation.
+        // Une limite de temps atteinte, elle, ne dit rien du début (top reste faux).
+        top = true;
+        break;
+      }
+    }
+    box.scrollTop = box.scrollHeight;
+    return { acc, top, gap };
+  };
+  // <<< thread-climb
   // Après la lecture, seuls les messages encore affichés ont leurs images dans la page :
   // les plus récents d'abord, dans la limite du nombre et du poids. Les autres restent
   // « image » sans aperçu (à voir dans Teams).
@@ -1870,9 +1964,15 @@
     // Images collées dans le corps : servies par le stockage de Teams (AMS).
     const amsImages = (root) =>
       all(root, (el) => String(el.tagName || "").toUpperCase() === "IMG" && /AMSImage/i.test(attr(el, "itemtype"))).map((el) => attr(el, "src"));
+    const VIDEO_FILE = /^(mp4|m4v|mov|webm|wmv|avi|mkv)$/i;
     const filesFrom = (props) =>
       (parseJson(props && props.files) || [])
-        .map((f) => ({ name: String((f && (f.fileName || f.title)) || "").trim(), url: String((f && (f.objectUrl || (f.fileInfo && f.fileInfo.shareUrl))) || "") }))
+        .map((f) => {
+          const name = String((f && (f.fileName || f.title)) || "").trim();
+          const url = String((f && (f.objectUrl || (f.fileInfo && f.fileInfo.shareUrl))) || "");
+          const type = String((f && f.fileType) || name.split(".").pop() || "");
+          return VIDEO_FILE.test(type) ? { name, url, kind: "video" } : { name, url };
+        })
         .filter((f) => f.name);
     const cardsFrom = (props) =>
       (parseJson(props && props.links) || [])
@@ -2750,7 +2850,8 @@
     // peut ni fournir ni lire un credential ; il ne reçoit que des données métier. Si aucun
     // credential n'a encore été observé pour l'hôte, l'appel part en cookies seuls (et pourra
     // échouer en 401 → repli DOM côté moteur).
-    webfetch: async ({ url, method = "GET", body = null, headers = null, json = true, sign = true }) => {
+    // cookies : false pour Graph, qui refuse un appel avec cookies (CORS « * ») ; le jeton signe seul.
+    webfetch: async ({ url, method = "GET", body = null, headers = null, json = true, sign = true, cookies = true }) => {
       let u;
       try {
         u = new URL(String(url || ""), location.origin);
@@ -2759,7 +2860,7 @@
       }
       if (u.protocol !== "https:") return { ok: false, error: "https requis" };
       if (!API_HOSTS.test(u.hostname)) return { ok: false, error: `hôte non autorisé : ${u.hostname}` };
-      const init = { method: String(method || "GET").toUpperCase(), credentials: "include", headers: {} };
+      const init = { method: String(method || "GET").toUpperCase(), credentials: cookies ? "include" : "omit", headers: {} };
       if (headers && typeof headers === "object")
         for (const [k, v] of Object.entries(headers)) {
           // Seuls des en-têtes métier : tout en-tête d'auth venant du moteur est ignoré.
@@ -2801,6 +2902,55 @@
         out.text = clipped;
       }
       return out;
+    },
+    // Lien de téléchargement d'un fichier joint (vidéo à lire dans Trame, fichier à
+    // enregistrer) : le lien de partage SharePoint / OneDrive est résolu par Graph, comme
+    // Teams le fait lui-même pour l'aperçu (POST /shares/{id}/driveItem/preview), signé
+    // dans la page. Graph rend une adresse de téléchargement pré-signée par SharePoint,
+    // propre à ce fichier et valable environ une heure : c'est elle seule qui sort de la
+    // page (jamais le jeton Graph), et elle n'est jamais journalisée.
+    // Graph n'est signable qu'une fois que Teams l'a lui-même appelé dans cette page (il le
+    // fait en chargeant l'aperçu d'une vidéo). Sans auth : `no_auth`, ou, avec show, la vidéo
+    // de la conversation ouverte est amenée à l'écran le temps que Teams charge son aperçu.
+    filelink: async ({ url, show = false }) => {
+      let u;
+      try {
+        u = new URL(String(url || ""));
+      } catch {
+        return { ok: false, error: "lien illisible" };
+      }
+      if (u.protocol !== "https:" || !FILE_HOSTS.test(u.hostname)) return { ok: false, error: "lien hors SharePoint / OneDrive" };
+      const share = "u!" + btoa(unescape(encodeURIComponent(u.toString()))).replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
+      const api = `https://graph.microsoft.com/v1.0/shares/${share}/driveItem`;
+      if (!apiCapture.credsFor(api)) {
+        if (!show) return { ok: false, reason: "no_auth", error: "Teams n'a pas encore ouvert de fichier dans cette session" };
+        // Le jeton Graph n'est pas propre au fichier : à défaut du fichier voulu (le service de
+        // chat donne parfois son adresse directe, la page son lien de partage), n'importe quel
+        // fichier de la conversation fait charger un aperçu par Teams.
+        const cards = Array.from(document.querySelectorAll('[data-testid="file-attachment"], [data-tid="file-attachment-grid"] [role="group"]'));
+        const mentions = (el) => ["title", "aria-label"].some((k) => (el.getAttribute(k) || "").includes(u.toString()));
+        const card = cards.find(mentions) || cards[cards.length - 1];
+        if (!card) return { ok: false, reason: "no_auth", error: "aucun fichier affiché dans la conversation" };
+        card.scrollIntoView({ block: "center" });
+        for (let i = 0; i < 40 && !apiCapture.credsFor(api); i++) await sleep(250);
+        if (!apiCapture.credsFor(api)) return { ok: false, reason: "no_auth", error: "Teams n'a pas chargé l'aperçu du fichier" };
+      }
+      const r = await ops.webfetch({ url: api, method: "GET", sign: true, json: true, cookies: false });
+      if (!r || !r.ok) {
+        const status = (r && r.status) || 0;
+        if (status === 401 && !show) return { ok: false, reason: "no_auth", error: "autorisation Graph expirée" };
+        return { ok: false, status, error: status === 401 || status === 403 ? "accès au fichier refusé" : status === 404 ? "fichier introuvable" : (r && r.error) || `Graph ${status}` };
+      }
+      const item = r.json || {};
+      const link = String(item["@microsoft.graph.downloadUrl"] || "");
+      let dl;
+      try {
+        dl = new URL(link);
+      } catch {
+        return { ok: false, error: "pas de lien de téléchargement" };
+      }
+      if (dl.protocol !== "https:" || !FILE_HOSTS.test(dl.hostname)) return { ok: false, error: "lien de téléchargement inattendu" };
+      return { ok: true, name: String(item.name || ""), size: Number(item.size) || 0, mime: String((item.file && item.file.mimeType) || ""), url: dl.toString() };
     },
     // deep : Teams ne dessine que le début de la liste. On la fait défiler jusqu'en bas
     // pour charger la suite, en cumulant ce qui passe, puis on revient où elle était.
@@ -3094,17 +3244,6 @@
         // Teams intercale des éléments vides (avatar seul) : sans texte, fichier ni image,
         // ils se ressembleraient tous et fausseraient la fusion.
         .filter((m) => m.text || m.files.length || m.images || m.cards.length);
-      // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
-      // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
-      let acc = snap();
-      const merge = () => {
-        const known = new Set(acc.map((m) => m.key));
-        const view = snap();
-        const cut = view.findIndex((m) => known.has(m.key));
-        const older = (cut < 0 ? view : view.slice(0, cut)).filter((m) => !known.has(m.key));
-        if (older.length) acc = [...older, ...acc];
-        return older.length > 0;
-      };
       const box = (() => {
         for (let el = document.querySelector(MSGS); el && el !== document.body; el = el.parentElement) {
           if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
@@ -3112,28 +3251,8 @@
         return null;
       })();
       // Plus ancien message daté déjà lu : au-delà de `since`, inutile de remonter.
-      const pastSince = () => since != null && acc.some((m) => m.ts != null && m.ts < since);
-      const more = () => acc.length < last && !pastSince();
-      let top = !box && more();
-      if (box && more()) {
-        // Teams charge la suite quand on arrive en haut : on redescend un peu avant d'y
-        // remonter, pour qu'il voie un défilement même si l'on y est déjà. Trois essais
-        // sans rien de nouveau : c'est le début de la conversation. Une limite de temps
-        // atteinte, elle, ne dit rien du début (top reste faux).
-        const end = Date.now() + 20000;
-        for (let stalls = 0; more() && Date.now() < end && !late(); ) {
-          const height = box.scrollHeight;
-          box.scrollTop = Math.min(200, height);
-          await sleep(50);
-          box.scrollTop = 0;
-          if (await waitFor(() => merge() || box.scrollHeight !== height, 1500)) stalls = 0;
-          else if (++stalls >= 3) {
-            top = true;
-            break;
-          }
-        }
-        box.scrollTop = box.scrollHeight;
-      }
+      const pastSince = (acc) => since != null && acc.some((m) => m.ts != null && m.ts < since);
+      const { acc, top } = await climb(box, snap, (acc) => acc.length >= last || pastSince(acc), late);
       // L'auteur n'est affiché qu'en tête d'une suite de messages : on le reporte.
       let sender = "";
       const out = [];

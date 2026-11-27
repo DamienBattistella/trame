@@ -50,6 +50,7 @@ import {
   GithubReportState,
   NOTIFICATION_SOUNDS,
   type NotificationSound,
+  type FileLink,
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
@@ -1478,7 +1479,7 @@ export function useTrame() {
             { source: "GitHub", title: "Mapping HL7 des résultats de labo · Pull Request #214", url: "https://github.com/Wifsimster/passerelle/pull/214", fields: [] },
           ],
         },
-        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }], images: [{ data: null, width: 0, height: 0 }] },
+        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }, { name: "demo-parcours.mp4", url: "https://example-my.sharepoint.com/:v:/g/personal/demo/IQDemo", kind: "video" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);
       return { ok: true, messages, top: true, meeting };
@@ -1546,6 +1547,16 @@ export function useTrame() {
     return res.ok
       ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory, readAt: res.read_at ? new Date(res.read_at) : null }
       : res;
+  };
+  /** Téléchargement direct d'un fichier reçu (vidéo lue dans Trame, fichier enregistré),
+   *  résolu dans la page Teams depuis son lien de partage SharePoint / OneDrive. */
+  const fileLink = async (url: string, threadId?: string): Promise<Result<{ link: FileLink }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(600);
+      return { ok: false, error: "Démo : la vidéo se lit quand Trame est relié à Teams." };
+    }
+    return request("POST", "/api/files/link", { url, thread_id: threadId ?? null });
   };
   /** Relit la transcription d'une réunion dans Teams et l'enregistre en .vtt sur le poste. */
   const saveTranscript = async (m: Meeting, directory?: string): Promise<Result<SavedTranscript>> => {
@@ -2296,6 +2307,7 @@ export function useTrame() {
     listMeetings,
     knownMeetings,
     saveTranscript,
+    fileLink,
     openTranscriptsFolder,
     getTranscriptsFolder,
     setTranscriptsFolder,

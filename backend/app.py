@@ -112,6 +112,11 @@ WS_REFLECTION_POLL = 0.08
 
 
 
+class FileLinkBody(BaseModel):
+    url: str = Field(max_length=2000)
+    thread_id: Optional[str] = Field(default=None, max_length=500)
+
+
 class PauseBody(BaseModel):
     paused: bool
 
@@ -560,6 +565,11 @@ def create_app(
         queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body), force=body.force,
                                      learn=True)
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
+
+    @app.post("/api/files/link")
+    def file_link(body: FileLinkBody):
+        """A received file's direct download link (play a video in Trame, save a file)."""
+        return {"ok": True, "link": watcher.file_link(body.url, body.thread_id)}
 
     @app.get("/api/attachments")
     def attachments_info():
