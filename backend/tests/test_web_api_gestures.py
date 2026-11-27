@@ -105,14 +105,28 @@ def test_refused_after_the_call_is_a_failure_not_a_page_retry():
     assert d.mark_read(TID) is False and "403" in page.last_error
 
 
-def test_typing_without_sending_mentions_and_files_stay_on_the_page():
+def test_typing_without_sending_and_files_stay_on_the_page():
     page = FakePage({"ok": True})
     d = WebApiDriver(page)
     d.type_focused(TID, "brouillon", False, restore=True)  # saisie seule : la page
-    d.type_focused(TID, "@Ana oui", True, restore=True, mentions=["Ana"])  # mention : la page
     d.type_focused(TID, "ci-joint", True, restore=True, files=["a.pdf"])  # pièce jointe : la page
     assert page.calls == []
-    assert [p[4] for p in page.page] == [(), ("mentions",), ("files",)]
+    assert [p[4] for p in page.page] == [(), ("files",)]
+
+
+def test_mentions_go_to_the_chat_service_with_the_names():
+    page = FakePage({"ok": True})
+    d = WebApiDriver(page)
+    assert d.type_focused(TID, "@Ana Martin tu valides ?", True, restore=True, mentions=["Ana Martin"]).ok
+    assert page.calls == [("send", TID, {"text": "@Ana Martin tu valides ?", "mentions": ["Ana Martin"]})]
+    assert page.page == []
+
+
+def test_mention_the_service_cannot_link_falls_back_to_the_page():
+    page = FakePage({"ok": False, "attempted": False, "error": "« Ana » n'est pas dans cette conversation"})
+    d = WebApiDriver(page)
+    d.type_focused(TID, "@Ana oui", True, restore=True, mentions=["Ana"])
+    assert [p[4] for p in page.page] == [("mentions",)]
 
 
 def test_quoted_reply_goes_to_the_chat_service_with_the_message_seen():
