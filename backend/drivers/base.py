@@ -133,6 +133,12 @@ class TeamsDriver(ABC):
         self.last_error = "marquer comme lu n'est pas pris en charge par ce pilote"
         return False
 
+    # --- Liste vivante : ce que montre la liste de Teams à chaque coup d'œil ---
+    on_conversations: Optional[Callable[[list[WatchEntity]], None]] = None
+    """Appelé à chaque coup d'œil de `watch` à la liste, avec les conversations qu'elle montre
+    (dans son ordre) : non-lu, heure du dernier message. Seulement le début de la liste, que
+    Teams dessine : jamais la liste complète."""
+
     # --- Favoris de Teams : la section « Favoris » de la liste, source des favoris de Trame ---
     on_favorites: Optional[Callable[[list[str]], None]] = None
     """Appelé avec les favoris de Teams (ids, dans l'ordre de Teams) dès qu'ils sont lus pour

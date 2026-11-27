@@ -178,6 +178,8 @@ class Watcher:
         driver.on_page_failure = self._check_wake.set
         # Favoris : ceux de Teams (section « Favoris »), relus à chaque coup d'œil à la liste.
         driver.on_favorites = self._sync_teams_favorites
+        # Liste vivante : non-lu, heure et ordre suivis à chaque coup d'œil du pilote.
+        driver.on_conversations = self._apply_live_list
         # Relances : tes questions restées sans réponse (suivi gardé sur disque).
         self.follow_ups = followmod.Tracker(cfgmod.HOME / "follow_ups.json")
         self._follow_up_failed: dict[str, float] = {}
@@ -2051,6 +2053,34 @@ class Watcher:
         self._persist_watchlist()
 
     # --- favoris : épinglés en haut de la liste, dans l'ordre choisi ---
+    def _apply_live_list(self, shown: list[WatchEntity]) -> None:
+        """Ce que la liste de Teams montre à l'instant (son début seulement) : non-lu, heure
+        du dernier message et ordre sont recopiés sur les conversations connues ; une
+        conversation inconnue (nouveau chat) est ajoutée. Les choix de l'utilisateur (suivi,
+        mode) ne bougent pas, et les conversations hors de l'écran gardent leur état, rangées
+        après celles qu'on voit, dans leur ordre."""
+        if not shown:
+            return
+        with self._lock:
+            by_id = {w.thread_id: w for w in self.state.watchlist}
+            seen = {e.thread_id for e in shown}
+            added: list[WatchEntity] = []
+            for e in shown:
+                w = by_id.get(e.thread_id)
+                if w is None:
+                    added.append(e.model_copy())
+                    continue
+                w.rank, w.last_activity, w.unread = e.rank, e.last_activity, e.unread
+                w.is_self, w.own_preview = e.is_self, e.own_preview
+            rest = sorted((w for w in self.state.watchlist if w.thread_id not in seen and w.rank is not None),
+                          key=lambda w: w.rank or 0)
+            for i, w in enumerate(rest, start=len(shown)):
+                w.rank = i
+            if added:
+                self.state.watchlist = self.state.watchlist + added
+        if added:
+            self._persist_watchlist()
+
     def _sync_teams_favorites(self, teams: list[str]) -> None:
         """Les favoris de Trame sont ceux de Teams : on retire ceux que Teams n'a plus, on
         ajoute à la suite ceux qu'il a en plus (dans son ordre). L'ordre choisi dans Trame

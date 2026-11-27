@@ -289,8 +289,11 @@ class WebBridgeDriver(TeamsDriver):
         return self.list_conversations(deep=True)
 
     def list_conversations(self, deep: bool = False) -> list[WatchEntity]:
+        return self._entities(self._items(deep))
+
+    def _entities(self, items: list[dict]) -> list[WatchEntity]:
         out = []
-        for rank, it in enumerate(self._items(deep)):
+        for rank, it in enumerate(items):
             label = it["parsed"]
             self._names[it["thread_id"]] = label.name
             self._kinds[it["thread_id"]] = label.surface
@@ -593,8 +596,16 @@ class WebBridgeDriver(TeamsDriver):
     def watch_tick(self, on_message: Callable[[IncomingMessage], None]) -> None:
         """One look at the chat list: new previews become messages."""
         items = self._items()
-        convs = {it["thread_id"]: WatchEntity(thread_id=it["thread_id"], display_name=it["parsed"].name,
-                                              surface=it["parsed"].surface) for it in items}
+        entities = self._entities(items)
+        # Non-lu, heure et ordre de la liste : le moteur les suit à chaque coup d'œil,
+        # pas seulement à la connexion.
+        hook = self.on_conversations
+        if hook is not None and entities:
+            try:
+                hook(entities)
+            except Exception:
+                pass
+        convs = {e.thread_id: e for e in entities}
         for msg in self._previews.diff(((it["thread_id"], it.get("label") or "") for it in items), convs):
             on_message(msg)
 
