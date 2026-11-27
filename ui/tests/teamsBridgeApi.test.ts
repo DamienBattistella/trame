@@ -1328,7 +1328,7 @@ test("chatmeetings : une carte par fin d'appel (mid = message de fin), créneau 
     if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs.slice().reverse() }));
     return fakeResponse("{}", { status: 404 });
   });
-  const r = (await p.run("chatmeetings", { threads: [MEET, "19:pas-une-reunion@thread.v2"] })).result;
+  const r = (await p.run("chatmeetings", { threads: [MEET, "pas-un-id-teams", "19:x@thread.tacv2"] })).result;
   assert.equal(r.ok, true);
   assert.equal(r.chats.length, 1);
   const [later, first] = r.chats[0].recaps;
@@ -1337,6 +1337,67 @@ test("chatmeetings : une carte par fin d'appel (mid = message de fin), créneau 
   assert.equal(first.transcript, true);
   assert.equal(later.transcript, false);
   assert.equal(later.when, "samedi 28 novembre 2026 11:20 - 11:30");
+});
+
+test("chatmeetings : appels transcrits d'un groupe et d'un tête-à-tête aussi (seuls les transcrits)", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const GROUP = "19:abc123def@thread.v2";
+  const DM = "19:11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222@unq.gbl.spaces";
+  const t0 = new Date("2026-11-26T14:00:05").getTime();
+  // Un appel transcrit (« Réunion maintenant »), puis un appel sans transcription : seul le premier compte.
+  const calls = (base: number) => [
+    { id: String(base), messagetype: "Event/Call", content: '<partlist type="started" alt=""></partlist>' },
+    { id: String(base + 60000), messagetype: "RichText/Media_CallTranscript", content: "" },
+    { id: String(base + 1800000), messagetype: "Event/Call", content: "<ended/><partlist type=\"ended\"></partlist>" },
+    { id: String(base + 7200000), messagetype: "Event/Call", content: '<partlist type="started"></partlist>' },
+    { id: String(base + 7500000), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(GROUP)}/messages`)) return fakeResponse(JSON.stringify({ messages: calls(t0).reverse() }));
+    if (url.includes(`/conversations/${encodeURIComponent(DM)}/messages`)) return fakeResponse(JSON.stringify({ messages: calls(t0 + 86400000).reverse() }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [GROUP, DM], topics: { [GROUP]: "Projet X" } })).result;
+  assert.equal(r.ok, true);
+  const [g, d] = r.chats;
+  assert.equal(g.thread, GROUP);
+  assert.equal(g.recaps.length, 1);
+  assert.equal(g.recaps[0].mid, String(t0 + 1800000));
+  assert.equal(g.recaps[0].transcript, true);
+  assert.equal(g.recaps[0].when, "jeudi 26 novembre 2026 14:00 - 14:30");
+  assert.equal(d.thread, DM);
+  assert.equal(d.recaps.length, 1);
+  assert.equal(d.recaps[0].when, "vendredi 27 novembre 2026 14:00 - 14:30");
+});
+
+test("chatmeetings : remonte les pages précédentes (au plus 3) pour un appel plus ancien", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const GROUP = "19:busy@thread.v2";
+  const t0 = new Date("2026-11-20T10:00:00").getTime();
+  const older = [
+    { id: String(t0), messagetype: "Event/Call", content: '<partlist type="started"></partlist>' },
+    { id: String(t0 + 1000), messagetype: "RichText/Media_CallTranscript", content: "" },
+    { id: String(t0 + 600000), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  const recent = Array.from({ length: 5 }, (_, i) => ({ id: String(t0 + 86400000 + i), messagetype: "RichText/Html", content: "<p>x</p>" }));
+  const seen: string[] = [];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(GROUP)}/messages`)) {
+      seen.push(url);
+      const back = `https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/${encodeURIComponent(GROUP)}/messages?view=msnp24Equivalent&pageSize=200&startTime=${t0 + 86400000}`;
+      if (url.includes("startTime=")) return fakeResponse(JSON.stringify({ messages: older.slice().reverse(), _metadata: {} }));
+      return fakeResponse(JSON.stringify({ messages: recent.slice().reverse(), _metadata: { backwardLink: back } }));
+    }
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [GROUP] })).result;
+  assert.equal(seen.length, 2);
+  assert.equal(r.chats[0].recaps.length, 1);
+  assert.equal(r.chats[0].recaps[0].mid, String(t0 + 600000));
 });
 
 test("chatmeetings : heures prévues en UTC sans « Z » (relevé en direct), réunion récurrente au jour de l'appel", async () => {
