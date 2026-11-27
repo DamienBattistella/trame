@@ -6,8 +6,6 @@ import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
@@ -836,26 +834,12 @@ export function DiscussionView({
         </div>
         <JoinMeeting meeting={meeting} />
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`follow-${c.threadId}`}
-              checked={c.watch}
-              onCheckedChange={() => trame.toggleWatch(c.threadId).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
+          <div className="flex items-center gap-1">
+            <AutoToggle
+              name={c.displayName}
+              mode={c.watch ? c.mode : "draft"}
+              onChange={(v) => trame.setAuto(c.threadId, v === "auto").then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
             />
-            <Label htmlFor={`follow-${c.threadId}`} className="font-normal">Suivie</Label>
-          </div>
-          <AnimatePresence initial={false}>
-            {c.watch && (
-              <motion.div key="mode" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
-                <AutoToggle
-                  name={c.displayName}
-                  mode={c.mode}
-                  onChange={(v) => trame.setMode(c.threadId, v).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <div className="flex items-center">
             {onFavorite && (
               <IconAction label={favorite ? "Retirer des favoris" : "Ajouter aux favoris"} hint={`${favorite ? "Retirer des favoris" : "Épingler en haut de la liste, dans Favoris"} · Alt+F`} pressed={favorite} onClick={onFavorite}>
                 <Star className={cn("size-4", favorite && "fill-warning text-warning")} />

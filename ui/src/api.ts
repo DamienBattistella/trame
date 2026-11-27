@@ -2147,6 +2147,13 @@ export function useTrame() {
     const next = snapshot(threadIds).map((e) => ({ ...e, watch }));
     return applyWatch(next, () => saveWatchlist(next));
   };
+  /** Bouton robot : activer le mode Auto suit aussi la conversation, le couper la garde suivie en brouillons. */
+  const setAuto = (threadId: string, on: boolean) => {
+    const cur = stateRef.current.watchlist.find((w) => w.threadId === threadId);
+    if (!cur) return Promise.resolve<Result>({ ok: true });
+    const next: WatchlistEntry[] = [{ threadId, watch: on || cur.watch, mode: on ? "auto" : "draft" }];
+    return applyWatch(next, () => saveWatchlist(next));
+  };
   const setMode = (threadId: string, mode: Mode) => {
     const cur = stateRef.current.watchlist.find((w) => w.threadId === threadId);
     if (!cur) return Promise.resolve<Result>({ ok: true });
@@ -2306,6 +2313,7 @@ export function useTrame() {
     toggleWatch,
     setWatchMany,
     setMode,
+    setAuto,
     toggleFavorite,
     reorderFavorites,
     setArchived,

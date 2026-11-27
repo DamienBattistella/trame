@@ -666,7 +666,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             <p className="max-w-xs text-sm text-muted-foreground">
               {groups.followed.length + groups.review.length > 0
                 ? "Quand on t'écrit dans une discussion suivie, la réponse proposée apparaît en haut à gauche."
-                : "Suis des discussions (interrupteur « Suivie ») pour que Trame prépare tes réponses."}
+                : "Glisse des discussions dans Suivies pour que Trame prépare tes réponses."}
             </p>
           </div>
         )}
