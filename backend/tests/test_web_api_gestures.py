@@ -22,6 +22,7 @@ class FakePage:
         self.last_error = None
 
     _ref = staticmethod(WebBridgeDriver._ref)
+    chat_id = staticmethod(WebBridgeDriver.chat_id)
 
     def chat_gesture(self, kind, thread_id, **args):
         self.calls.append((kind, thread_id, args))
@@ -130,3 +131,18 @@ def test_bridge_gesture_resolves_the_teams_id_and_reports_no_answer_as_uncertain
     d._rpc = boom
     res = d.chat_gesture("send", TID, text="x")
     assert res["uncertain"] and res["attempted"]
+
+
+def test_one_to_one_linked_only_by_the_day_gets_reads_but_never_writes_by_the_service():
+    page = FakePage({"ok": True})
+    d = WebApiDriver(page)
+    d._chat.mapped = {"name:Ana Martin": "19:a_b@unq.gbl.spaces"}
+    page.chat_aliases = dict(d._chat.mapped)
+    # Relié au jour près seulement : l'envoi passe par la page.
+    d.type_focused("name:Ana Martin", "Bonjour", True, restore=True)
+    assert page.calls == [] and page.page[-1][0] == "type"
+    assert "preuve suffisante" in d.routes()["send"]["reason"]
+    # Relié par le texte ou la minute : le service de chat.
+    d._chat.strong = {"name:Ana Martin"}
+    d.type_focused("name:Ana Martin", "Bonjour", True, restore=True)
+    assert [c[0] for c in page.calls] == ["send"]

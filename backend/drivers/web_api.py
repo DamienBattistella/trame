@@ -37,13 +37,23 @@ def _same_message(seen: Optional[tuple], row: dict) -> bool:
     """Le dernier message que la page affiche est-il celui de cette conversation sur le service de
     chat ? Oui si l'aperçu (souvent tronqué) est le début de son texte, ou si l'heure affichée est
     la même à la minute (« 13:44 ») ou le même jour (« 25/11 », « Hier »). Sinon : non (prudence)."""
+    return _evidence(seen, row) is not None
+
+
+def _evidence(seen: Optional[tuple], row: dict) -> Optional[str]:
+    """Force de la concordance : « text » (même début de texte), « minute » (même heure à la
+    minute), « day » (même jour seulement), None (aucune). Lire se contente du jour ; écrire
+    exige le texte ou la minute (deux conversations d'une même personne, actives le même jour,
+    ne doivent jamais être confondues pour un envoi)."""
     preview, when = seen if isinstance(seen, tuple) else (seen, None)
     last = row.get("last") or {}
     p, a = _norm(preview), _norm(last.get("text"))
     n = min(len(p), len(a), 24)
     if n >= 3 and p[:n] == a[:n]:
-        return True
-    return _same_when(when, last.get("ts"))
+        return "text"
+    if not _same_when(when, last.get("ts")):
+        return None
+    return "minute" if ":" in str(when or "") else "day"
 
 
 def _same_when(shown: Optional[str], ts: Any, now: Optional[datetime] = None) -> bool:
@@ -105,6 +115,9 @@ class _ChatState:
         self.mapped: dict[str, str] = {}  # thread_id de Trame -> id Teams
         self.refused = 0  # reliées par le nom mais dont l'aperçu ne concorde pas
         self.self_seen: dict = {}  # conversation avec soi-même : candidats (heures seulement)
+        # Reliées par le nom avec une preuve forte (texte, minute, ou soi-même) : seules celles-ci
+        # (et celles dont l'id Teams est dans l'id de la page) reçoivent des gestes par le service.
+        self.strong: set[str] = set()
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -218,12 +231,20 @@ class WebApiDriver:
             self._chat.self_seen = {"page_time": (preview or (None, None))[1],
                                     "candidates": [{"kind": "notes" if c == "48:notes" else "dm", "at": (rows[c].get("last") or {}).get("at")}
                                                    for c in mine]}
-            return next((c for c in mine if _same_message(preview, rows[c])), None)
+            hit = next((c for c in mine if _same_message(preview, rows[c])), None)
+            if hit:  # tous les candidats sont à soi : un geste ne peut pas partir chez un autre
+                self._chat.strong.add(entity.thread_id)
+            return hit
         elif entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
             cid = dm_names.get(entity.display_name.casefold())
-        if cid and not _same_message(preview, rows[cid]):
+        if not cid:
+            return None
+        proof = _evidence(preview, rows[cid])
+        if proof is None:
             self._chat.refused += 1
             return None
+        if proof in ("text", "minute"):
+            self._chat.strong.add(entity.thread_id)
         return cid
 
     def _map(self, entities: list[WatchEntity], previews: Optional[dict[str, tuple]] = None) -> dict[str, str]:
@@ -238,6 +259,7 @@ class WebApiDriver:
                 dm_names[name] = None if name in dm_names else cid
         mapped = {}
         self._chat.refused = 0
+        self._chat.strong = set()
         for e in entities:
             cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
             if cid:
@@ -355,6 +377,7 @@ class WebApiDriver:
                 "dm_named": sum(1 for r in st.rows.values() if r.get("kind") == "dm" and r.get("name")),
                 "mapped": len(st.mapped), "mapped_by_name": sum(1 for t in st.mapped if t.startswith("name:")),
                 "refused_by_preview": st.refused, "self": st.self_seen,
+                "writable_by_name": sum(1 for t in st.mapped if t.startswith("name:") and t in st.strong),
                 # Non-lus selon le service de chat : ids et horizon seulement (aucun texte).
                 "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
                             "type_user": (st.rows[c].get("last") or {}).get("user")}
@@ -367,6 +390,10 @@ class WebApiDriver:
     def _gesture(self, action: str, kind: str, thread_id: str, **args: Any) -> Optional[dict]:
         gesture = getattr(self._inner, "chat_gesture", None)
         if not callable(gesture):
+            return None
+        chat_id = getattr(self._inner, "chat_id", None)
+        if not (callable(chat_id) and chat_id(thread_id)) and thread_id not in self._chat.strong:
+            self._route(action, "page", "repli sur la page : conversation reliée sans preuve suffisante pour écrire")
             return None
         res = gesture(kind, thread_id, **args)
         if res.get("ok"):

@@ -252,3 +252,19 @@ def test_list_time_is_compared_on_the_real_date_of_the_last_message():
     assert not _same_when("03/01/2024", ms(datetime(2025, 1, 3, 8, 0)), now)
     assert not _same_when("mardi", ms(datetime(2026, 11, 24, 8, 0)), now)     # inconnu : non (prudence)
     assert not _same_when("", ms(now), now) and not _same_when("13:44", 0, now)
+
+
+
+def test_evidence_strength_text_and_minute_are_strong_day_is_weak():
+    from datetime import datetime, timedelta
+    from drivers.web_api import _evidence
+    now = datetime.now()
+    r = row(DM, "dm", "Ana Martin", 1000, text="Tu as deux minutes ?")
+    assert _evidence(("Tu as deux min…", "26/11"), r) == "text"
+    r["last"]["ts"] = int((now - timedelta(minutes=1)).timestamp() * 1000)
+    hm = (now - timedelta(minutes=1)).strftime("%H:%M")
+    assert _evidence(("(image)", hm), r) == "minute"
+    y = now - timedelta(days=1)
+    r["last"]["ts"] = int(y.timestamp() * 1000)
+    assert _evidence(("(image)", y.strftime("%d/%m")), r) == "day"
+    assert _evidence(("autre chose", "02/01"), r) is None
