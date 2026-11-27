@@ -595,6 +595,13 @@ class WebBridgeDriver(TeamsDriver):
             return {"ok": False, "attempted": False, "error": "identifiant de tête-à-tête inattendu"}
         return res
 
+    def meeting_shapes(self, chats: int = 3, per: int = 60) -> dict:
+        """Structure (jamais le contenu) des conversations de réunion récentes sur le service de
+        chat, et ids des cartes de récapitulatif affichées : la découverte qui précède le câblage
+        des réunions sur le service."""
+        res = self._rpc("meetingshapes", chats=chats, per=per, timeout=30)
+        return res if isinstance(res, dict) else {"ok": False, "error": "réponse illisible de la page"}
+
     def chat_gesture(self, kind: str, thread_id: str, timeout: float = 25.0, **args: Any) -> dict:
         """Un geste sur le service de chat (markread, react, delete, send), fait DANS la page :
         vérifié avant (bon message, le sien pour supprimer) puis prouvé par relecture.

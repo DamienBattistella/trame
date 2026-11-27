@@ -2711,6 +2711,42 @@
       return { ok: false, attempted: false, error: w.ok ? "tête-à-tête créé mais pas encore relu" : `création refusée (HTTP ${w.status || "?"})` };
     };
   })();
+  // --- Sonde des conversations de réunion (découverte, lecture seule) ---
+  // Pour câbler les réunions sur le service de chat, il faut savoir quel message porte la carte
+  // « La réunion est terminée » de la page. La sonde ne rend que de la STRUCTURE : id et type de
+  // chaque message, nom de la balise racine et des balises de son contenu, noms (jamais valeurs)
+  // de ses propriétés ; et les ids (data-mid) des cartes de récapitulatif affichées. Aucun texte.
+  const meetingShapes = async ({ chats = 3, per = 60 } = {}) => {
+    const enc = (c) => encodeURIComponent(c);
+    const list = await chatsvc.get({ path: "/v1/users/ME/conversations", query: { view: "msnp24Equivalent", pageSize: 100 } });
+    if (!list.ok) return { ok: false, error: list.error || "liste refusée par le service de chat" };
+    const isMeeting = (c) => {
+      const tp = (c && c.threadProperties) || {};
+      return /@thread\.(v2|skype)$/.test(String(c.id || "")) && (/meeting/i.test(String(tp.productThreadType || "")) || Boolean(tp.meeting));
+    };
+    const tagsOf = (html) => {
+      const names = [];
+      const re = /<([A-Za-z][A-Za-z0-9:_-]{0,40})\b/g;
+      let m;
+      while ((m = re.exec(String(html || ""))) && names.length < 400) names.push(m[1].toLowerCase());
+      return { root: names[0] || "", tags: [...new Set(names)].slice(0, 25) };
+    };
+    const out = [];
+    const convs = ((list.json && list.json.conversations) || []).filter(isMeeting).slice(0, Math.max(1, Math.min(5, Number(chats) || 3)));
+    for (const c of convs) {
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(c.id)}/messages`, query: { view: "msnp24Equivalent", pageSize: Math.max(10, Math.min(200, Number(per) || 60)) } });
+      const msgs = ((r.ok && r.json && r.json.messages) || []).map((m) => ({
+        id: String(m.id || ""),
+        type: String(m.messagetype || ""),
+        ...tagsOf(m.content),
+        props: Object.keys(m.properties || {}).slice(0, 25),
+      }));
+      const tp = c.threadProperties || {};
+      out.push({ chat: String(c.id), threadKeys: Object.keys(tp).slice(0, 40), meetingKeys: (() => { try { return Object.keys(JSON.parse(tp.meeting || "{}")).slice(0, 40); } catch { return []; } })(), messages: msgs });
+    }
+    const shown = Array.from(document.querySelectorAll(RECAP_CARD)).map((card) => card.closest("[data-mid]")?.getAttribute("data-mid") || "");
+    return { ok: true, chats: out, page_recap_mids: shown.filter(Boolean).slice(0, 20), page_title_is_meeting: /meeting|réunion/i.test(document.title) };
+  };
 
   // --- Présence, note de statut et recherche de personnes (middletier) ---
   // Le service de présence et la recherche de personnes acceptent le bearer middletier que
@@ -3447,6 +3483,7 @@
     // Un geste sur le service de chat (lu, réaction, suppression, envoi), vérifié puis prouvé.
     chatgesture: (args) => chatGestures(args || {}),
     chatdm: (args) => chatDm(args || {}),
+    meetingshapes: (args) => meetingShapes(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.
