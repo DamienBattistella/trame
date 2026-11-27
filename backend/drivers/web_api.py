@@ -171,7 +171,7 @@ class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
                              "presence", "my_status", "set_status", "set_note", "search_people", "start_chat",
-                             "search_messages", "hide"})
+                             "search_messages", "hide", "meetings"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -710,6 +710,38 @@ class WebApiDriver:
                     tid = f"title-{cid}"
             r["thread_id"] = tid
         return found
+
+    # --- Réunions terminées : lues sur le service, sans ouvrir les conversations ------------
+    MAX_MEETING_CHATS = 12
+
+    def list_meetings(self, limit: Optional[int] = None) -> list[dict]:
+        """Les réunions terminées des conversations de réunion les plus récentes, lues sur le
+        service de chat (rien n'est ouvert dans la page) : mêmes champs et même `mid` que la
+        lecture des cartes de la page, donc la transcription se relit comme avant. Service
+        indisponible : la page, comme avant."""
+        api = getattr(self._inner, "meetings_api", None)
+        st = self._chat
+        if callable(api):
+            if not st.ok:
+                self._refresh_chat()
+            rows = sorted((r for r in list(st.rows.values()) if r.get("kind") == "meeting"),
+                          key=lambda r: -((r.get("last") or {}).get("ts") or 0))[: limit or self.MAX_MEETING_CHATS]
+            if rows:
+                try:
+                    chats = api([str(r["id"]) for r in rows])
+                except Exception as e:
+                    self._route("meetings", "page", f"repli sur la page : {e}")
+                else:
+                    topic = {str(r["id"]): str(r.get("topic") or "").strip() for r in rows}
+                    out = []
+                    for c in chats:
+                        tid, name = f"title-{c['thread']}", topic.get(c["thread"]) or "Réunion"
+                        for r in c["recaps"]:
+                            out.append({"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
+                                        "when": r["when"], "transcript": r["transcript"]})
+                    self._route("meetings", "api")
+                    return out
+        return self._inner.list_meetings(limit)
 
     # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
     def start_chat(self, name: str) -> Optional[WatchEntity]:

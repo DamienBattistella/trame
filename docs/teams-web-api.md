@@ -287,6 +287,18 @@ les plus récentes (id et type de chaque message, balise racine et balises du co
 propriétés, clés de `threadProperties.meeting`) et les ids des cartes de récapitulatif affichées.
 Jamais un texte, un nom ou une valeur.
 
+### 9. Réunions terminées — op `chatmeetings`
+
+Relevé en direct avec la sonde (§ 8) le 27/11/2026 : dans une conversation de réunion, chaque
+occurrence laisse un `Event/Call` de début (`<partlist …>` avec `meetingdetails`, `starttime`,
+`endtime`, `icaluid`, `hasephemeraltranscript`), un `Event/Call` de fin (`<ended/>…`), un
+`RichText/Media_CallTranscript` quand elle est transcrite, et des `RichText/Media_CallRecording`.
+La carte « La réunion est terminée » de la page porte l'**id du message de fin** (même `mid`,
+vérifié sur deux réunions) : la liste se lit sur le service, sans ouvrir les conversations, et la
+lecture des transcriptions par la page reste valable. Créneau : les heures prévues (`starttime`,
+`endtime`), sinon les heures réelles ; transcrite si un message de transcription tombe entre le
+début et 10 min après la fin. Service indisponible : la page, comme avant.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).

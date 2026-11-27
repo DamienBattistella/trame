@@ -2831,6 +2831,71 @@
     return m ? decodeURIComponent(m[1]) : String(from || "");
   };
 
+  // --- Réunions terminées, lues sur le service de chat (sans ouvrir les conversations) ---
+  // Relevé en direct (sonde, 27/11/2026) : chaque occurrence laisse un `Event/Call` de début
+  // (`<partlist …>` avec `meetingdetails`, `starttime`, `endtime`), un `Event/Call` de fin
+  // (`<ended/>…`), et un `RichText/Media_CallTranscript` quand elle est transcrite. La carte
+  // « La réunion est terminée » de la page porte l'id du message de FIN (même `mid` que la page,
+  // vérifié sur deux réunions) : la lecture des transcriptions par la page reste valable.
+  const chatMeetings = (() => {
+    const DAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+    const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+    const pad = (n) => String(n).padStart(2, "0");
+    const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    // Comme la carte de la page : « vendredi 27 novembre 2026 11:00 - 11:20 ».
+    const when = (a, b) => `${DAYS[a.getDay()]} ${a.getDate()} ${MONTHS[a.getMonth()]} ${a.getFullYear()} ${hm(a)} - ${hm(b)}`;
+    const tag = (html, name) => {
+      const m = new RegExp(`<${name}>([^<]{1,80})</${name}>`, "i").exec(String(html || ""));
+      return m ? m[1].trim() : "";
+    };
+    const dateOf = (v) => {
+      if (!v) return null;
+      const d = new Date(/^\d{10,16}$/.test(v) ? Number(v) : v);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const one = async (thread) => {
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
+      if (!r.ok) return { thread, ok: false, error: r.error || "fil refusé par le service de chat" };
+      const msgs = ((r.json && r.json.messages) || []).filter((m) => m && /^\d{1,20}$/.test(String(m.id || ""))).sort((a, b) => Number(a.id) - Number(b.id));
+      const recaps = [];
+      for (let i = 0; i < msgs.length; i++) {
+        const m = msgs[i];
+        const content = String(m.content || "");
+        if (m.messagetype !== "Event/Call" || !/^\s*<ended\b/i.test(content)) continue;
+        const endId = Number(m.id);
+        // Le début de cette occurrence : le dernier `<partlist` de début avant la fin.
+        let start = null;
+        for (let j = i - 1; j >= 0; j--) {
+          const x = msgs[j];
+          if (x.messagetype === "Event/Call" && /^\s*<ended\b/i.test(String(x.content || ""))) break;
+          if (x.messagetype === "Event/Call" && /^\s*<partlist\b/i.test(String(x.content || ""))) {
+            start = x;
+            break;
+          }
+        }
+        const startId = start ? Number(start.id) : endId;
+        const planned = start ? [dateOf(tag(start.content, "starttime")), dateOf(tag(start.content, "endtime"))] : [null, null];
+        const a = planned[0] || new Date(startId);
+        const b = planned[1] || new Date(endId);
+        // Transcrite : un message de transcription entre le début et peu après la fin.
+        const transcript = msgs.some((x) => x.messagetype === "RichText/Media_CallTranscript" && Number(x.id) >= startId && Number(x.id) <= endId + 10 * 60 * 1000);
+        recaps.push({ mid: String(m.id), when: when(a, b), transcript, ts: endId });
+      }
+      return { thread, ok: true, recaps: recaps.reverse() };
+    };
+    return async ({ threads = [] } = {}) => {
+      const ids = (Array.isArray(threads) ? threads : []).filter((t) => /^19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2$/.test(String(t))).slice(0, 30);
+      const out = [];
+      for (const t of ids) {
+        const started = Date.now();
+        out.push(await one(t));
+        const spent = Date.now() - started;
+        if (spent < 125) await sleep(125 - spent);
+      }
+      return { ok: true, chats: out };
+    };
+  })();
+
   // --- Sonde des conversations de réunion (découverte, lecture seule) ---
   // Pour câbler les réunions sur le service de chat, il faut savoir quel message porte la carte
   // « La réunion est terminée » de la page. La sonde ne rend que de la STRUCTURE : id et type de
@@ -3604,6 +3669,7 @@
     chatgesture: (args) => chatGestures(args || {}),
     chatdm: (args) => chatDm(args || {}),
     meetingshapes: (args) => meetingShapes(args || {}),
+    chatmeetings: (args) => chatMeetings(args || {}),
     chatsearch: (args) => chatSearch(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé

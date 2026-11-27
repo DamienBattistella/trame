@@ -311,3 +311,13 @@ def test_every_reaction_of_a_message_is_read_with_its_count():
     ])
     assert [(r.key, r.emoji, r.count, r.mine) for r in got] == [
         ("like", "👍", 3, True), ("1f44f_clappinghands", "👏", 1, False), ("customorgemoji", "", 2, False)]
+
+
+def test_reaction_keys_seen_live_become_emoji():
+    # Clés relevées en direct sur Teams (27/11/2026) : émoticônes Skype et teintes de peau.
+    from models import reaction_emoji
+    assert reaction_emoji("devil") == "😈"
+    assert reaction_emoji("yes-tone1") == "👍🏻"
+    assert reaction_emoji("clap-tone3") == "👏🏽"
+    assert reaction_emoji("victory-tone2") == "✌🏼"
+    assert reaction_emoji("heart") == "❤️"
