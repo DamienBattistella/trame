@@ -268,3 +268,20 @@ def test_evidence_strength_text_and_minute_are_strong_day_is_weak():
     r["last"]["ts"] = int(y.timestamp() * 1000)
     assert _evidence(("(image)", y.strftime("%d/%m")), r) == "day"
     assert _evidence(("autre chose", "02/01"), r) is None
+
+
+def test_recent_conversations_beyond_the_page_stay_in_the_list_tick_after_tick_and_bring_new_messages():
+    import time as _t
+    now = int(_t.time() * 1000)
+    far = "19:far@thread.v2"
+    page = FakePage([row(GROUP, "group", "Projet X", 1), row(DM, "dm", "Ana Martin", 2), row(far, "group", "Équipe lointaine", now)])
+    d = WebApiDriver(page)
+    seen = []
+    page.on_conversations = seen.append
+    assert tick(d) == []  # premier passage : rien de rejoué
+    tick(d)
+    assert [e.thread_id for e in seen[0]][-1] == "title-" + far
+    assert [e.thread_id for e in seen[1]][-1] == "title-" + far  # toujours là au tour suivant
+    page.rows = [row(far, "group", "Équipe lointaine", now + 5000, text="Nouveau message")]
+    got = tick(d)
+    assert [(m.thread_id, m.text) for m in got] == [("title-" + far, "Nouveau message")]

@@ -307,6 +307,70 @@ class WebApiDriver:
         except (TypeError, ValueError):
             return False
 
+    # --- Liste : la page, complétée par le service ---------------------------------------
+    # La page ne dessine que les lignes qu'elle a chargées. Le service connaît toute la liste :
+    # Trame y ajoute les groupes nommés et les tête-à-tête actifs depuis RECENT_DAYS jours que la
+    # page n'a pas montrés, sous les ids que la page leur donnerait (« title-19:… » pour un
+    # groupe, « name:… » pour un tête-à-tête) : rien à migrer quand la page les montre ensuite.
+    RECENT_DAYS = 30
+    MAX_EXTRA = 150
+
+    def _service_entities(self, known: Iterable[WatchEntity], start_rank: int) -> list[WatchEntity]:
+        st = self._chat
+        if not st.ok:
+            return []
+        seen_ids = {e.thread_id for e in known}
+        # Conversations déjà montrées par la page (celles ajoutées au tour précédent ne comptent pas).
+        seen_cids = {c for t, c in st.mapped.items() if t in seen_ids}
+        seen_names = {e.display_name.casefold() for e in known if e.surface == Surface.dm}
+        dm_count: dict[str, int] = {}
+        for r in st.rows.values():
+            if r.get("kind") == "dm" and r.get("name"):
+                k = str(r["name"]).casefold()
+                dm_count[k] = dm_count.get(k, 0) + 1
+        horizon = (time.time() - self.RECENT_DAYS * 86400) * 1000
+        rows = sorted((r for r in st.rows.values() if (r.get("last") or {}).get("ts", 0) >= horizon),
+                      key=lambda r: -(r.get("last") or {}).get("ts", 0))
+        out: list[WatchEntity] = []
+        kinds = getattr(self._inner, "_kinds", None)
+        names = getattr(self._inner, "_names", None)
+        for r in rows:
+            cid = str(r.get("id") or "")
+            if not cid or cid in seen_cids or r.get("hidden") or r.get("empty"):
+                continue
+            if r.get("kind") == "group" and str(r.get("topic") or "").strip():
+                tid, name, surface = f"title-{cid}", str(r["topic"]).strip(), Surface.group
+            elif r.get("kind") == "dm" and r.get("name") and dm_count.get(str(r["name"]).casefold()) == 1:
+                name = str(r["name"]).strip()
+                if name.casefold() in seen_names:
+                    continue
+                tid, surface = f"name:{name}", Surface.dm
+            else:
+                continue
+            if tid in seen_ids:
+                continue
+            # Relié par construction (id Teams lu sur le service) : lecture et écriture par le service.
+            st.started[tid] = cid
+            if isinstance(names, dict):
+                names.setdefault(tid, name)
+            if isinstance(kinds, dict):
+                kinds.setdefault(tid, surface)
+            last = r.get("last") or {}
+            out.append(WatchEntity(thread_id=tid, display_name=name, surface=surface, rank=start_rank + len(out),
+                                   last_activity=str(last.get("at") or "") or None, unread=self._unread(r)))
+            if len(out) >= self.MAX_EXTRA:
+                break
+        return out
+
+    def list_conversations(self, deep: bool = False) -> list[WatchEntity]:
+        page = self._inner.list_conversations(deep)
+        if not self._chat.ok:
+            self._refresh_chat()
+        extra = self._service_entities(page, len(page))
+        if extra:
+            self._route("list", "api", f"{len(extra)} conversation(s) ajoutée(s) depuis le service de chat")
+        return page + extra
+
     def watch_tick(self, on_message: Callable[[IncomingMessage], None]) -> None:
         """Un coup d'œil : la liste de la page (noms, ordre, présence), complétée par le service de
         chat (non-lus, nouveaux messages). Sans le service, exactement comme la page seule."""
@@ -326,6 +390,13 @@ class WebApiDriver:
             self._route("unread", "api")
         if api:
             self._refresh_presence(entities, mapped)
+        if api:
+            extra = self._service_entities(entities, len(entities))
+            if extra:
+                self._map(entities, previews)  # les conversations ajoutées rejoignent la correspondance
+                mapped = self._chat.mapped
+                entities = entities + extra
+                self._route("list", "api", f"{len(extra)} conversation(s) ajoutée(s) depuis le service de chat")
         hook = getattr(inner, "on_conversations", None)
         if hook is not None and entities:
             try:
