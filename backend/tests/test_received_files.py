@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
+from drivers.base import NeedsView
 from drivers.mock import MockTeamsDriver
-from drivers.web_bridge import WebBridgeDriver
+from drivers.web_bridge import BridgeUnavailable, WebBridgeDriver
 from models import FileRef, ImageRef, IncomingMessage, Surface
 
 DM = "19:bb22@thread.v2"
@@ -55,7 +58,7 @@ class AttachDriver(MockTeamsDriver):
 def test_thread_api_returns_files_and_images(make_client):
     client, _watcher, _driver = make_client(driver=AttachDriver(interval=9999))
     msgs = client.get("/api/threads/19%3Abb22%40thread.v2/messages").json()["messages"]
-    assert msgs[0]["files"] == [{"name": "rapport.pdf", "url": SP}] and msgs[0]["images"] == []
+    assert msgs[0]["files"] == [{"name": "rapport.pdf", "url": SP, "kind": ""}] and msgs[0]["images"] == []
     assert msgs[1]["text"] == "" and msgs[1]["images"] == [{"data": JPEG, "width": 800, "height": 262}]
 
 
@@ -64,3 +67,80 @@ def test_brain_gets_words_not_image_data(make_client):
     msgs = watcher._read_focused(DM, "Lucas Bernard", 30)
     assert msgs[0].text == "Voici le rapport\n[fichier joint : rapport.pdf]"
     assert msgs[1].text == "[image]" and msgs[1].images == []
+
+
+VIDEO = "https://dedalusspa-my.sharepoint.com/:v:/g/personal/x/IQAx"
+DOWNLOAD = "https://dedalusspa-my.sharepoint.com/personal/x/_layouts/15/download.aspx?UniqueId=abc&tempauth=t"
+
+
+def test_bridge_marks_videos_only_when_the_page_says_so(monkeypatch):
+    driver = _bridge(monkeypatch, [{"sender": "Yves", "text": "", "at": "10:00", "files": [
+        {"name": "demo.mp4", "url": VIDEO, "kind": "video"},
+        {"name": "notes.pdf", "url": SP, "kind": "<script>"},
+    ]}])
+    msgs, _ = driver.read_history(DM, 30)
+    assert msgs[0].files == [FileRef(name="demo.mp4", url=VIDEO, kind="video"), FileRef(name="notes.pdf", url=SP)]
+
+
+def _linker(monkeypatch, reply):
+    driver = WebBridgeDriver()
+    calls = []
+    monkeypatch.setattr(driver, "_rpc", lambda op, timeout=None, **a: calls.append((op, a)) or reply)
+    return driver, calls
+
+
+def test_file_link_resolves_in_the_page_and_keeps_sharepoint_links_only(monkeypatch):
+    driver, calls = _linker(monkeypatch, {"ok": True, "name": "demo.mp4", "size": 2048, "mime": "video/mp4", "url": DOWNLOAD})
+    assert driver.file_link(VIDEO) == {"name": "demo.mp4", "size": 2048, "mime": "video/mp4", "url": DOWNLOAD}
+    assert calls == [("filelink", {"url": VIDEO})]  # no gesture: the conversation is not opened
+
+    driver, _ = _linker(monkeypatch, {"ok": True, "name": "x", "url": "https://evil.example.com/x.mp4"})
+    with pytest.raises(BridgeUnavailable):
+        driver.file_link(VIDEO)
+    driver, _ = _linker(monkeypatch, {"ok": False, "error": "accès au fichier refusé"})
+    with pytest.raises(BridgeUnavailable, match="accès au fichier refusé"):
+        driver.file_link(VIDEO)
+
+
+def test_file_link_refuses_a_link_outside_sharepoint_without_asking_the_page(monkeypatch):
+    driver, calls = _linker(monkeypatch, {"ok": True})
+    with pytest.raises(ValueError):
+        driver.file_link("https://evil.example.com/x.mp4")
+    assert calls == []
+
+
+def test_file_link_api(make_client):
+    client, _watcher, _driver = make_client(driver=AttachDriver(interval=9999))
+    res = client.post("/api/files/link", json={"url": VIDEO}).json()
+    assert res["ok"] and res["link"]["mime"] == "video/mp4" and res["link"]["url"].startswith("https://")
+    bad = client.post("/api/files/link", json={"url": "https://evil.example.com/x.mp4"})
+    assert bad.status_code == 422 and bad.json()["ok"] is False
+
+
+def test_file_link_without_graph_auth_asks_for_the_conversation(monkeypatch):
+    driver, _ = _linker(monkeypatch, {"ok": False, "reason": "no_auth", "error": "pas encore"})
+    with pytest.raises(NeedsView):
+        driver.file_link(VIDEO, DM)
+
+
+class NeedsViewDriver(AttachDriver):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.link_calls = []
+
+    def file_link(self, url, thread_id=None, show=False):
+        self.link_calls.append((thread_id, show))
+        if not show:
+            raise NeedsView("Teams n'a pas encore ouvert de fichier")
+        return {"name": "demo.mp4", "size": 1, "mime": "video/mp4", "url": DOWNLOAD}
+
+
+def test_file_link_api_opens_the_conversation_only_when_the_page_needs_it(make_client):
+    client, _watcher, driver = make_client(driver=NeedsViewDriver(interval=9999))
+    res = client.post("/api/files/link", json={"url": VIDEO, "thread_id": DM}).json()
+    assert res["ok"] and res["link"]["url"] == DOWNLOAD
+    assert driver.link_calls == [(DM, False), (DM, True)]
+    # Without its conversation, the file cannot be shown: a clear error, no gesture.
+    driver.link_calls.clear()
+    bad = client.post("/api/files/link", json={"url": VIDEO})
+    assert bad.status_code == 502 and driver.link_calls == [(None, False)]

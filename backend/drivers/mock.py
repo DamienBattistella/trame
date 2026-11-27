@@ -399,6 +399,13 @@ class MockTeamsDriver(TeamsDriver):
         return True
 
     can_attach = True
+    can_link_files = True
+
+    def file_link(self, url: str, thread_id=None, show: bool = False) -> dict:
+        if not url.startswith("https://") or ".sharepoint.com/" not in url:
+            raise ValueError("lien hors SharePoint / OneDrive")
+        return {"name": "demo.mp4", "size": 1_048_576, "mime": "video/mp4",
+                "url": "https://example-my.sharepoint.com/_layouts/15/download.aspx?UniqueId=demo"}
 
     def _send_files_into_active(self, thread_id, text, files, reply_to=None) -> bool:
         if self._active != thread_id:

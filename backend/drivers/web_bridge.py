@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import presence as presencemod
 from drivers import rail_label
-from drivers.base import DeleteUncertain, ReactUncertain, SendUncertain, TeamsDriver
+from drivers.base import DeleteUncertain, NeedsView, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
 from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, Surface,
                     WatchEntity)
@@ -53,8 +53,12 @@ def _files(raw: Any) -> list[FileRef]:
         if not name:
             continue
         url = str(f.get("url") or "")
-        out.append(FileRef(name=name, url=url if FILE_HOSTS.match(url) else ""))
+        out.append(FileRef(name=name, url=url if FILE_HOSTS.match(url) else "", kind="video" if f.get("kind") == "video" else ""))
     return out
+
+
+# Téléchargement pré-signé d'un fichier joint (op `filelink`) : SharePoint / OneDrive seulement.
+DOWNLOAD_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.(live\.)?com|1drv\.ms)/", re.IGNORECASE)
 
 
 def _images(raw: Any) -> list[ImageRef]:
@@ -201,7 +205,7 @@ class WebBridgeDriver(TeamsDriver):
                 self._pending.pop(cid, None)
 
     # Opérations sans geste dans Teams : leur échec ne dit rien des repères.
-    _QUIET_OPS = frozenset({"ping", "title", "probe", "diagnose", "webfetch"})
+    _QUIET_OPS = frozenset({"ping", "title", "probe", "diagnose", "webfetch", "filelink"})
 
     def _page_failed(self) -> None:
         hook = self.on_page_failure
@@ -428,6 +432,35 @@ class WebBridgeDriver(TeamsDriver):
         return out
 
     MAX_PHOTO_CHARS = 200_000
+
+    can_link_files = True
+
+    def file_link(self, url: str, thread_id: Optional[str] = None, show: bool = False) -> dict:
+        if not FILE_HOSTS.match(url or ""):
+            raise ValueError("lien hors SharePoint / OneDrive")
+        if not show:
+            res = self._rpc("filelink", timeout=20, url=url) or {}
+        else:
+            if not thread_id:
+                raise NeedsView("conversation du fichier inconnue")
+            # The chat is opened by its name: a restarted engine learns it from the list first.
+            if thread_id not in self._names:
+                self._items()
+            with self.focused(thread_id, restore=True) as focus:
+                if not focus.ok:
+                    raise BridgeUnavailable(f"Teams intégré : {focus.reason}")
+                res = self._rpc("filelink", timeout=25, url=url, show=True) or {}
+        if not isinstance(res, dict) or not res.get("ok"):
+            error = (res or {}).get("error") if isinstance(res, dict) else None
+            if isinstance(res, dict) and res.get("reason") == "no_auth" and not show:
+                raise NeedsView(error or "Teams n'a pas encore ouvert ce fichier")
+            raise BridgeUnavailable(f"Teams intégré : {error or 'lien de téléchargement illisible'}")
+        link = str(res.get("url") or "")
+        if not DOWNLOAD_HOSTS.match(link) or len(link) > 4000:
+            raise BridgeUnavailable("Teams intégré : lien de téléchargement inattendu")
+        size = res.get("size")
+        return {"name": _one_line(res.get("name"), 200), "size": size if isinstance(size, int) and size >= 0 else 0,
+                "mime": _one_line(res.get("mime"), 100), "url": link}
 
     def my_photo(self) -> Optional[str]:
         res = self._rpc("myphoto", timeout=6) or {}

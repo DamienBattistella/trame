@@ -25,6 +25,10 @@ class DeleteUncertain(RuntimeError):
     """« Supprimer » was clicked but Teams did not show the message as deleted."""
 
 
+class NeedsView(RuntimeError):
+    """The page can do it only once Teams has shown the item (e.g. a file's preview)."""
+
+
 class NotSupported(RuntimeError):
     """The active Teams driver cannot do this gesture (reaction, reply to a message)."""
 
@@ -280,6 +284,16 @@ class TeamsDriver(ABC):
         caller. Raises with the reason when the menu could not be used; menus are closed
         in any case."""
         raise NotSupported(self.status_unsupported)
+
+    can_link_files: bool = False
+    """True when the driver can turn a received file's share link into a download link."""
+
+    def file_link(self, url: str, thread_id: Optional[str] = None, show: bool = False) -> dict:
+        """A received file's direct download link: {name, size, mime, url}. The url is
+        pre-signed for that file only and short-lived: never logged nor stored.
+        Raises NeedsView when Teams must first show the file (show=True opens thread_id
+        and brings it on screen: a UI gesture, done under the caller's UI lock)."""
+        raise NotSupported("Lien de téléchargement indisponible avec ce pilote Teams.")
 
     def my_photo(self) -> Optional[str]:
         """The user's own profile photo as a small data URL (image/png or image/jpeg),

@@ -765,6 +765,8 @@ export function DiscussionView({
     setUndo(null);
   };
 
+  // Vidéo reçue : lien de téléchargement direct, résolu dans la page Teams pour cette conversation.
+  const fileLink = (url: string) => trame.fileLink(url, c.threadId);
   const openInTeams = async () => {
     const res = await trame.showInTeams(c.threadId);
     if (!res.ok) toast.error("Ouverture dans Teams impossible", { description: res.error });
@@ -1013,7 +1015,7 @@ export function DiscussionView({
                             )}
                           >
                             {body}
-                            <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
+                            <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} onFileLink={fileLink} />
                           </div>
                           {reactions}
                           {row.tail && m.at && <span className="mr-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
@@ -1037,7 +1039,7 @@ export function DiscussionView({
                             )}
                             <div className="flex flex-col gap-1.5 text-[0.9375rem] leading-relaxed whitespace-pre-wrap">
                               {body}
-                              <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} />
+                              <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} onFileLink={fileLink} />
                             </div>
                             {reactions}
                           </div>
