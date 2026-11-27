@@ -458,10 +458,13 @@ class WebApiDriver:
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
                      reply_to: Optional[MessageRef] = None, mentions: Any = (), files: Any = ()) -> Focus:
-        """Un envoi de texte simple part par le service de chat ; une saisie sans envoi, une
-        réponse citée, une mention ou une pièce jointe passent par la page."""
-        if send and reply_to is None and not mentions and not files and text.strip():
-            res = self._gesture("send", "send", thread_id, text=text)
+        """Un envoi de texte, en réponse citée ou non, part par le service de chat ; une saisie
+        sans envoi, une mention ou une pièce jointe passent par la page. Une réponse à un
+        message sans id Teams passe aussi par la page."""
+        replyable = reply_to is None or bool(reply_to.id)
+        if send and replyable and not mentions and not files and text.strip():
+            extra = {"reply": self._inner._ref(reply_to)} if reply_to is not None else {}
+            res = self._gesture("send", "send", thread_id, text=text, **extra)
             if res is not None:
                 if res.get("uncertain"):
                     raise SendUncertain(res.get("error") or "envoi non confirmé")

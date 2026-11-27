@@ -2449,15 +2449,38 @@
       crypto.getRandomValues(a);
       return (String(a[0]) + String(a[1]) + String(a[2])).replace(/^0+/, "1").padEnd(19, "7").slice(0, 19);
     };
-    const send = async ({ thread, text }) => {
+    // Citation d'une réponse (« Répondre »), écrite comme le composeur de Teams : le message cité
+    // par son id, son auteur (mri et nom), son heure (ms) et un extrait.
+    const PREVIEW_MAX = 200;
+    const quoteHtml = (t) => {
+      const raw = t.raw;
+      const at = Date.parse(raw.originalarrivaltime || raw.composetime || "") || Number(t.mid);
+      const preview = String(t.seen.text || "").replace(/\s+/g, " ").trim();
+      const cut = preview.length > PREVIEW_MAX ? preview.slice(0, PREVIEW_MAX - 1).trimEnd() + "…" : preview;
+      return (
+        `<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="${esc(t.mid)}">` +
+        `<strong itemprop="mri" itemid="${esc(mriOf(raw.from))}">${esc(String(raw.imdisplayname || ""))}</strong>` +
+        `<span itemprop="time" itemid="${at}"></span>` +
+        `<p itemprop="preview">${esc(cut)}</p></blockquote>`
+      );
+    };
+    const send = async ({ thread, text, reply }) => {
       const body = String(text || "").trim();
       if (!body) return notSent("message vide");
       if (body.length > 28000) return notSent("message trop long");
+      // Réponse citée : le message cité doit être celui que l'utilisateur a vu (id, auteur, texte).
+      let quote = "";
+      if (reply) {
+        const t = await target(thread, reply);
+        if (t.error) return notSent(`${t.error} : rien n'a été envoyé`);
+        if ((t.raw.properties || {}).deletetime) return notSent("message cité supprimé : rien n'a été envoyé");
+        quote = quoteHtml(t);
+      }
       const me = await chatsvc.whoami();
       const names = me ? await chatsvc.people([me]) : {};
       const cid = clientId();
       const w = await chatsvc.write("send", thread, null, {
-        content: toHtml(body),
+        content: quote + toHtml(body),
         messagetype: "RichText/Html",
         contenttype: "text",
         amsreferences: [],
@@ -2470,6 +2493,8 @@
       const found = await proven(async () => {
         const v = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 20 } });
         const hit = v.ok && ((v.json && v.json.messages) || []).find((m) => m && m.clientmessageid === cid);
+        // Une réponse n'est prouvée qu'avec sa citation relue.
+        if (hit && quote && !convertOf(hit).quote) return null;
         return hit ? { id: String(hit.id) } : null;
       }, w.ok ? [0, 700, 1500, 3000] : [0, 1500]);
       if (found) return { ok: true, id: found.id };
