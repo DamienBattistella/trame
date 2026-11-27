@@ -357,3 +357,37 @@ def test_added_conversations_get_a_list_label_the_archiving_can_read():
     for label, day in [("09:05", now.date()), ("Hier", (now - timedelta(days=1)).date()),
                        ("20/11", datetime(2026, 11, 20).date())]:
         assert archiving.label_date(label, now.date()) == day
+
+
+def test_several_messages_between_two_ticks_are_all_signalled_in_order_never_mine():
+    from models import IncomingMessage
+    now = _now_ms()
+    page = FakePage([row(GROUP, "group", "Projet X", now - 600000, sender="Paul", frm="8:orgid:paul", text="bonjour")])
+    reads = []
+
+    def read_history_api(tid, last_n, since=None):
+        reads.append((tid, last_n))
+        mk = lambda i, who, txt, me=False: IncomingMessage(thread_id=tid, sender=who, text=txt, received_at="10:0" + str(i),
+                                                         surface=Surface.group, id=str(now - 600000 + i), from_me=me)
+        return [mk(1, "Paul", "premier"), mk(2, "Moi", "ma réponse", True), mk(3, "Ana", "deuxième"),
+                mk(4, "Paul", "dernier")], False
+
+    page.read_history_api = read_history_api
+    d = WebApiDriver(page)
+    tick(d)
+    page.rows = [row(GROUP, "group", "Projet X", now - 600000 + 4, sender="Paul", frm="8:orgid:paul", text="dernier")]
+    # Le dernier est arrivé après le début de la surveillance : on recule primed_at pour le test.
+    d._chat.primed_at = (now - 600000) / 1000 - 1
+    got = tick(d)
+    assert [m.text for m in got] == ["premier", "deuxième", "dernier"]
+    assert len(reads) == 1
+
+
+def test_only_the_last_message_without_a_service_read():
+    now = _now_ms()
+    page = FakePage([row(GROUP, "group", "Projet X", now - 600000, sender="Paul", frm="8:orgid:paul", text="bonjour")])
+    d = WebApiDriver(page)  # pas de read_history_api : rien à relire
+    tick(d)
+    page.rows = [row(GROUP, "group", "Projet X", now - 600000 + 4, sender="Paul", frm="8:orgid:paul", text="dernier")]
+    d._chat.primed_at = (now - 600000) / 1000 - 1
+    assert [m.text for m in tick(d)] == ["dernier"]

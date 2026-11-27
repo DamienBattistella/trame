@@ -164,6 +164,10 @@ def test_driver_without_the_chat_service_uses_the_page():
 
 def test_bridge_gesture_resolves_the_teams_id_and_reports_no_answer_as_uncertain():
     d = WebBridgeDriver()
+    # Fenêtre Teams pas prête : refusé avant la file, rien n'est parti (jamais « incertain »).
+    assert d.chat_gesture("send", TID, text="x") == {
+        "ok": False, "attempted": False, "error": "la fenêtre Teams de Trame n'est pas prête"}
+    d.relay_connected = lambda: True
     sent = {}
     d._rpc = lambda op, **kw: sent.update(op=op, **kw) or {"ok": True}
     d.chat_aliases = {"name:Ana Martin": "19:a_b@unq.gbl.spaces"}
