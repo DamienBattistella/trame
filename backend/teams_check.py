@@ -34,6 +34,7 @@ FEATURES: dict[str, tuple[str, bool, bool]] = {
     "mention": ("la mention", False, False),
     "clear": ("le vidage de la zone de saisie", False, False),
     "typing": ("l'indicateur de frappe de la conversation ouverte", False, False),
+    "favorite": ("l'ajout et le retrait des favoris Teams", False, False),
 }
 
 # Chaque repère du pont : ce qu'il est dans Teams, et ce qui en dépend. Les clés sont celles
@@ -80,6 +81,9 @@ LANDMARKS: dict[str, tuple[str, tuple[str, ...]]] = {
     "search_tab": ("onglet Messages de la recherche", ("search",)),
     "attach_menu": ("entrée « Charger à partir de cet appareil »", ("attach",)),
     "discard_confirm": ("confirmation « Rejeter le brouillon »", ("clear",)),
+    "fav_move": ("entrée « Déplacer vers la section »", ("favorite",)),
+    "fav_section": ("section Favoris de « Déplacer vers la section »", ("favorite",)),
+    "fav_remove": ("entrée « Supprimer de la section »", ("favorite",)),
 }
 
 

@@ -133,6 +133,25 @@ class TeamsDriver(ABC):
         self.last_error = "marquer comme lu n'est pas pris en charge par ce pilote"
         return False
 
+    # --- Favoris de Teams : la section « Favoris » de la liste, source des favoris de Trame ---
+    on_favorites: Optional[Callable[[list[str]], None]] = None
+    """Appelé avec les favoris de Teams (ids, dans l'ordre de Teams) dès qu'ils sont lus pour
+    la première fois ou qu'ils changent."""
+
+    def teams_favorites(self) -> Optional[list[str]]:
+        """Les favoris de Teams tels que lus en dernier, None si ce pilote ne les lit pas
+        ou s'ils n'ont pas pu être lus en entier (section repliée, absente)."""
+        return None
+
+    def set_teams_favorite(self, thread_id: str, favorite: bool) -> bool:
+        """Ajoute la conversation aux Favoris de Teams ou l'en retire. True une fois fait (ou
+        déjà le cas) ; False avec last_error sinon. Un pilote qui ne sait pas le faire garde
+        ce défaut (supports_teams_favorites faux) : Trame gère alors ses favoris seul."""
+        self.last_error = "les favoris Teams ne sont pas pris en charge par ce pilote"
+        return False
+
+    supports_teams_favorites = False
+
     def clear_compose(self, thread_id: str) -> bool:
         """Empty the compose box of thread_id (text, pending attachments, pasted items), at
         the user's explicit request: a leftover there blocks every send. Opens the
