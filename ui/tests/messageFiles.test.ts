@@ -89,3 +89,17 @@ test("image collée dans le corps, sans son nom : vaut pour une image voulue, pa
 test("aucun message apparu : rien n'est prouvé", () => {
   assert.deepEqual(files.missing(["capture.png"], []), ["capture.png"]);
 });
+
+test("vidéo jointe (puce Stream, sans carte) : lue avec son nom, son lien et kind « video »", () => {
+  const el = message("video");
+  assert.deepEqual(files.filesOf(el), [
+    { name: "demo-compte-rendu 2.mp4", url: "https://example-my.sharepoint.com/:v:/g/personal/alex_martin_example_com/IQAxDemo", kind: "video" },
+  ]);
+  // Preuve d'envoi : la vidéo envoyée est bien vue dans le message.
+  assert.deepEqual(files.missing(["demo-compte-rendu 2.mp4"], [el]), []);
+  assert.deepEqual(files.missing(["autre.mp4"], [el]), ["autre.mp4"]);
+});
+
+test("une carte de fichier classique n'a pas de kind", () => {
+  assert.ok(files.filesOf(message("two-files")).every((f) => !("kind" in f)));
+});

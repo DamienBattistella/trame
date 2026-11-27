@@ -35,7 +35,7 @@ from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
-from drivers.base import DeleteUncertain, Focus, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
+from drivers.base import DeleteUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
@@ -1612,6 +1612,31 @@ class Watcher:
     @staticmethod
     def _joined(files: Sequence[Attachment]) -> str:
         return f" avec {attachmod.describe(list(files))}" if files else ""
+
+    def file_link(self, url: str, thread_id: Optional[str] = None) -> dict:
+        """Direct download link of a received file (video to play, file to save). Usually
+        no gesture: a signed request in the page. Until Teams has itself opened a file in
+        this session, the page cannot sign it: the conversation is then opened briefly (UI
+        lock, screen-share rule) so Teams shows the file. The link is returned, never logged."""
+        try:
+            try:
+                return self.driver.file_link(url, thread_id)
+            except NeedsView:
+                if not thread_id:
+                    raise
+                with self._ui_lock:
+                    if self._screen_share_guarded():
+                        raise ActionError(409, "Partage d'écran en cours : Trame n'ouvre pas la conversation dans Teams.")
+                    return self.driver.file_link(url, thread_id, show=True)
+        except ActionError:
+            raise
+        except NotSupported as e:
+            raise ActionError(501, str(e))
+        except ValueError as e:
+            raise ActionError(422, str(e))
+        except Exception as e:
+            self.log("warn", f"Fichier joint non ouvert : {e}")
+            raise ActionError(502, f"Fichier non ouvert : {e}")
 
     def attachments_info(self) -> dict:
         """What the conversation view needs to offer « Joindre » (or say why not)."""

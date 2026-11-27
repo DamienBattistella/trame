@@ -112,9 +112,11 @@ def brain_text(text: str, links: list[LinkRef], cards: list[CardRef]) -> str:
 
 
 class FileRef(BaseModel):
-    """Un fichier joint à un message : son nom et le lien pour l'ouvrir (https seulement)."""
+    """Un fichier joint à un message : son nom et le lien pour l'ouvrir (https seulement).
+    kind : « video » pour une vidéo (lue dans Trame), vide sinon."""
     name: str
     url: str = ""
+    kind: str = ""
 
 
 class ImageRef(BaseModel):
