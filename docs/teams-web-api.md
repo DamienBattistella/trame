@@ -299,6 +299,15 @@ lecture des transcriptions par la page reste valable. Créneau : les heures pré
 `endtime`), sinon les heures réelles ; transcrite si un message de transcription tombe entre le
 début et 10 min après la fin. Service indisponible : la page, comme avant.
 
+Toutes les sortes de réunion : en plus des conversations de réunion planifiée (`19:meeting_…`, les 12
+plus récentes), les groupes nommés et tête-à-tête actifs depuis 30 jours (les 12 plus récents) sont
+relus pour leurs appels (« Réunion maintenant », réunion planifiée dans un groupe existant, appel
+transcrit) : mêmes `Event/Call`. Hors des conversations de réunion, seuls les appels **transcrits**
+sont gardés. Jusqu'à 3 pages de 200 messages par conversation (`backwardLink`). Le nom de la
+conversation est retenu pour que la page l'ouvre ensuite (aussi après un redémarrage du moteur,
+depuis la liste gardée sur le poste). Les réunions de canal (`@thread.tacv2`) ne sont pas couvertes :
+la page ne sait ouvrir que les conversations de la liste de Chat.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).

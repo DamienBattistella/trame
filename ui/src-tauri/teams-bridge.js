@@ -2899,10 +2899,45 @@
       const near = (await dayEvents(callStart)).filter((e) => e.subject === want && Math.abs(e.start - callStart) <= 2 * 3600000);
       return near.length === 1 ? near[0] : null;
     };
+    // Pages de 200 messages, au plus MAX_PAGES : dans un groupe actif, l'appel d'il y a quelques
+    // jours est souvent au-delà des 200 derniers messages.
+    const MAX_PAGES = 3;
+    const read = async (thread) => {
+      const path = `/v1/users/ME/conversations/${encodeURIComponent(thread)}/messages`;
+      let query = { view: "msnp24Equivalent", pageSize: 200 };
+      const acc = new Map();
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const r = await chatsvc.get({ path, query });
+        if (!r.ok) {
+          if (page === 0) return { ok: false, error: r.error || "fil refusé par le service de chat" };
+          break;
+        }
+        const list = (r.json && r.json.messages) || [];
+        for (const m of list) if (m && /^\d{1,20}$/.test(String(m.id || ""))) acc.set(String(m.id), m);
+        const back = r.json && r.json._metadata && r.json._metadata.backwardLink;
+        if (!list.length || !back) break;
+        try {
+          const q = new URL(back).searchParams;
+          query = {};
+          for (const k of ["view", "pageSize", "startTime", "syncState"]) if (q.get(k)) query[k] = q.get(k);
+        } catch {
+          break;
+        }
+      }
+      return { ok: true, msgs: Array.from(acc.values()).sort((a, b) => Number(a.id) - Number(b.id)) };
+    };
+    // Toutes les sortes de réunion : la conversation d'une réunion planifiée (« 19:meeting_… »),
+    // et les appels d'un groupe ou d'un tête-à-tête (« Réunion maintenant », réunion planifiée
+    // dans un groupe existant, appel transcrit) qui laissent les mêmes `Event/Call`. Hors des
+    // conversations de réunion, seuls les appels transcrits comptent : un appel sans transcription
+    // n'a rien à télécharger.
+    const MEETING_CHAT = /^19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2$/;
+    const CALL_CHAT = /^19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype)|unq\.gbl\.spaces)$/;
     const one = async (thread, topic) => {
-      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
-      if (!r.ok) return { thread, ok: false, error: r.error || "fil refusé par le service de chat" };
-      const msgs = ((r.json && r.json.messages) || []).filter((m) => m && /^\d{1,20}$/.test(String(m.id || ""))).sort((a, b) => Number(a.id) - Number(b.id));
+      const got = await read(thread);
+      if (!got.ok) return { thread, ok: false, error: got.error };
+      const msgs = got.msgs;
+      const onlyTranscribed = !MEETING_CHAT.test(thread);
       const recaps = [];
       for (let i = 0; i < msgs.length; i++) {
         const m = msgs[i];
@@ -2931,6 +2966,7 @@
         if (b < a) b = new Date(endId);
         // Transcrite : un message de transcription entre le début et peu après la fin.
         const transcript = msgs.some((x) => x.messagetype === "RichText/Media_CallTranscript" && Number(x.id) >= startId && Number(x.id) <= endId + 10 * 60 * 1000);
+        if (onlyTranscribed && !transcript) continue;
         // L'agenda dit le créneau de CETTE occurrence (déplacée ou non) quand il le dit sans doute.
         const ev = await fromCalendar(topic, actual);
         const slot = ev ? [ev.start, ev.end] : [a, b];
@@ -2939,7 +2975,7 @@
       return { thread, ok: true, recaps: recaps.reverse() };
     };
     return async ({ threads = [], topics = {} } = {}) => {
-      const ids = (Array.isArray(threads) ? threads : []).filter((t) => /^19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2$/.test(String(t))).slice(0, 30);
+      const ids = (Array.isArray(threads) ? threads : []).filter((t) => CALL_CHAT.test(String(t))).slice(0, 30);
       const out = [];
       calendar.clear();
       for (const t of ids) {

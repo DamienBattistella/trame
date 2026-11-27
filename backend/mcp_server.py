@@ -111,7 +111,8 @@ TOOLS: list[dict] = [
           "lus sur le service de présence de Teams (sinon dans le menu du profil de sa fenêtre Teams)."),
     # --- réunions : transcriptions (lecture seule dans Teams) ---
     _tool("list_meetings", "Réunions et transcriptions",
-          "Réunions Teams terminées des conversations de réunion récentes : meeting_id, titre, date (ISO), créneau, "
+          "Réunions Teams terminées des conversations de réunion récentes, et appels transcrits des groupes "
+          "et tête-à-tête récents : meeting_id, titre, date (ISO), créneau, "
           "conversation, transcription disponible ou non, organisateur (connu une fois la transcription relue). "
           "Trame ouvre brièvement chaque conversation de réunion dans sa fenêtre Teams, en lecture seule. "
           "Seulement les réunions auxquelles l'utilisateur a accès. " + MEETING_UNTRUSTED,

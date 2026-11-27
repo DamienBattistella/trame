@@ -720,36 +720,107 @@ class WebApiDriver:
 
     # --- Réunions terminées : lues sur le service, sans ouvrir les conversations ------------
     MAX_MEETING_CHATS = 12
+    # Groupes et tête-à-tête relus en plus pour leurs appels transcrits (« Réunion maintenant »,
+    # réunion planifiée dans un groupe existant, appel transcrit) : les plus récents seulement.
+    MAX_CALL_CHATS = 12
+
+    def _meeting_chats(self, limit: Optional[int]) -> list[tuple[str, str, str]]:
+        """(id Teams, thread_id de Trame, nom) des conversations où chercher des réunions : les
+        conversations de réunion, puis les groupes nommés et tête-à-tête actifs depuis RECENT_DAYS
+        jours. Le thread_id est celui de la page (même règle que la liste), et le nom est retenu
+        pour que la transcription s'ouvre ensuite dans la page."""
+        st = self._chat
+        rows = sorted((r for r in list(st.rows.values()) if not r.get("hidden") and not r.get("empty")),
+                      key=lambda r: -((r.get("last") or {}).get("ts") or 0))
+        by_cid = {c: t for t, c in st.mapped.items()}
+        dm_count: dict[str, int] = {}
+        for r in rows:
+            if r.get("kind") == "dm" and r.get("name"):
+                k = str(r["name"]).casefold()
+                dm_count[k] = dm_count.get(k, 0) + 1
+        horizon = (time.time() - self.RECENT_DAYS * 86400) * 1000
+        meetings: list[tuple[str, str, str]] = []
+        calls: list[tuple[str, str, str]] = []
+        names = getattr(self._inner, "_names", None)
+        kinds = getattr(self._inner, "_kinds", None)
+        for r in rows:
+            cid, kind = str(r.get("id") or ""), r.get("kind")
+            if not cid:
+                continue
+            topic = str(r.get("topic") or "").strip()
+            if kind == "meeting":
+                if len(meetings) >= (limit or self.MAX_MEETING_CHATS):
+                    continue
+                # Toujours « title-… » : l'id déjà gardé dans la liste des réunions du poste.
+                tid, name, surface, into = f"title-{cid}", topic or "Réunion", Surface.group, meetings
+            elif len(calls) >= self.MAX_CALL_CHATS or ((r.get("last") or {}).get("ts") or 0) < horizon:
+                continue
+            elif kind == "group" and topic:
+                tid, name, surface, into = by_cid.get(cid) or f"title-{cid}", topic, Surface.group, calls
+            elif kind == "dm" and r.get("name") and dm_count.get(str(r["name"]).casefold()) == 1:
+                name = str(r["name"]).strip()
+                tid, surface, into = by_cid.get(cid) or f"name:{name}", Surface.dm, calls
+            else:
+                continue
+            # Le nom affiché par la page (jamais « Réunion » par défaut : il ouvrirait une autre conversation).
+            if isinstance(names, dict) and (topic or surface == Surface.dm):
+                names.setdefault(tid, name)
+            if isinstance(kinds, dict):
+                kinds.setdefault(tid, surface)
+            into.append((cid, tid, name))
+        return meetings + calls
 
     def list_meetings(self, limit: Optional[int] = None) -> list[dict]:
-        """Les réunions terminées des conversations de réunion les plus récentes, lues sur le
-        service de chat (rien n'est ouvert dans la page) : mêmes champs et même `mid` que la
-        lecture des cartes de la page, donc la transcription se relit comme avant. Service
-        indisponible : la page, comme avant."""
+        """Les réunions terminées, lues sur le service de chat (rien n'est ouvert dans la page) :
+        celles des conversations de réunion les plus récentes, et les appels transcrits des
+        groupes et tête-à-tête récents. Mêmes champs et même `mid` que la lecture des cartes de
+        la page, donc la transcription se relit comme avant. Service indisponible : la page,
+        comme avant."""
         api = getattr(self._inner, "meetings_api", None)
         st = self._chat
         if callable(api):
             if not st.ok:
                 self._refresh_chat()
-            rows = sorted((r for r in list(st.rows.values()) if r.get("kind") == "meeting"),
-                          key=lambda r: -((r.get("last") or {}).get("ts") or 0))[: limit or self.MAX_MEETING_CHATS]
-            if rows:
+            chats = self._meeting_chats(limit)
+            if chats:
+                # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence
+                # déplacée) ; un tête-à-tête n'en a pas.
+                topics = {cid: (name if not tid.startswith("name:") else "") for cid, tid, name in chats}
                 try:
-                    # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence déplacée).
-                    chats = api([str(r["id"]) for r in rows], {str(r["id"]): str(r.get("topic") or "") for r in rows})
+                    found = api([cid for cid, _, _ in chats], topics)
                 except Exception as e:
                     self._route("meetings", "page", f"repli sur la page : {e}")
                 else:
-                    topic = {str(r["id"]): str(r.get("topic") or "").strip() for r in rows}
+                    where = {cid: (tid, name) for cid, tid, name in chats}
                     out = []
-                    for c in chats:
-                        tid, name = f"title-{c['thread']}", topic.get(c["thread"]) or "Réunion"
+                    for c in found:
+                        if c["thread"] not in where:
+                            continue
+                        tid, name = where[c["thread"]]
                         for r in c["recaps"]:
                             out.append({"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
                                         "when": r["when"], "transcript": r["transcript"]})
                     self._route("meetings", "api")
                     return out
         return self._inner.list_meetings(limit)
+
+    def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
+        """La transcription se lit dans la page, qui ouvre la conversation par son nom. Une réunion
+        de la liste gardée sur le poste (moteur redémarré) ou d'une conversation que la page n'a
+        pas dessinée n'a pas encore de nom connu : il est pris sur le service de chat."""
+        names = getattr(self._inner, "_names", None)
+        chat_id = getattr(self._inner, "chat_id", None)
+        if isinstance(names, dict) and thread_id not in names and not thread_id.startswith("name:") and callable(chat_id):
+            cid = chat_id(thread_id)
+            if cid:
+                if not self._chat.ok:
+                    self._refresh_chat()
+                row = self._chat.rows.get(cid) or {}
+                name = str(row.get("topic") or "").strip() or (str(row.get("name") or "").strip()
+                                                              if row.get("kind") == "dm" else "")
+                if name:
+                    names[thread_id] = name
+        return self._inner.meeting_transcript(thread_id, mid, probe)
 
     # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
     def start_chat(self, name: str) -> Optional[WatchEntity]:
