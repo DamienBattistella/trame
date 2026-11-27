@@ -1281,3 +1281,28 @@ test("chatgesture send : deux personnes mentionnées côte à côte, relues sép
   const mine = back.messages.find((m: any) => m.id === String(sent.id));
   assert.deepEqual(JSON.parse(JSON.stringify(mine.mentions)), ["Ana Martin", "Marc Dupont"]);
 });
+
+test("chatread : toutes les réactions du message, avec leur nombre et la mienne, quelle que soit la clé", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001", {
+      properties: {
+        emotions: JSON.stringify([
+          { key: "like", users: [{ mri: MY_MRI, time: 1 }, { mri: "8:orgid:ana", time: 2 }] },
+          { key: "1f44f_clappinghands", users: [{ mri: "8:orgid:ana", time: 3 }] },
+          { key: "Pas une clé!", users: [{ mri: "8:orgid:ana", time: 4 }] },
+          { key: "sad", users: [] },
+        ]),
+      },
+    }),
+  };
+  chatServer(p, messages);
+  const r = (await p.run("chatread", { thread: GROUP_ID, last: 5 })).result;
+  const m = r.messages[0];
+  assert.deepEqual(JSON.parse(JSON.stringify(m.reactions)), ["like"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(m.reactionCounts)), [
+    { key: "like", count: 2, mine: true },
+    { key: "1f44f_clappinghands", count: 1, mine: false },
+  ]);
+});

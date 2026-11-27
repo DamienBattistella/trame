@@ -1,7 +1,8 @@
 from __future__ import annotations
+import re
 from enum import Enum
-from typing import Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Annotated, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from presence import Presence
 from teams_check import TeamsCheck
@@ -36,13 +37,54 @@ class WatchEntity(BaseModel):
 
 
 # Le petit jeu de réactions de Teams : clé stable côté moteur, emoji côté interface.
+# Les réactions rapides de Teams (barre de gestes), dans son ordre.
 REACTIONS: dict[str, str] = {
     "like": "👍",
     "heart": "❤️",
     "laugh": "😆",
     "surprised": "😮",
+    "sad": "😢",
+    "angry": "😡",
 }
-Reaction = Literal["like", "heart", "laugh", "surprised"]
+# Toute réaction de Teams : une clé d'émoticône (« like », « clap », « 1f44f_clappinghands »…).
+REACTION_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+Reaction = Annotated[str, StringConstraints(pattern=REACTION_KEY.pattern)]
+
+# Émoticônes Skype courantes que Teams emploie encore comme clés de réaction.
+_SKYPE_EMOJI = {
+    "smile": "🙂", "happy": "😊", "wink": "😉", "cool": "😎", "cry": "😭", "yes": "👍", "no": "👎",
+    "clap": "👏", "party": "🎉", "fire": "🔥", "rocket": "🚀", "pray": "🙏", "praying": "🙏", "ok": "👌",
+    "thinking": "🤔", "eyes": "👀", "check": "✅", "star": "⭐", "100": "💯", "tada": "🎉", "muscle": "💪",
+    "rofl": "🤣", "joy": "😂", "facepalm": "🤦", "shrug": "🤷", "wave": "👋", "coffee": "☕", "beer": "🍺",
+    "cake": "🎂", "sun": "☀️", "kiss": "😘", "inlove": "😍", "think": "🤔", "highfive": "🙌", "handshake": "🤝",
+}
+
+
+def reaction_emoji(key: str) -> str:
+    """L'emoji d'une clé de réaction de Teams : les réactions rapides, les émoticônes Skype
+    courantes, puis les identifiants d'emoji qui commencent par leurs points de code
+    (« 1f44f_clappinghands » -> 👏, « 2764-fe0f_redheart » -> ❤️). Inconnue : "" (la clé
+    est alors montrée telle quelle)."""
+    k = (key or "").strip().lower()
+    if k in REACTIONS:
+        return REACTIONS[k]
+    if k in _SKYPE_EMOJI:
+        return _SKYPE_EMOJI[k]
+    m = re.match(r"^((?:[0-9a-f]{4,6})(?:-[0-9a-f]{4,6})*)_", k)
+    if m:
+        try:
+            return "".join(chr(int(cp, 16)) for cp in m.group(1).split("-"))
+        except (ValueError, OverflowError):
+            return ""
+    return ""
+
+
+class ReactionCount(BaseModel):
+    """Une réaction sur un message : sa clé, son emoji, combien l'ont mise, et si tu en fais partie."""
+    key: str
+    emoji: str = ""
+    count: int = 1
+    mine: bool = False
 
 # Ce que Teams affiche à la place d'un message supprimé.
 DELETED_TEXT = "Ce message a été supprimé."
@@ -59,6 +101,8 @@ class IncomingMessage(BaseModel):
     # l'utilisateur y a déjà mises (clés de REACTIONS).
     id: Optional[str] = None
     reactions: list[str] = Field(default_factory=list)
+    # Toutes les réactions du message (les tiennes et celles des autres), quand le pilote les lit.
+    reaction_counts: list["ReactionCount"] = Field(default_factory=list)
     # Pièces jointes reçues : fichiers (nom et lien Teams/SharePoint) et images (aperçu).
     files: list["FileRef"] = Field(default_factory=list)
     images: list["ImageRef"] = Field(default_factory=list)

@@ -12,7 +12,7 @@ import presence as presencemod
 from drivers import rail_label
 from drivers.base import DeleteUncertain, EditUncertain, NeedsView, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, QuoteRef, Surface,
+from models import (DELETED_TEXT, REACTION_KEY, CardRef, ReactionCount, reaction_emoji, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, QuoteRef, Surface,
                     WatchEntity)
 
 
@@ -115,6 +115,22 @@ def _quote(raw: Any) -> Optional[QuoteRef]:
     text = raw.get("text") if isinstance(raw.get("text"), str) else ""
     ref = QuoteRef(sender=_one_line(raw.get("sender"), 200), at=_one_line(raw.get("at"), 40), text=text.strip()[:2000])
     return ref if ref.sender or ref.text else None
+
+
+def _reaction_counts(raw: Any) -> list[ReactionCount]:
+    """Toutes les réactions d'un message, telles que la page les lit : clé, nombre, et si l'une
+    est la tienne. L'emoji est déduit ici de la clé (jamais pris tel quel de la page)."""
+    out: list[ReactionCount] = []
+    for r in (raw if isinstance(raw, list) else [])[:30]:
+        key = r.get("key") if isinstance(r, dict) else None
+        if not isinstance(key, str) or not REACTION_KEY.match(key):
+            continue
+        try:
+            count = max(1, min(9999, int(r.get("count") or 1)))
+        except (TypeError, ValueError):
+            count = 1
+        out.append(ReactionCount(key=key, emoji=reaction_emoji(key), count=count, mine=bool(r.get("mine"))))
+    return out
 
 
 def _mentions(raw: Any) -> list[str]:
@@ -670,7 +686,8 @@ class WebBridgeDriver(TeamsDriver):
             msgs.append(IncomingMessage(thread_id=thread_id, sender=(m.get("sender") or "").strip(),
                                         text=DELETED_TEXT if deleted else text,
                                         received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
-                                        reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
+                                        reactions=[r for r in (m.get("reactions") or []) if isinstance(r, str) and REACTION_KEY.match(r)][:20],
+                                        reaction_counts=_reaction_counts(m.get("reactionCounts")),
                                         files=files, images=images, seen=_seen(m.get("status")), deleted=deleted,
                                         links=[] if deleted else links, cards=[] if deleted else cards,
                                         quote=None if deleted else _quote(m.get("quote")),

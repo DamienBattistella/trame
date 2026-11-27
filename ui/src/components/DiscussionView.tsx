@@ -28,7 +28,7 @@ import { layoutThread } from "@/lib/threadLayout";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
-import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ThreadMessage, WatchEntity } from "@/types";
+import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ReactionCount, ThreadMessage, WatchEntity, reactionGlyph } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsShort, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -78,7 +78,12 @@ function foundAt(shown: ThreadMessage[], found: MessageHit | null): number {
   return -1;
 }
 
-const EMOJI = Object.fromEntries(REACTIONS.map((r) => [r.key, r.emoji])) as Record<Reaction, string>;
+/** Les réactions d'un message à afficher : toutes celles que Teams donne (avec leur nombre),
+ *  sinon les tiennes seules (pilote qui ne lit pas celles des autres). */
+const tallyOf = (m: ThreadMessage): ReactionCount[] =>
+  m.reaction_counts && m.reaction_counts.length
+    ? m.reaction_counts
+    : (m.reactions ?? []).map((key) => ({ key, emoji: "", count: 1, mine: true }));
 const refOf = (m: ThreadMessage): MessageRef => ({ id: m.id ?? null, sender: m.sender, text: m.text, at: m.at });
 const sameRef = (a: MessageRef | null, b: ThreadMessage) =>
   Boolean(a) && (a!.id && b.id ? a!.id === b.id : a!.text === b.text && a!.sender === b.sender);
@@ -732,16 +737,23 @@ export function DiscussionView({
   const react = async (m: ThreadMessage, index: number, reaction: Reaction) => {
     if (reacting) return;
     const remove = (m.reactions ?? []).includes(reaction);
+    const glyph = reactionGlyph(reaction, tallyOf(m).find((r) => r.key === reaction)?.emoji);
     setReacting({ index, reaction });
     const res = await trame.reactInThread(c.threadId, refOf(m), reaction, remove);
     setReacting(null);
-    if (!res.ok) return toast.error(`${remove ? "Retrait de la réaction" : "Réaction"} ${EMOJI[reaction]} impossible`, { description: res.error });
+    if (!res.ok) return toast.error(`${remove ? "Retrait de la réaction" : "Réaction"} ${glyph} impossible`, { description: res.error });
     setMessages((list) =>
       (list ?? []).map((x, i) => {
         if (i !== index || x.text !== m.text) return x;
         const had = x.reactions ?? [];
-        if (remove) return { ...x, reactions: had.filter((r) => r !== reaction) };
-        return had.includes(reaction) ? x : { ...x, reactions: [...had, reaction] };
+        // Le décompte suit : le tien en plus ou en moins, les autres inchangés.
+        const counts = (x.reaction_counts ?? [])
+          .map((r) => (r.key !== reaction ? r : { ...r, mine: !remove, count: r.count + (remove ? -1 : r.mine ? 0 : 1) }))
+          .filter((r) => r.count > 0);
+        if (!remove && x.reaction_counts && !counts.some((r) => r.key === reaction))
+          counts.push({ key: reaction, emoji: glyph.startsWith(":") ? "" : glyph, count: 1, mine: true });
+        if (remove) return { ...x, reactions: had.filter((r) => r !== reaction), reaction_counts: x.reaction_counts ? counts : undefined };
+        return had.includes(reaction) ? x : { ...x, reactions: [...had, reaction], reaction_counts: x.reaction_counts ? counts : undefined };
       })
     );
   };
@@ -1077,11 +1089,14 @@ export function DiscussionView({
                     <LinkCards cards={m.cards} />
                   </>
                 );
-                const reactions = (m.reactions?.length ?? 0) > 0 && (
-                  <div className={cn("flex items-center gap-1", m.mine && "justify-end")}>
+                const tally = tallyOf(m);
+                const reactions = tally.length > 0 && (
+                  <div className={cn("flex flex-wrap items-center gap-1", m.mine && "justify-end")}>
                     <AnimatePresence initial={false}>
-                      {(m.reactions ?? []).map((r) => {
-                        const label = REACTIONS.find((x) => x.key === r)?.label ?? r;
+                      {tally.map((t) => {
+                        const r = t.key;
+                        const label = REACTIONS.find((x) => x.key === r)?.label ?? reactionGlyph(r, t.emoji);
+                        const who = t.mine ? (t.count > 1 ? `Toi et ${t.count - 1} autre${t.count > 2 ? "s" : ""}` : "Toi") : `${t.count} personne${t.count > 1 ? "s" : ""}`;
                         return (
                           <motion.button
                             key={r}
@@ -1090,13 +1105,20 @@ export function DiscussionView({
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.4, opacity: 0 }}
                             transition={{ type: "spring", stiffness: 500, damping: 22 }}
-                            title={canReact ? `Tu as réagi : ${label} · cliquer pour retirer` : `Tu as réagi : ${label}`}
-                            aria-label={`Retirer la réaction : ${label}`}
+                            title={`${who} : ${label}${canReact ? (t.mine ? " · cliquer pour retirer" : " · cliquer pour réagir aussi") : ""}`}
+                            aria-label={t.mine ? `Retirer la réaction : ${label}` : `Réagir aussi : ${label}`}
+                            aria-pressed={t.mine}
                             disabled={!canReact || Boolean(reacting)}
                             onClick={() => react(m, i, r)}
-                            className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5 enabled:hover:border-primary/60 enabled:hover:bg-primary/20 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full border px-1.5 text-xs leading-5 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default",
+                              t.mine
+                                ? "border-primary/30 bg-primary/10 enabled:hover:border-primary/60 enabled:hover:bg-primary/20"
+                                : "border-border bg-muted/40 enabled:hover:bg-muted"
+                            )}
                           >
-                            {pending === r ? <Loader2 className="inline size-3 animate-spin" /> : EMOJI[r]}
+                            {pending === r ? <Loader2 className="inline size-3 animate-spin" /> : reactionGlyph(r, t.emoji)}
+                            {t.count > 1 && <span className="tabular-nums text-muted-foreground">{t.count}</span>}
                           </motion.button>
                         );
                       })}
