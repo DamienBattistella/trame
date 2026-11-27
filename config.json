@@ -26,10 +26,7 @@
     "dm": "every_message",
     "group": "mention_or_named",
     "channel": "mention_or_named",
-    "self_names": [
-      "Damien",
-      "Damien Battistella"
-    ]
+    "self_names": []
   },
   "reply": {
     "auto_send_countdown_seconds": 5,
