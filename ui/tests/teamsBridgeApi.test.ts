@@ -1306,3 +1306,35 @@ test("chatread : toutes les réactions du message, avec leur nombre et la mienne
     { key: "1f44f_clappinghands", count: 1, mine: false },
   ]);
 });
+
+test("chatmeetings : une carte par fin d'appel (mid = message de fin), créneau prévu, transcription détectée", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_YTM1abc@thread.v2";
+  const iso = (s: string) => new Date(s).toISOString();
+  const start = new Date("2026-11-27T11:00:48").getTime();
+  const end = new Date("2026-11-27T11:20:16").getTime();
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: `<partlist type="started"><meetingdetails><starttime>${iso("2026-11-27T11:00:00")}</starttime><endtime>${iso("2026-11-27T11:20:00")}</endtime></meetingdetails></partlist>` },
+    { id: String(start + 2070), messagetype: "RichText/Media_CallTranscript", content: "" },
+    { id: String(start + 9000), messagetype: "RichText/Html", content: "<p>Bonjour</p>" },
+    { id: String(end), messagetype: "Event/Call", content: "<ended/><partlist type=\"ended\"><part><name>x</name><duration>1168</duration></part></partlist>" },
+    // Une occurrence sans transcription et sans créneau prévu : heures réelles.
+    { id: String(end + 86400000), messagetype: "Event/Call", content: "<partlist type=\"started\"></partlist>" },
+    { id: String(end + 86400000 + 600000), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs.slice().reverse() }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET, "19:pas-une-reunion@thread.v2"] })).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.chats.length, 1);
+  const [later, first] = r.chats[0].recaps;
+  assert.equal(first.mid, String(end));
+  assert.equal(first.when, "vendredi 27 novembre 2026 11:00 - 11:20");
+  assert.equal(first.transcript, true);
+  assert.equal(later.transcript, false);
+  assert.equal(later.when, "samedi 28 novembre 2026 11:20 - 11:30");
+});
