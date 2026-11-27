@@ -495,10 +495,11 @@ class WebApiDriver:
 
     # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
     def start_chat(self, name: str) -> Optional[WatchEntity]:
-        """Le tête-à-tête avec `name`, trouvé sur le service sans ouvrir la page : la personne
-        par la recherche de Teams (un seul nom identique), puis SA conversation dans la liste du
-        service de chat (l'id du tête-à-tête contient son identifiant). Rien n'est tapé. Personne
-        introuvable, homonymes, ou tête-à-tête jamais créé : la page, comme avant."""
+        """Le tête-à-tête avec `name`, sans ouvrir la page : la personne par la recherche de
+        Teams (un seul nom identique), puis SA conversation sur le service de chat (l'id du
+        tête-à-tête contient son identifiant), créée comme Teams le fait si elle n'existe pas
+        encore. Rien n'est tapé. Personne introuvable, homonymes, service indisponible : la
+        page, comme avant."""
         shown = " ".join((name or "").split())
         hit = self._existing_dm(shown) if shown else None
         if hit is None:
@@ -533,9 +534,17 @@ class WebApiDriver:
         if not st.ok:
             self._refresh_chat()
         cid = next((c for c, r in st.rows.items() if r.get("kind") == "dm" and r.get("other") == mri), None)
-        if cid is None:
-            self._route("start_chat", "page", "repli sur la page : pas encore de conversation avec cette personne")
+        if cid is not None:
+            return person, cid
+        # Absent de la liste lue : trouvé par son id, ou créé (sans message), puis relu.
+        dm = getattr(self._inner, "chat_dm", None)
+        res = dm(mri) if callable(dm) else None
+        if not res or not res.get("ok"):
+            why = (res or {}).get("error") or "tête-à-tête introuvable sur le service"
+            self._route("start_chat", "page", f"repli sur la page : {why}")
             return None
+        cid = str(res["id"])
+        st.rows.setdefault(cid, {"id": cid, "kind": "dm", "other": mri, "name": person})
         return person, cid
 
     # --- Présence, statut, note et recherche de personnes ------------------------------

@@ -1098,3 +1098,67 @@ test("teamspeople sans jeton Teams observé : refus sans appel réseau", async (
   assert.equal(r.ok, false);
   assert.equal(p.fetchCalls.length, before);
 });
+
+// --- Tête-à-tête trouvé ou créé sur le service (op chatdm) ---------------------------------
+const dmServer = (p: any, state: { exists: boolean; refuse?: number }) => {
+  const calls: Array<{ url: string; method: string; body: any }> = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    const method = (init && init.method) || "GET";
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method, body });
+    if (method === "POST" && url.endsWith("/v1/threads")) {
+      if (state.refuse) return fakeResponse("{}", { status: state.refuse });
+      state.exists = true;
+      return fakeResponse("", { status: 201 });
+    }
+    if (url.includes("/v1/users/ME/conversations/")) {
+      const id = decodeURIComponent(url.split("/conversations/")[1].split("?")[0]);
+      return state.exists ? fakeResponse(JSON.stringify({ id })) : fakeResponse("{}", { status: 404 });
+    }
+    return fakeResponse("{}", { status: 404 });
+  });
+  return calls;
+};
+const DM_ID = `19:${ME_GUID}_${OTHER_GUID}@unq.gbl.spaces`; // guids triés, comme Teams
+
+test("chatdm : tête-à-tête existant trouvé par son id calculé comme Teams, rien n'est écrit", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls = dmServer(p, { exists: true });
+  const r = (await p.run("chatdm", { mri: `8:orgid:${OTHER_GUID}` })).result;
+  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, id: DM_ID, created: false });
+  assert.ok(!calls.some((c) => c.method !== "GET"));
+});
+
+test("chatdm : tête-à-tête absent créé comme Teams (uniquerosterthread), puis relu", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls = dmServer(p, { exists: false });
+  const r = (await p.run("chatdm", { mri: `8:orgid:${OTHER_GUID}` })).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.created, true);
+  assert.equal(r.id, DM_ID);
+  const post = calls.find((c) => c.method === "POST")!;
+  assert.ok(post.url.endsWith("/v1/threads"));
+  assert.deepEqual(post.body, {
+    members: [{ id: `8:orgid:${ME_GUID}`, role: "Admin" }, { id: `8:orgid:${OTHER_GUID}`, role: "Admin" }],
+    properties: { threadType: "chat", chatFilesIndexId: "2", fixedRoster: true, uniquerosterthread: true },
+  });
+});
+
+test("chatdm : identifiant inattendu, soi-même ou création refusée → la page", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls = dmServer(p, { exists: false, refuse: 403 });
+  for (const mri of ["pas-un-mri", `8:orgid:${ME_GUID}`]) {
+    const r = (await p.run("chatdm", { mri })).result;
+    assert.equal(r.ok, false);
+    assert.equal(r.attempted, false);
+  }
+  assert.equal(calls.filter((c) => c.method === "POST").length, 0);
+  const refused = (await p.run("chatdm", { mri: `8:orgid:${OTHER_GUID}` })).result;
+  assert.equal(refused.ok, false);
+  assert.equal(refused.attempted, false);
+  assert.match(refused.error, /403/);
+});

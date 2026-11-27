@@ -31,6 +31,13 @@ class FakePage:
     def chat_list(self, sync=""):
         return {"full": True, "rows": self.rows, "sync": "S", "me": "8:orgid:me"}
 
+    dm_answer: dict = {"ok": False, "attempted": False, "error": "service indisponible"}
+    dm_calls: list = []
+
+    def chat_dm(self, mri):
+        self.dm_calls = [*self.dm_calls, mri]
+        return dict(self.dm_answer)
+
     def start_chat(self, name):
         self.page.append(name)
         return WatchEntity(thread_id=f"name:{name}", display_name=name, surface=Surface.dm)
@@ -58,12 +65,23 @@ def test_started_chat_stays_linked_and_writable_after_the_next_list_refresh():
     assert page.chat_aliases == {"name:Ana Martin": DM}
 
 
-def test_never_created_one_to_one_goes_to_the_page():
+def test_one_to_one_missing_from_the_list_is_found_or_created_on_the_service():
+    page = FakePage(rows=[])
+    page.dm_answer = {"ok": True, "id": DM, "created": True}
+    d = WebApiDriver(page)
+    e = d.start_chat("Ana Martin")
+    assert page.dm_calls == [ANA]
+    assert page.page == [] and e.thread_id == "name:Ana Martin"
+    assert page.chat_aliases == {"name:Ana Martin": DM}
+    assert d.routes()["start_chat"]["via"] == "api"
+
+
+def test_one_to_one_the_service_cannot_open_goes_to_the_page():
     page = FakePage(rows=[])
     d = WebApiDriver(page)
     d.start_chat("Ana Martin")
     assert page.page == ["Ana Martin"]
-    assert "pas encore de conversation" in d.routes()["start_chat"]["reason"]
+    assert "service indisponible" in d.routes()["start_chat"]["reason"]
 
 
 def test_namesakes_or_nobody_found_go_to_the_page():
