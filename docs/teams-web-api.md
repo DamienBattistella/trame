@@ -219,11 +219,35 @@ Requêtes relevées dans le code de Teams, faites dans la page avec la session d
   la même heure à la minute. Relié au jour près seulement : lecture par le service, gestes par la
   page.
 
+### 7. Présence, note de statut, recherche de personnes — op `teamspeople`
+
+Le **bearer middletier** que Teams pose lui-même (audience `api.spaces.skype.com`) ouvre aussi le
+service de présence et la recherche de personnes (vérifié en direct : 200 ; le jeton du chat, lui,
+y est refusé).
+
+| Fonction | Requête |
+|---|---|
+| mon statut et ma note | `GET https://presence.teams.microsoft.com/v1/me/presence` |
+| présence d'autres personnes | `POST …/v1/presence/getpresence/` `[{"mri": …}]` (100 au plus) |
+| note de statut | `PUT …/v1/me/publishnote` `{"message": "<p>…</p>", "expiry": "…Z"}` |
+| recherche de personnes | `POST {middletier}/beta/users/searchV2?…&source=newChat` corps : la requête en chaîne JSON |
+
+- La note est stockée en **HTML** : lue en texte avec l'extracteur des messages, écrite en un
+  paragraphe comme Teams. Son **échéance est conservée** (« jamais » vaut `9999-12-30T23:00:00Z`
+  à Paris) ; écrite puis relue.
+- Présence des tête-à-tête : pour **toute** la liste (la page ne voit que les lignes dessinées),
+  par l'interlocuteur connu grâce à `chatlist`, au plus une fois par minute.
+- Le **changement de disponibilité** (Disponible, Occupé, Ne pas déranger…, avec durée) reste sur
+  la page : non vérifiable en direct sans changer le statut visible de l'utilisateur.
+- La **recherche de messages** reste sur la page : elle passe par `substrate.office.com`, dont la
+  page n'expose pas le jeton.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
 2. ~~Session chatsvc dans la page~~ (#121).
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
-4. ~~Écritures simples~~ (cette PR) ; restent la réponse citée et les mentions par le service.
-5. Présence et statut, note, recherche (personnes, messages), nouvelle conversation.
-6. **Contrôle des repères** : ne vérifier que les repères des actions restées sur la page.
+4. ~~Écritures simples~~ (#128) ; restent la réponse citée et les mentions par le service.
+5. ~~Présence, mon statut, note, recherche de personnes~~ (cette PR) ; restent le changement de
+   disponibilité, la recherche de messages, la nouvelle conversation.
+6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).

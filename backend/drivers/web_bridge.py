@@ -596,6 +596,18 @@ class WebBridgeDriver(TeamsDriver):
         return res if isinstance(res, dict) else {"ok": False, "attempted": True, "uncertain": True,
                                                   "error": "réponse illisible de la page"}
 
+    def teams_people(self, kind: str, timeout: float = 15.0, **args: Any) -> dict:
+        """Présence (« me », « of »), note de statut (« note ») ou recherche de personnes
+        (« search »), faites DANS la page sur le middletier et le service de présence de Teams.
+        Lève ApiError sur un refus avant écriture ; une note partie sans preuve revient
+        {uncertain: True}."""
+        res = self._rpc("teamspeople", kind=kind, timeout=timeout, **args)
+        if not isinstance(res, dict):
+            raise self.ApiError("réponse illisible de la page")
+        if not res.get("ok") and not res.get("attempted"):
+            raise self.ApiError(res.get("error") or "refusé par Teams", status=res.get("status"))
+        return res
+
     @staticmethod
     def chat_id(thread_id: str) -> Optional[str]:
         """L'id de la conversation pour le service de chat (« 19:…@thread.v2 »). Les lignes de

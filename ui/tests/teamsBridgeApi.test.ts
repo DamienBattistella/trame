@@ -893,3 +893,76 @@ test("chatgesture : conversation sans id Teams, rien ne part", async () => {
   assert.equal(r.attempted, false);
   assert.equal(p.fetchCalls.length, before);
 });
+
+// --- Présence, note de statut, recherche de personnes (op teamspeople) -------------------
+const presenceServer = (p: any, state: any) => {
+  const calls: Array<{ url: string; method: string; body: any; auth: string }> = [];
+  p.setResponse((url: string, init: any) => {
+    const method = (init && init.method) || "GET";
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method, body, auth: (init && init.headers && init.headers.Authorization) || "" });
+    if (url.endsWith("/v1/me/presence")) return fakeResponse(JSON.stringify(state.me));
+    if (url.endsWith("/v1/me/publishnote")) {
+      state.me.note = { message: body.message, expiry: body.expiry };
+      return fakeResponse("", { status: 200 });
+    }
+    if (url.endsWith("/presence/getpresence/")) return fakeResponse(JSON.stringify(body.map((x: any) => ({ mri: x.mri, presence: { availability: "Busy", activity: "InAMeeting" } }))));
+    if (url.includes("/users/searchV2")) return fakeResponse(JSON.stringify({ value: [{ displayName: "Ana Martin", mri: "8:orgid:ana", email: "ana@x" }, { displayName: "" }] }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  return calls;
+};
+
+test("teamspeople : présence et note lues avec le bearer de Teams, rien d'autre ne sort", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls = presenceServer(p, { me: { availability: "Busy", activity: "InAMeeting", note: { message: "<p>Atelier &amp; démo</p><p>&nbsp;</p>", expiry: "2099-01-01T10:00:00.000Z" } } });
+  const r = (await p.run("teamspeople", { kind: "me" })).result;
+  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, availability: "Busy", activity: "InAMeeting", ooo: false, note: { message: "Atelier & démo", expiry: "2099-01-01T10:00:00.000Z" } });
+  assert.equal(calls[0].url, "https://presence.teams.microsoft.com/v1/me/presence");
+  assert.equal(calls[0].auth, "Bearer MT-SECRET");
+  assert.ok(!/MT-SECRET/.test(JSON.stringify(r)));
+  const of = (await p.run("teamspeople", { kind: "of", mris: ["8:orgid:ana", "pas-un-mri", "8:orgid:ana"] })).result;
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body)), [{ mri: "8:orgid:ana" }]);
+  assert.equal(of.people["8:orgid:ana"].activity, "InAMeeting");
+});
+
+test("teamspeople note : écrite avec l'échéance donnée, prouvée en relisant", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const state = { me: { availability: "Busy", note: { message: "Atelier", expiry: "2099-01-01T10:00:00.000Z" } } };
+  const calls = presenceServer(p, state);
+  const r = (await p.run("teamspeople", { kind: "note", message: "  Retour   lundi ", expiry: "2099-01-01T10:00:00.000Z" })).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.message, "Retour lundi");
+  const put = calls.find((c) => c.method === "PUT")!;
+  assert.equal(put.url, "https://presence.teams.microsoft.com/v1/me/publishnote");
+  // Écrite comme Teams : un paragraphe HTML, texte échappé.
+  assert.deepEqual(put.body, { message: "<p>Retour lundi</p>", expiry: "2099-01-01T10:00:00.000Z" });
+  // Échéance invalide : rien ne part.
+  const before = calls.length;
+  const bad = (await p.run("teamspeople", { kind: "note", message: "x", expiry: "demain" })).result;
+  assert.equal(bad.ok, false);
+  assert.equal(bad.attempted, false);
+  assert.equal(calls.length, before);
+});
+
+test("teamspeople search : requête en chaîne JSON sur le middletier du locataire, noms seulement", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls = presenceServer(p, { me: {} });
+  const r = (await p.run("teamspeople", { kind: "search", query: "  ana ", limit: 5 })).result;
+  assert.equal(r.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.people)), [{ name: "Ana Martin", mri: "8:orgid:ana", email: "ana@x" }]);
+  assert.ok(calls[0].url.startsWith("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/searchV2?"));
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body, "ana");
+});
+
+test("teamspeople sans jeton Teams observé : refus sans appel réseau", async () => {
+  const p = teamsPage();
+  const before = p.fetchCalls.length;
+  const r = (await p.run("teamspeople", { kind: "me" })).result;
+  assert.equal(r.ok, false);
+  assert.equal(p.fetchCalls.length, before);
+});

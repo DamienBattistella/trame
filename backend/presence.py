@@ -132,6 +132,29 @@ def until_label(at: datetime, now: datetime) -> str:
 MESSAGE_MAX = 280
 
 
+# Valeurs du service de présence de Teams (availability / activity) vers celles de Trame.
+_SERVICE_ACTIVITY: dict[str, Presence] = {
+    "inacall": "in_call", "inaconferencecall": "in_call", "inameeting": "in_meeting",
+    "presenting": "presenting", "outofoffice": "ooo", "focusing": "dnd", "urgentinterruptionsonly": "dnd",
+}
+_SERVICE_AVAILABILITY: dict[str, Presence] = {
+    "available": "available", "availableidle": "available", "busy": "busy", "busyidle": "busy",
+    "donotdisturb": "dnd", "berightback": "brb", "away": "away", "offline": "offline",
+}
+
+
+def from_service(availability: Optional[str], activity: Optional[str] = None, ooo: bool = False) -> Optional[Presence]:
+    """Statut tel que le service de présence le donne : l'activité précise d'abord (en réunion,
+    en appel, en présentation), puis la disponibilité. Inconnu (« PresenceUnknown ») : rien."""
+    act = str(activity or "").replace(" ", "").casefold()
+    if act in _SERVICE_ACTIVITY:
+        return _SERVICE_ACTIVITY[act]
+    avail = _SERVICE_AVAILABILITY.get(str(availability or "").replace(" ", "").casefold())
+    if ooo and avail in (None, "away", "offline", "available"):
+        return "ooo"
+    return avail
+
+
 def own_from_labels(candidates) -> Optional[Presence]:
     """The user's status from what the profile button says: « Votre profil, statut Ne
     pas déranger », « Your profile, status Available », or the badge (« do not disturb »)."""
