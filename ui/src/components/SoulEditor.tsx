@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { FileText, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { analyzeSoul, Quality } from "@/lib/soulInsight";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
@@ -55,12 +55,11 @@ export function SoulEditor({
           <Loader2 className="size-4 animate-spin" /> Préparation à partir de Teams…
         </div>
       ) : (
-        <Textarea
-          aria-label="Contenu du SOUL.md"
+        <MarkdownEditor
+          label="Contenu du SOUL.md"
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          spellCheck
-          className="h-[clamp(10rem,calc(100dvh-30rem),22rem)] resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+          onChange={setText}
+          className="h-[clamp(12rem,calc(100dvh-28rem),26rem)]"
         />
       )}
       <div className="flex items-center gap-2 border-t px-4 py-2.5">
