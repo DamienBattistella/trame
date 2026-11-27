@@ -319,3 +319,15 @@ Les réunions Teams que Trame a lues, placées dans une semaine (ou un jour) en 
 - **Fenêtre moyenne ou large** (≥ 1280 px) : mini-mois à gauche (semaine affichée surlignée, point sous les jours qui ont des réunions, clic sur un jour pour y aller) et légende. En dessous, la grille seule.
 - **Vide** : sans liste lue, une invitation à chercher ses réunions ; sur une période sans réunion, un bouton vers la dernière.
 
+## MCP complet (2026-11-27)
+
+Le serveur MCP (`backend/mcp_server.py`, Streamable HTTP sur `/mcp`, protocole 2025-06-18, 2025-03-26 et 2024-11-05 acceptés) ne se limite plus aux outils et prompts.
+
+- **Ressources** en lecture seule : `trame://status`, `persona` (Markdown), `conversations`, `drafts`, `settings` (sans jeton), `skills`, `logs`, `report/latest`, plus une ressource par discussion suivie ou favorite. Modèles : `trame://conversation/{thread_id}` (identifiant encodé), `…/{thread_id}/summary`, `trame://person/{name}`, `trame://draft/{draft_id}`. Pas d'abonnement : rien n'est poussé hors requête (`GET /mcp` reste 405).
+- **Outils** : `structuredContent` quand le résultat est un objet (le texte JSON reste pour les anciens clients), et un `resource_link` vers la discussion quand le résultat en nomme une.
+- **Prompts** : trier, répondre (persona jointe en ressource embarquée), résumer, rattraper, compte-rendu de réunion, diagnostiquer.
+- **Complétion** des noms de discussion, des `thread_id`, des personnes de l'entourage et des `draft_id`.
+- **Flux SSE** pour un `tools/call` seulement quand il sert : jeton de progression, journal demandé (`logging/setLevel`) ou envoi à confirmer. Sinon la réponse reste du JSON simple.
+- **Confirmation d'envoi** (elicitation) : avec l'envoi autorisé, si le client déclare `elicitation`, `send_draft` et `send_message` demandent « Envoyer ce message à … ? » ; refus, annulation ou silence de 2 min : rien ne part. Un client sans elicitation garde le comportement d'avant.
+- **Sessions** : `Mcp-Session-Id` à l'initialisation (50 au plus, en mémoire), `DELETE /mcp` la ferme. Une session inconnue (Trame redémarré) est servie sans état plutôt que refusée.
+- **Hors champ** : sampling et roots (Trame a son propre cerveau et ne lit pas de fichiers du client).

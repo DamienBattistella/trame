@@ -117,9 +117,10 @@ def test_prompts_and_settings_hide_token(make_client):
     client, _w, _d = make_client()
     token = _enable(client)
     prompts = _call(client, token, "prompts/list").json()["result"]["prompts"]
-    assert {p["name"] for p in prompts} == {"trier_mes_messages", "repondre_a", "diagnostiquer_trame"}
+    assert {p["name"] for p in prompts} == {"trier_mes_messages", "repondre_a", "resumer", "rattraper",
+                                                "compte_rendu_reunion", "diagnostiquer_trame"}
     got = _call(client, token, "prompts/get", {"name": "repondre_a", "arguments": {"nom": "Romain"}}).json()["result"]
-    assert "Romain" in got["messages"][0]["content"]["text"]
+    assert "Romain" in got["messages"][-1]["content"]["text"]
     err, settings = _tool(client, token, "get_settings")
     assert not err and "token" not in settings["mcp"]
     err, persona = _tool(client, token, "get_persona")

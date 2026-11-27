@@ -870,7 +870,9 @@ def create_app(
         watcher.factory_reset()
         return {"ok": True}
 
-    app.include_router(make_mcp_router(watcher))
+    mcp_router = make_mcp_router(watcher)
+    app.state.mcp_pending = mcp_router.pending
+    app.include_router(mcp_router)
 
     def _bridge():
         from drivers.web_bridge import WebBridgeDriver
