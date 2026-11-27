@@ -48,10 +48,11 @@ def test_recent_conversations_the_page_did_not_draw_are_added_with_page_ids():
     got = d.list_conversations()
     assert [(e.thread_id, e.display_name, e.surface) for e in got] == [
         ("name:Ana Martin", "Ana Martin", Surface.dm),
+        ("48:notes", "Mes notes", Surface.dm),  # tes notes : la page ne les montre pas
         (f"title-{GRP}", "Projet FHIR", Surface.group),
         ("name:Marc Petit", "Marc Petit", Surface.dm),
     ]
-    assert [e.rank for e in got[1:]] == [1, 2]
+    assert [e.rank for e in got[1:]] == [1, 2, 3]
     assert page._names["name:Marc Petit"] == "Marc Petit"
     assert d.routes()["list"]["via"] == "api"
     # Reliées par construction : lisibles et écrivables par le service.
@@ -66,3 +67,16 @@ def test_namesakes_and_conversations_the_page_already_shows_are_not_added():
     d = WebApiDriver(FakePage([SHOWN], rows))
     assert [e.thread_id for e in d.list_conversations()] == ["name:Ana Martin"]
     assert d.routes()["list"]["via"] == "page"
+
+
+def test_self_notes_from_the_service_when_the_page_shows_none():
+    rows = [row("48:notes", "self", NOW - 1000), row(GRP, "group", NOW - 2000, topic="Projet FHIR")]
+    d = WebApiDriver(FakePage([SHOWN], rows))
+    got = {e.thread_id: e for e in d.list_conversations()}
+    assert got["48:notes"].is_self and got["48:notes"].display_name == "Mes notes"
+    d._map([SHOWN])
+    assert d._chat.mapped["48:notes"] == "48:notes" and "48:notes" in d._chat.strong
+    # La page montre déjà tes notes : pas de doublon.
+    mine = WatchEntity(thread_id="name:Moi (Vous)", display_name="Moi (Vous)", surface=Surface.dm, is_self=True)
+    d2 = WebApiDriver(FakePage([SHOWN, mine], rows))
+    assert "48:notes" not in [e.thread_id for e in d2.list_conversations()]
