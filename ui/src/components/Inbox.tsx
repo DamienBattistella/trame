@@ -571,6 +571,13 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             }}
           />
         </div>
+        {trame.connected && trame.state.readiness.page === "waiting" && (
+          // Teams se charge dans sa fenêtre : rien n'est en erreur, les actions attendent leur tour.
+          <p role="status" className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+            Teams se connecte… les nouveaux messages et les envois arrivent dans un instant.
+          </p>
+        )}
         <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
           <DndContext
             sensors={sensors}

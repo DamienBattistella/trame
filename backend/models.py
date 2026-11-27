@@ -211,12 +211,24 @@ class Capabilities(BaseModel):
     edit: bool = False
 
 
+class Readiness(BaseModel):
+    """Ce qui est prêt dans Teams, capacité par capacité, pour que l'interface dise « Teams se
+    connecte… » au lieu d'afficher des erreurs. « waiting » : pas encore ; « ready » : prêt ;
+    « off » : pas de Teams intégré (autre pilote, ou option désactivée)."""
+    page: Literal["waiting", "ready", "off"] = "waiting"
+    # Service de chat de Teams (lecture sans ouvrir, envois, présence) ; « off » sans API Teams web.
+    chat: Literal["waiting", "ready", "off"] = "off"
+    # Depuis quand l'état de la page n'a pas changé (heure locale « HH:MM:SS »).
+    since: str = ""
+
+
 class AppState(BaseModel):
     onboarded: bool = False
     paused: bool = False
     screen_sharing: bool = False
     brain: Literal["claude", "copilot"] = "claude"
     selftest_ok: bool = True
+    readiness: Readiness = Field(default_factory=Readiness)
     watchlist: list[WatchEntity] = Field(default_factory=list)
     drafts: list[Draft] = Field(default_factory=list)
     logs: list[LogItem] = Field(default_factory=list)

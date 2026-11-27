@@ -895,15 +895,19 @@ def create_app(
     def teams_web_status():
         d = watcher.driver
         routes = getattr(d, "routes", None)
-        signing = getattr(d, "signing", None)
-        chat = getattr(d, "chatsvc", None)
+        health = getattr(d, "health", None)
+        if callable(health):
+            h = health()  # un seul diagnostic de la page pour les deux
+        else:
+            signing, chat = getattr(d, "signing", None), getattr(d, "chatsvc", None)
+            h = {"signing": signing() if callable(signing) else None, "chatsvc": chat() if callable(chat) else None}
         return {"ok": True, "api": {
             "driver": type(d).__name__,
             "routes": routes() if callable(routes) else {},
             # Santé de la signature (statut HTTP d'une sonde signée) ; None si pas mesurée.
-            "signing": signing() if callable(signing) else None,
+            "signing": h.get("signing"),
             # Session du service de chat ouverte dans la page ; None si pas mesurée.
-            "chatsvc": chat() if callable(chat) else None,
+            "chatsvc": h.get("chatsvc"),
         }}
 
     @app.get("/api/health")
