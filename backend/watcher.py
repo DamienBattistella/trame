@@ -52,6 +52,11 @@ CANCELLED = "Action annulée."
 FORMER_SHIPPED_SELF_NAMES = ("Damien", "Damien Battistella")
 
 
+def _images_seen(images: list[str]) -> str:
+    """For the reflection panel: how many images the model gets to look at."""
+    return f", {len(images)} image(s) montrée(s) au modèle" if images else ""
+
+
 def _gathered(n_messages: int, people: str) -> str:
     who = f"entourage ({sum(1 for x in people.splitlines() if x.strip())} ligne(s))" if people else "entourage (personne de connu)"
     return f"Contexte rassemblé : fil ({n_messages} message(s)), {who}, GitHub (non utilisé pour une proposition)"
@@ -123,6 +128,8 @@ class Watcher:
         # Dernier message vu passer, par conversation : complète l'heure de la liste Teams.
         self._seen_at: dict[str, datetime] = {}
         self._history: dict[str, tuple[float, str]] = {}
+        # Images joined to the cached summary (same key, same lifetime as `_history`).
+        self._history_images: dict[str, list[str]] = {}
         # thread id -> (read at, messages, how many were asked, start of the conversation reached)
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
         # Organisateur des réunions dont la transcription a été relue (par meeting_id).
@@ -726,6 +733,7 @@ class Watcher:
             gh_thread = threading.Thread(target=_fetch_github, daemon=True)
             gh_thread.start()
         summary = self._summary(msg.thread_id, ctx.get("last_messages", 15))
+        images = self._history_images.get(msg.thread_id, []) if summary else []
         if gh_thread is not None:
             gh_thread.join()
         gh_ctx = gh_result[0]
@@ -739,9 +747,10 @@ class Watcher:
                 reflection.step(f"Message reçu de {msg.sender} ({len(msg.text)} caractères), "
                                 f"mode {'auto' if entity.mode == 'auto' and not force_draft else 'brouillon'}")
                 reflection.step(f"Contexte : fil ({summary.count(chr(10)) + 1 if summary else 0} ligne(s))"
-                                f"{', GitHub' if gh_ctx else ''}")
+                                f"{', GitHub' if gh_ctx else ''}{_images_seen(images)}")
                 self._brain_call("rédiger la réponse")
-                proposal = self.brain.draft(self.soul, summary, msg.text, gh_ctx, self._people_context(msg, summary, entity))
+                proposal = self._draft_reply(summary, msg.text or self._as_text(msg).text, gh_ctx,
+                                             self._people_context(msg, summary, entity), images)
                 reflection.step(f"Réponse reçue ({len(proposal)} caractères)")
                 reflection.result(proposal)
         except Exception as e:
@@ -1776,18 +1785,20 @@ class Watcher:
                    if m.text or m.files or m.images or m.cards]
             reflection.check_cancelled()
             return self._suggest_for(entity, raw, target)
-        msgs = self._read_focused(thread_id, entity.display_name, last_n, purpose="Proposition")
+        raw = [m for m in self._read_history_focused(thread_id, entity.display_name, last_n, "Proposition")[0]
+               if m.text or m.files or m.images or m.cards]
         reflection.check_cancelled()
+        msgs, images = self._brain_view(raw)
         theirs = [m for m in msgs if not self._is_mine(m.sender)]
         if not theirs:
             raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
         last = theirs[-1]
         summary = "\n".join(f"{m.sender}: {m.text}" for m in msgs[:-1])
         people = self._people_context(last, summary, entity)
-        reflection.step(_gathered(len(msgs), people))
+        reflection.step(_gathered(len(msgs), people) + _images_seen(images))
         self._brain_call(f"réponse au dernier message de {last.sender}")
         try:
-            reply = self.brain.draft(self.soul, summary, last.text, "", people)
+            reply = self._draft_reply(summary, last.text, "", people, images)
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -1797,10 +1808,12 @@ class Watcher:
         message »): its text, author and attachments, the thread around it as context.
         On one of the user's own messages, a follow-up or a complement, never a reply to
         themself. Only returns the text: nothing is queued, nothing is sent."""
-        msgs = [self._as_text(m) for m in raw]
+        msgs, images = self._brain_view(raw)
         idx = next((i for i in range(len(raw) - 1, -1, -1)
                     if (not target.id or raw[i].id == target.id)
-                    and (same_message(target, raw[i].sender, raw[i].text) or same_message(target, msgs[i].sender, msgs[i].text))),
+                    # Compared without the image numbers: the app names an image-only message « [image] ».
+                    and (same_message(target, raw[i].sender, raw[i].text)
+                         or same_message(target, raw[i].sender, self._as_text(raw[i]).text))),
                    None)
         if idx is None:
             # Older than the read window: answer it with the recent thread as context.
@@ -1810,9 +1823,9 @@ class Watcher:
             before, after = msgs, []
         else:
             last, before, after = msgs[idx], msgs[:idx], msgs[idx + 1:]
-            joined = [f.name for f in raw[idx].files] + (["image"] * len(raw[idx].images))
-            if joined:
-                reflection.step(f"Pièces jointes du message ciblé : {', '.join(joined)} (nommées, non lues)")
+            if raw[idx].files:
+                reflection.step(f"Fichiers joints au message ciblé : {', '.join(f.name for f in raw[idx].files)} "
+                                "(nommés, non lus)")
         mine = self._is_mine(last.sender)
         lines = [f"{m.sender}: {m.text}" for m in before]
         if after:
@@ -1825,10 +1838,10 @@ class Watcher:
             lines.append(f"(La réponse cite et répond précisément au message suivant de {last.sender}, pas au dernier du fil.)")
         summary = "\n".join(lines).strip()
         people = self._people_context(last, summary, None if mine else entity)
-        reflection.step(_gathered(len(before) + len(after), people))
+        reflection.step(_gathered(len(before) + len(after), people) + _images_seen(images))
         self._brain_call(f"{'relance de ton message' if mine else f'réponse au message cité de {last.sender}'}")
         try:
-            reply = self.brain.draft(self.soul, summary, last.text, "", people)
+            reply = self._draft_reply(summary, last.text, "", people, images)
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -2460,11 +2473,40 @@ class Watcher:
         return [self._as_text(m) for m in self._read_history_focused(thread_id, name, last_n, purpose, since)[0]
                 if m.text or m.files or m.images or m.cards]
 
+    # Most images shown to the brain with one request (the most recent of the thread).
+    BRAIN_IMAGES = 4
+
+    def _brain_view(self, raw: list[IncomingMessage]) -> tuple[list[IncomingMessage], list[str]]:
+        """Messages as the brain reads them, and the images it gets to see: on a brain
+        with vision, the most recent images of the thread that Trame could capture, numbered
+        in order ([image 1], [image 2]...). Any other image stays « [image] »."""
+        picked: list[tuple[int, int, str]] = []
+        if getattr(self.brain, "supports_images", False):
+            for i in range(len(raw) - 1, -1, -1):
+                for j in range(len(raw[i].images) - 1, -1, -1):
+                    data = raw[i].images[j].data
+                    if data and len(picked) < self.BRAIN_IMAGES:
+                        picked.append((i, j, data))
+            picked.reverse()
+        number = {(i, j): n for n, (i, j, _) in enumerate(picked, 1)}
+        msgs = [self._as_text(m, [number.get((i, j)) for j in range(len(m.images))]) for i, m in enumerate(raw)]
+        return msgs, [data for _, _, data in picked]
+
+    def _draft_reply(self, summary: str, incoming: str, gh_ctx: str, people: str, images: list[str]) -> str:
+        """`brain.draft`, with the thread's images when there are some (a brain without
+        vision never gets them: `_brain_view` only picks images for one that has it)."""
+        if images:
+            return self.brain.draft(self.soul, summary, incoming, gh_ctx, people, images=images)
+        return self.brain.draft(self.soul, summary, incoming, gh_ctx, people)
+
     @staticmethod
-    def _as_text(m: IncomingMessage) -> IncomingMessage:
+    def _as_text(m: IncomingMessage, numbers: Optional[list[Optional[int]]] = None) -> IncomingMessage:
         # Links as « text (address) » and one line per preview card: the brain sees
-        # where a link goes, never the card's labels and buttons.
-        extra = [f"[fichier joint : {f.name}]" for f in m.files] + ["[image]"] * len(m.images)
+        # where a link goes, never the card's labels and buttons. An image shown to the
+        # brain carries its number (« [image 2] »), the others stay « [image] ».
+        numbers = numbers or []
+        extra = [f"[fichier joint : {f.name}]" for f in m.files] + \
+            [f"[image {numbers[j]}]" if j < len(numbers) and numbers[j] else "[image]" for j in range(len(m.images))]
         if not extra and not m.links and not m.cards:
             return m
         return m.model_copy(update={"text": "\n".join([m.brain_text(), *extra]).strip(), "images": []})
@@ -3083,9 +3125,11 @@ class Watcher:
             return ""
         self.archive.add(thread_id, msgs)
         self._track(thread_id, msgs)
-        text = "\n".join(f"{m.sender}: {m.brain_text()}" for m in msgs)
+        seen, images = self._brain_view([m for m in msgs if m.text or m.files or m.images or m.cards])
+        text = "\n".join(f"{m.sender}: {m.text}" for m in seen)
         if text:
             self._history[thread_id] = (time.monotonic(), text)
+        self._history_images[thread_id] = images if text else []
         return text
 
     def _merge(self, discovered: list[WatchEntity]) -> list[WatchEntity]:

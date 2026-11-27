@@ -1525,14 +1525,47 @@
   const filesOf = messageFiles.filesOf;
   const imagesOf = messageFiles.imagesOf;
   const THUMBS = { max: 8, width: 1024, budget: 3_000_000 };
-  // Miniature JPEG d'une image déjà affichée par Teams (adresse blob: de la page) ;
-  // null si elle n'est pas chargée ou pas lisible.
+  const loaded = (img) => img.complete && img.naturalWidth > 0;
+  const local = (src) => {
+    try {
+      return src.startsWith("blob:") || src.startsWith("data:image/") || new URL(src).origin === location.origin;
+    } catch {
+      return false;
+    }
+  };
+  // L'image d'origine, demandée au service Teams qui la sert (AMS), signée DANS la page
+  // avec l'auth que Teams a posée pour cet hôte (comme `webfetch`) : pour une image que
+  // Teams n'a pas encore chargée (chargement différé) ou qu'il affiche par son adresse.
+  const fetchSigned = async (img) => {
+    const urls = ["data-orig-src", "data-gallery-src", "src"].map((k) => img.getAttribute(k) || "");
+    for (const raw of urls) {
+      let u;
+      try {
+        u = new URL(raw, location.origin);
+      } catch {
+        continue;
+      }
+      if (u.protocol !== "https:" || !API_HOSTS.test(u.hostname)) continue;
+      const headers = {};
+      const c = apiCapture.credsFor(u.toString());
+      if (c && c.authorization) headers["Authorization"] = c.authorization;
+      if (c && c.xSkypetoken) headers["X-Skypetoken"] = c.xSkypetoken;
+      try {
+        const res = await fetch(u.toString(), { credentials: "include", headers });
+        const blob = res.ok ? await res.blob() : null;
+        if (blob && /^image\//.test(blob.type || res.headers.get("content-type") || "")) return blob;
+      } catch {}
+    }
+    return null;
+  };
+  // Miniature JPEG d'une image d'un message : celle que Teams affiche déjà (adresse blob:
+  // de la page), sinon l'originale demandée au service Teams ; null si rien n'est lisible.
   const thumbnail = async (img) => {
     try {
-      if (!img.complete || !img.naturalWidth) return null;
-      const src = img.currentSrc || img.src;
-      if (!src.startsWith("blob:") && new URL(src).origin !== location.origin) return null;
-      const bitmap = await createImageBitmap(await (await fetch(src)).blob());
+      const src = img.currentSrc || img.src || "";
+      const blob = loaded(img) && local(src) ? await (await fetch(src)).blob() : await fetchSigned(img);
+      if (!blob) return null;
+      const bitmap = await createImageBitmap(blob);
       const scale = Math.min(1, THUMBS.width / bitmap.width);
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(bitmap.width * scale);
@@ -1552,6 +1585,14 @@
       const id = el.querySelector('[id^="content-"]')?.id || el.getAttribute("data-mid") || el.id;
       if (id) byId.set(id, el);
     }
+    // Teams charge les images au fil de l'eau : celles du fil encore en cours de chargement
+    // ont un court délai, toutes ensemble, avant la capture.
+    const pending = messages
+      .filter((m) => m.images)
+      .flatMap((m) => imagesOf(byId.get(m.key) || document.createElement("div")))
+      .filter((img) => !loaded(img));
+    if (pending.length)
+      await Promise.race([Promise.all(pending.map((img) => (img.decode ? img.decode() : Promise.resolve()).catch(() => {}))), sleep(2500)]);
     let count = 0;
     let weight = 0;
     for (const m of [...messages].reverse()) {

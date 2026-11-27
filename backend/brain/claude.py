@@ -3,11 +3,12 @@ import json
 import shutil
 import subprocess
 import threading
+from typing import Sequence
 
 import reflection
 
 from winproc import _creationflags
-from brain.base import Brain, build_prompt, clean_reply
+from brain.base import Brain, build_prompt, clean_reply, image_block
 from brain.isolation import sandbox_dir
 
 # Teams messages are untrusted input: the model only writes text. No tools, no MCP
@@ -21,6 +22,8 @@ class ClaudeBrain(Brain):
     cleaner programmatic path). No key handling here: `claude` is already logged in."""
 
     label = "Claude"
+    # Images go in the first message (stream-json input): the model sees them, no tool needed.
+    supports_images = True
 
     # Higher effort thinks longer: the wait grows with it.
     TIMEOUTS = {"": 60.0, "low": 45.0, "medium": 60.0, "high": 90.0, "xhigh": 150.0, "max": 240.0}
@@ -39,12 +42,15 @@ class ClaudeBrain(Brain):
         self.args = base + [a for a in HARDENING if a not in base or a == ""]
         self.timeout = timeout or self.TIMEOUTS.get(effort, 60.0)
 
-    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
-        return clean_reply(self.ask(build_prompt(soul, thread_summary, incoming, github_context, people_context)))
+    def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "",
+              images: Sequence[str] = ()) -> str:
+        prompt = build_prompt(soul, thread_summary, incoming, github_context, people_context, len(images))
+        return clean_reply(self.ask(prompt, images=images))
 
-    def complete(self, prompt: str, timeout: float | None = None) -> str:
-        if reflection.active():
-            return self._stream(prompt, timeout or self.timeout)
+    def complete(self, prompt: str, timeout: float | None = None, images: Sequence[str] = ()) -> str:
+        blocks = [b for b in (image_block(i) for i in images) if b]
+        if reflection.active() or blocks:
+            return self._stream(prompt, timeout or self.timeout, blocks)
         proc = subprocess.run(
             [shutil.which(self.command) or self.command, *self.args],
             input=prompt,
@@ -58,10 +64,17 @@ class ClaudeBrain(Brain):
             raise RuntimeError(f"claude a échoué: {proc.stderr.strip()[:200]}")
         return proc.stdout.strip()
 
-    def _stream(self, prompt: str, timeout: float) -> str:
+    def _stream(self, prompt: str, timeout: float, images: Sequence[dict] = ()) -> str:
         """Same call, read as it comes (stream-json): the model's reasoning goes to the
-        reflection panel while it thinks. The answer is the `result` event's text."""
+        reflection panel while it thinks. The answer is the `result` event's text.
+        images: Messages API image blocks, sent with the prompt as one user message
+        (stream-json input) — the only way `claude -p` takes an image without a tool."""
         args = self.args + ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+        stdin = prompt
+        if images:
+            args += ["--input-format", "stream-json"]
+            stdin = json.dumps({"type": "user", "message": {"role": "user", "content": [
+                *images, {"type": "text", "text": prompt}]}}) + "\n"
         proc = subprocess.Popen(
             [shutil.which(self.command) or self.command, *args],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -90,7 +103,7 @@ class ClaudeBrain(Brain):
             drain = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
             drain.start()
             try:
-                proc.stdin.write(prompt)
+                proc.stdin.write(stdin)
                 proc.stdin.close()
             except OSError:
                 pass
