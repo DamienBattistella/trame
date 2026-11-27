@@ -163,7 +163,7 @@ def test_settings_get(make_client):
             "auto_quiet_to": "08:00",
             "auto_weekends": True,
         },
-        "brief": {"enabled": True, "last_messages": 30},
+        "brief": {"enabled": True, "last_messages": 30, "range": "messages"},
         "follow_ups": {"enabled": True, "delay_hours": 24},
         "archive": {"after_days": 0, "hide_in_teams": False},
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},

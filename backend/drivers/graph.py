@@ -245,8 +245,11 @@ class GraphDriver:
         return self.list_conversations(deep=True)
 
     # --- reading a conversation ---
-    def _read(self, client: GraphClient, thread_id: str, last_n: int) -> "tuple[list[IncomingMessage], bool]":
+    def _read(self, client: GraphClient, thread_id: str, last_n: int,
+              since: Optional[datetime] = None) -> "tuple[list[IncomingMessage], bool]":
         chat = self._chat_id(client, thread_id)
+        # since: local time; Graph dates are UTC. Messages come newest first.
+        floor = since.astimezone(timezone.utc) if since is not None else None
         me = self._me_id(client)
         surface = self._chats.get(chat, Surface.dm)
         want = max(1, min(last_n, MAX_READ))
@@ -254,6 +257,8 @@ class GraphDriver:
         msgs = []
         budget = [MAX_IMAGES]
         for r in reversed(raw):
+            if floor is not None and _created(r) is not None and _created(r) < floor:
+                continue
             m = convert.message(thread_id, r, surface, me)
             if m is None and convert.hosted_images(r.get("body")) and not r.get("deletedDateTime"):
                 m = convert.message(thread_id, {**r, "body": {"contentType": "text", "content": ""},
@@ -304,9 +309,10 @@ class GraphDriver:
                                 width=min(width, 10_000), height=min(height, 10_000)))
         return out
 
-    def read_history(self, thread_id: str, last_n: int) -> "tuple[list[IncomingMessage], bool]":
-        return self._via("read", lambda c: self._read(c, thread_id, last_n),
-                         lambda: self._inner.read_history(thread_id, last_n))
+    def read_history(self, thread_id: str, last_n: int,
+                     since: Optional[datetime] = None) -> "tuple[list[IncomingMessage], bool]":
+        return self._via("read", lambda c: self._read(c, thread_id, last_n, since),
+                         lambda: self._inner.read_history(thread_id, last_n, since))
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         return self.read_history(thread_id, last_n)[0]
@@ -740,3 +746,11 @@ class GraphDriver:
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         out = self._inner.diagnose(thread_id) or {}
         return {**out, "graph": {"connected": self._client() is not None, "routes": self.routes()}}
+
+
+def _created(r: dict) -> Optional[datetime]:
+    """createdDateTime of a Graph message, as an aware UTC datetime (None if unreadable)."""
+    try:
+        return datetime.fromisoformat(str(r.get("createdDateTime") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None

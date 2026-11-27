@@ -17,18 +17,28 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { GroupList, InitialsAvatar, SectionLabel, Status, StatusDot, pop, shake, spring } from "@/components/kit";
+import { GroupList, InitialsAvatar, SectionLabel, SelectCircle, Status, StatusDot, pop, shake, spring } from "@/components/kit";
 import { openExternal } from "@/desktop";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
-import { Brief, BriefGithubItem } from "@/types";
+import { Brief, BriefGithubItem, BriefRange } from "@/types";
 
 export interface BriefTarget {
   threadId: string;
   displayName: string;
 }
 
-type Phase = "loading" | "empty" | "generating" | "done" | "error";
+// "pick" : choix de la période avant de lancer (premier résumé ou régénération).
+type Phase = "loading" | "pick" | "generating" | "done" | "error";
+
+const RANGES: { value: BriefRange; label: (n: number) => string; reading: (n: number) => string }[] = [
+  { value: "messages", label: (n) => `Les ${n} derniers messages`, reading: (n) => `Lecture des ${n} derniers messages` },
+  { value: "today", label: () => "Aujourd'hui", reading: () => "Lecture des messages d'aujourd'hui" },
+  { value: "24h", label: () => "Dernières 24 heures", reading: () => "Lecture des messages des dernières 24 heures" },
+  { value: "7d", label: () => "7 derniers jours", reading: () => "Lecture des messages des 7 derniers jours" },
+  { value: "30d", label: () => "30 derniers jours", reading: () => "Lecture des messages des 30 derniers jours" },
+];
+const rangeOf = (r: BriefRange) => RANGES.find((x) => x.value === r) ?? RANGES[0];
 
 // Le POST est un seul appel : les deux premières étapes avancent au minuteur, la fin suit la réponse.
 const STEP_DELAYS = [1100, 2600];
@@ -54,13 +64,20 @@ export function BriefSheet({
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const progressCtl = useAnimationControls();
   const { lastMessages, github } = trame.briefPrefs;
+  // Période choisie : mémorisée dans les réglages, elle survit aux redémarrages.
+  const [range, setRange] = useState<BriefRange>(trame.briefPrefs.range);
+  useEffect(() => setRange(trame.briefPrefs.range), [trame.briefPrefs.range]);
+  const pickRange = (r: BriefRange) => {
+    setRange(r);
+    if (r !== trame.briefPrefs.range) trame.updateSettings({ brief: { range: r } });
+  };
 
   const clearTimers = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
   };
 
-  const generate = async (t: BriefTarget, prev: Brief | null) => {
+  const generate = async (t: BriefTarget, prev: Brief | null, r: BriefRange = range) => {
     const n = ++seq.current;
     clearTimers();
     setPrevious(prev);
@@ -69,7 +86,7 @@ export function BriefSheet({
     timers.current.push(setTimeout(() => setSteps(["ok", "run", "idle"]), STEP_DELAYS[0]));
     if (github) timers.current.push(setTimeout(() => setSteps(["ok", "ok", "run"]), STEP_DELAYS[1]));
 
-    const res = await trame.generateBrief(t.threadId);
+    const res = await trame.generateBrief(t.threadId, { range: r });
     if (n !== seq.current) return;
     clearTimers();
     if (!res.ok) {
@@ -123,12 +140,10 @@ export function BriefSheet({
         toast.error(`Résumé impossible pour « ${target.displayName} »`, {
           description: `${res.error} Rien n'a été perdu.`,
         });
-      } else if (dock) {
-        // Le panneau suit la discussion choisie : on ne lance pas un appel au cerveau
-        // à chaque clic dans la barre latérale, seulement à la demande.
-        setPhase("empty");
       } else {
-        generate(target, null);
+        // Rien ne part tout seul : on propose d'abord la période à résumer. Le panneau
+        // suit aussi la discussion choisie, sans appel au cerveau à chaque clic.
+        setPhase("pick");
       }
     });
   }, [target?.threadId]);
@@ -136,7 +151,7 @@ export function BriefSheet({
   useEffect(() => clearTimers, []);
 
   const stepRows = [
-    `Lecture des ${lastMessages} derniers messages`,
+    rangeOf(range).reading(lastMessages),
     "Résumé de la discussion",
     ...(github ? ["Recherche GitHub"] : []),
   ];
@@ -163,7 +178,7 @@ export function BriefSheet({
                 >
                   {phase === "done" && brief
                     ? `Généré à ${brief.generatedAt}`
-                    : phase === "loading" || phase === "empty"
+                    : phase === "loading" || phase === "pick"
                       ? "Résumé et contexte"
                       : phase === "error"
                         ? "La génération n'a pas abouti"
@@ -194,18 +209,51 @@ export function BriefSheet({
               </motion.div>
             )}
 
-            {phase === "empty" && shown && (
+            {phase === "pick" && shown && (
               <motion.div
-                key="empty"
+                key="pick"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="flex flex-col items-center gap-3 px-6 py-16 text-center"
+                className="flex flex-col gap-4 px-5 py-5"
               >
-                <p className="text-sm text-muted-foreground">Pas encore de résumé pour cette discussion.</p>
-                <Button size="sm" className="rounded-full" onClick={() => generate(shown, null)}>
-                  <RefreshCw className="size-4" /> Résumer
-                </Button>
+                {!previous && <p className="text-sm text-muted-foreground">Pas encore de résumé pour cette discussion.</p>}
+                <section>
+                  <SectionLabel>Période à résumer</SectionLabel>
+                  <GroupList role="radiogroup" aria-label="Période à résumer">
+                    {RANGES.map((r) => (
+                      <button
+                        key={r.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={range === r.value}
+                        onClick={() => pickRange(r.value)}
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors outline-none hover:bg-accent focus-visible:bg-accent"
+                      >
+                        <SelectCircle checked={range === r.value} />
+                        {r.label(lastMessages)}
+                      </button>
+                    ))}
+                  </GroupList>
+                </section>
+                <div className="flex gap-2">
+                  <Button size="sm" className="rounded-full" onClick={() => generate(shown, previous)}>
+                    <RefreshCw className="size-4" /> Résumer
+                  </Button>
+                  {previous && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rounded-full"
+                      onClick={() => {
+                        setBrief(previous);
+                        setPhase("done");
+                      }}
+                    >
+                      Revenir au résumé
+                    </Button>
+                  )}
+                </div>
               </motion.div>
             )}
 
@@ -246,6 +294,9 @@ export function BriefSheet({
                       <Button size="sm" className="rounded-full" onClick={() => generate(shown, previous)}>
                         <RotateCcw className="size-4" /> Réessayer
                       </Button>
+                      <Button size="sm" variant="ghost" className="rounded-full" onClick={() => setPhase("pick")}>
+                        Changer la période
+                      </Button>
                       {previous && (
                         <Button
                           size="sm"
@@ -284,13 +335,22 @@ export function BriefSheet({
               <Separator />
               <Footer className="mt-0 gap-2 px-5 py-3">
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="rounded-full" onClick={() => generate(shown, brief)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => {
+                    setPrevious(brief);
+                    setPhase("pick");
+                  }}
+                >
                   <RefreshCw className="size-4" /> Régénérer
                 </Button>
                 <CopyButton brief={brief} />
               </div>
               <span className="text-xs text-muted-foreground tabular-nums">
-                Basé sur {brief.sources.messages} message{brief.sources.messages > 1 ? "s" : ""} ·{" "}
+                Basé sur {brief.sources.messages} message{brief.sources.messages > 1 ? "s" : ""}
+                {brief.sources.range !== "messages" && ` (${rangeOf(brief.sources.range).label(lastMessages).toLowerCase()})`} ·{" "}
                 {brief.sources.reposSearched} dépôt{brief.sources.reposSearched > 1 ? "s" : ""} consulté
                 {brief.sources.reposSearched > 1 ? "s" : ""}
               </span>

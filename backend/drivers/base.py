@@ -4,6 +4,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional, Sequence
 import meeting as meetingmod
 from models import IncomingMessage, MessageRef, WatchEntity
@@ -80,9 +81,12 @@ class TeamsDriver(ABC):
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         """Read the last N messages of a thread (sender carried forward across runs)."""
 
-    def read_history(self, thread_id: str, last_n: int) -> tuple[list[IncomingMessage], bool]:
+    def read_history(self, thread_id: str, last_n: int,
+                     since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
         """Like read_context, going back further when the driver can, plus whether the
-        start of the conversation was reached (nothing older to fetch)."""
+        start of the conversation was reached (nothing older to fetch). With `since`, a
+        driver that knows message dates goes back to it and keeps only what is newer
+        (at most last_n); one that does not simply reads the last last_n."""
         msgs = self.read_context(thread_id, last_n)
         return msgs, len(msgs) < last_n
 

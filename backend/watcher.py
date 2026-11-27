@@ -6,7 +6,7 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Iterator, Callable, Iterable, Optional, Sequence
@@ -2224,15 +2224,38 @@ class Watcher:
             raise ActionError(404, "Conversation introuvable.")
         return entity
 
-    def generate_brief(self, thread_id: str, last_messages: Optional[int] = None) -> Brief:
+    # Plafond de lecture pour une plage de temps : Teams remonte le fil jusqu'à la date,
+    # jamais au-delà de ce nombre de messages.
+    BRIEF_RANGE_CAP = 300
+
+    @staticmethod
+    def brief_since(range_: str, now: Optional[datetime] = None) -> Optional[datetime]:
+        """Start of a brief's time range, in local time; None for "the last N messages"."""
+        now = now or datetime.now()
+        if range_ == "today":
+            return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        days = {"24h": 1, "7d": 7, "30d": 30}.get(range_)
+        return now - timedelta(days=days) if days else None
+
+    def generate_brief(self, thread_id: str, last_messages: Optional[int] = None,
+                       range_: Optional[str] = None) -> Brief:
         """Summarise one conversation with a single brain call, then look up related
-        GitHub items read-only. Cached in memory only on success."""
+        GitHub items read-only. Cached in memory only on success. `range_` picks the
+        period read: the last N messages ("messages") or a time range (today, 24h, 7d, 30d)."""
         entity = self._conversation(thread_id)
         prefs = self.get_settings()
         if not prefs.brief.enabled:
             raise ActionError(409, "Le résumé de conversation est désactivé dans les réglages.")
         name = entity.display_name
-        msgs = self._read_focused(thread_id, name, last_messages or prefs.brief.last_messages)
+        range_ = range_ or prefs.brief.range
+        since = self.brief_since(range_)
+        if since is None:
+            msgs = self._read_focused(thread_id, name, last_messages or prefs.brief.last_messages)
+        else:
+            msgs = self._read_focused(thread_id, name, self.BRIEF_RANGE_CAP, since=since)
+        if not msgs and since is not None:
+            self.log("info", f"Résumé de {name} : aucun message depuis le {since:%d/%m %H:%M}")
+            raise ActionError(502, "Aucun message dans Teams sur cette période : choisis une plage plus large.")
         if not msgs:
             self.log("warn", f"Résumé impossible pour {name} : aucun message lisible")
             raise ActionError(502, "Aucun message lisible dans cette conversation : rien n'a été résumé.")
@@ -2272,7 +2295,7 @@ class Watcher:
             topics=digest.topics,
             github_enabled=prefs.github.enabled,
             github=hits,
-            sources=BriefSources(messages=len(msgs), repos_searched=repos_searched),
+            sources=BriefSources(messages=len(msgs), repos_searched=repos_searched, range=range_),
         )
         with self._lock:
             self._briefs[thread_id] = brief
@@ -2376,10 +2399,11 @@ class Watcher:
             return None
         return next((c for c in claims if c.verdict == "contredit"), None)
 
-    def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé") -> list[IncomingMessage]:
+    def _read_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé",
+                      since: Optional[datetime] = None) -> list[IncomingMessage]:
         # For the brain (brief, proposal): text only. A message with only an image or a
         # file says so in words, without the image data.
-        return [self._as_text(m) for m in self._read_history_focused(thread_id, name, last_n, purpose)[0]
+        return [self._as_text(m) for m in self._read_history_focused(thread_id, name, last_n, purpose, since)[0]
                 if m.text or m.files or m.images or m.cards]
 
     @staticmethod
@@ -2391,8 +2415,8 @@ class Watcher:
             return m
         return m.model_copy(update={"text": "\n".join([m.brain_text(), *extra]).strip(), "images": []})
 
-    def _read_history_focused(self, thread_id: str, name: str, last_n: int,
-                              purpose: str = "Résumé") -> tuple[list[IncomingMessage], bool]:
+    def _read_history_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé",
+                              since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
         """Open the conversation just long enough to read it, then reopen the previous one.
         Also tells whether the start of the conversation was reached."""
         with self._ui_lock:
@@ -2405,7 +2429,8 @@ class Watcher:
                 with telemetry.span("teams.read", conversation=name, purpose=purpose, last_n=last_n) as sp, \
                         self.driver.focused(thread_id, restore=True) as focus:
                     if focus.ok:
-                        msgs, top = self.driver.read_history(thread_id, last_n)
+                        msgs, top = (self.driver.read_history(thread_id, last_n, since) if since is not None
+                                     else self.driver.read_history(thread_id, last_n))
                         self.archive.add(thread_id, msgs)
                         self._track(thread_id, msgs)
                     telemetry.set_attrs(sp, confirmed=focus.ok, messages=len(msgs), top=top)

@@ -295,6 +295,8 @@ class GithubHit(BaseModel):
 class BriefSources(BaseModel):
     messages: int
     repos_searched: int
+    # Période lue : "messages" (les N derniers) ou une plage de temps (today, 24h, 7d, 30d).
+    range: str = "messages"
 
 
 class Brief(BaseModel):

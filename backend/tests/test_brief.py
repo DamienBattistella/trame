@@ -81,7 +81,7 @@ def test_brief_happy_path_with_github(make_client, fake_gh):
     assert b["open_points"] == ["Corriger le typage OBX-2"]
     assert b["topics"] == ["HL7", "OBX"]
     assert b["github_enabled"] is True
-    assert b["sources"] == {"messages": 12, "repos_searched": 2}
+    assert b["sources"] == {"messages": 12, "repos_searched": 2, "range": "messages"}
     hits = b["github"]
     assert 0 < len(hits) <= gh.MAX_HITS
     assert len({(h["repo"], h["number"] if h["number"] is not None else h["url"]) for h in hits}) == len(hits)
@@ -185,16 +185,67 @@ def test_brief_cache_and_last_messages(make_client, fake_gh):
 def test_brief_settings_validation_and_persistence(make_client, fresh_home):
     client, watcher, _driver = make_client()
     r = client.put("/api/settings", json={"brief": {"last_messages": 50}})
-    assert r.status_code == 200 and r.json()["settings"]["brief"] == {"enabled": True, "last_messages": 50}
+    assert r.status_code == 200 and r.json()["settings"]["brief"] == {"enabled": True, "last_messages": 50, "range": "messages"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
-    assert saved["brief"] == {"enabled": True, "last_messages": 50}
+    assert saved["brief"] == {"enabled": True, "last_messages": 50, "range": "messages"}
     for body in ({"brief": {"last_messages": 9}}, {"brief": {"last_messages": 101}},
-                 {"brief": {"enabled": "oui"}}, {"brief": {"inconnu": 1}}):
+                 {"brief": {"enabled": "oui"}}, {"brief": {"inconnu": 1}}, {"brief": {"range": "1an"}}):
         r = client.put("/api/settings", json=body)
         assert r.status_code == 422, body
         assert r.json()["ok"] is False
     client2, _w2, _d2 = make_client()
     assert client2.get("/api/settings").json()["settings"]["brief"]["last_messages"] == 50
+
+
+def test_brief_range_setting_persists(make_client, fresh_home):
+    client, _watcher, _driver = make_client()
+    r = client.put("/api/settings", json={"brief": {"range": "7d"}})
+    assert r.status_code == 200 and r.json()["settings"]["brief"]["range"] == "7d"
+    client2, _w2, _d2 = make_client()
+    assert client2.get("/api/settings").json()["settings"]["brief"]["range"] == "7d"
+
+
+def test_brief_since_bounds():
+    from datetime import datetime
+    from watcher import Watcher
+    now = datetime(2026, 11, 27, 15, 42, 10)
+    assert Watcher.brief_since("messages", now) is None
+    assert Watcher.brief_since("today", now) == datetime(2026, 11, 27)
+    assert Watcher.brief_since("24h", now) == datetime(2026, 11, 26, 15, 42, 10)
+    assert Watcher.brief_since("7d", now) == datetime(2026, 11, 20, 15, 42, 10)
+    assert Watcher.brief_since("30d", now) == datetime(2026, 10, 28, 15, 42, 10)
+
+
+def test_brief_time_range_reads_back_to_the_date(make_client, fake_gh, monkeypatch):
+    from datetime import datetime, timedelta
+    client, watcher, driver = make_client(brain=_brain())
+    calls = []
+    original = driver.read_history
+
+    def spy(thread_id, last_n, since=None):
+        calls.append((last_n, since))
+        return original(thread_id, 4)
+
+    monkeypatch.setattr(driver, "read_history", spy)
+    r = client.post(f"/api/threads/{LUCAS}/brief", json={"range": "7d"})
+    assert r.status_code == 200, r.json()
+    assert r.json()["brief"]["sources"]["range"] == "7d"
+    assert r.json()["brief"]["sources"]["messages"] == 4
+    (last_n, since), = calls
+    assert last_n == watcher.BRIEF_RANGE_CAP
+    assert abs((datetime.now() - timedelta(days=7)) - since) < timedelta(minutes=1)
+    # Default range from settings: the last N messages, no date sent to the driver.
+    calls.clear()
+    assert client.post(f"/api/threads/{LUCAS}/brief").status_code == 200
+    assert calls == [(30, None)]
+
+
+def test_brief_time_range_without_messages(make_client, fake_gh, monkeypatch):
+    client, _watcher, driver = make_client(brain=_brain())
+    monkeypatch.setattr(driver, "read_history", lambda thread_id, last_n, since=None: ([], True))
+    r = client.post(f"/api/threads/{LUCAS}/brief", json={"range": "today"})
+    assert r.status_code == 502 and "cette période" in r.json()["error"]
+    assert client.post(f"/api/threads/{LUCAS}/brief", json={"range": "1an"}).status_code == 422
 
 
 def test_parse_brief_extraction():

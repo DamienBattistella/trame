@@ -2290,13 +2290,16 @@
     // Teams ne dessine que les derniers messages, et retire du DOM ceux qui sortent de
     // l'écran. Pour remonter plus loin, on fait défiler le fil vers le haut en cumulant
     // ce qui passe, jusqu'à `last` messages ou le début de la conversation, puis on
-    // revient en bas. `top` : le début de la conversation a été atteint.
-    read: async ({ last = 30 }) => {
+    // revient en bas. `top` : le début de la conversation a été atteint. Avec `since`
+    // (epoch ms), on remonte jusqu'au premier message plus ancien que cette date et l'on
+    // ne garde que les plus récents : un message sans date lisible est conservé.
+    read: async ({ last = 30, since = null }) => {
       const snap = () =>
         Array.from(document.querySelectorAll(MSGS)).map((el) => {
           const { text: body, links, cards } = partsOf(el);
           const time = el.querySelector("time");
           const at = time?.innerText?.trim() || time?.getAttribute("datetime") || "";
+          const ts = Date.parse(time?.getAttribute("datetime") || "");
           const files = filesOf(el);
           const names = new Set(files.map((f) => f.name));
           // Le nom d'un fichier joint fait aussi partie du texte : il est déjà dans sa puce.
@@ -2320,6 +2323,7 @@
             images,
             links,
             cards,
+            ts: Number.isNaN(ts) ? null : ts,
           };
         })
         // Teams intercale des éléments vides (avatar seul) : sans texte, fichier ni image,
@@ -2342,14 +2346,17 @@
         }
         return null;
       })();
-      let top = !box && acc.length < last;
-      if (box && acc.length < last) {
+      // Plus ancien message daté déjà lu : au-delà de `since`, inutile de remonter.
+      const pastSince = () => since != null && acc.some((m) => m.ts != null && m.ts < since);
+      const more = () => acc.length < last && !pastSince();
+      let top = !box && more();
+      if (box && more()) {
         // Teams charge la suite quand on arrive en haut : on redescend un peu avant d'y
         // remonter, pour qu'il voie un défilement même si l'on y est déjà. Trois essais
         // sans rien de nouveau : c'est le début de la conversation. Une limite de temps
         // atteinte, elle, ne dit rien du début (top reste faux).
         const end = Date.now() + 20000;
-        for (let stalls = 0; acc.length < last && Date.now() < end && !late(); ) {
+        for (let stalls = 0; more() && Date.now() < end && !late(); ) {
           const height = box.scrollHeight;
           box.scrollTop = Math.min(200, height);
           await sleep(50);
@@ -2367,6 +2374,7 @@
       const out = [];
       for (const m of acc) {
         if (m.who) sender = m.who;
+        if (since != null && m.ts != null && m.ts < since) continue;
         out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images, links: m.links, cards: m.cards });
       }
       const shown = out.slice(-last);
