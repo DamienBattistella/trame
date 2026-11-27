@@ -39,12 +39,12 @@ def make_driver() -> TeamsDriver:
     # the old desktop-app driver for diagnosis, TRAME_DRIVER=mock runs anywhere.
     mode = os.environ.get("TRAME_DRIVER") or ("web" if os.name == "nt" else "mock")
     if mode == "web":
-        from drivers.graph import GraphDriver
+        from drivers.web_api import WebApiDriver
         from drivers.web_bridge import WebBridgeDriver
-        from msgraph.service import SERVICE
-        # Microsoft Graph first when IT registered Trame and the user signed in; the
-        # Teams page otherwise, and for what Graph cannot do (docs/teams-graph.md).
-        return GraphDriver(WebBridgeDriver(), SERVICE.client)
+        # « API Teams web » : la session Teams déjà authentifiée de l'utilisateur. Les appels
+        # API se font dans la page, signés avec l'auth de la page (le jeton ne la quitte jamais,
+        # docs/teams-web-api.md). Tout passe par la page aujourd'hui ; routes() dit la voie.
+        return WebApiDriver(WebBridgeDriver())
     if os.name == "nt" and mode != "mock":
         try:
             from drivers.windows_uia import WindowsUIADriver
@@ -893,6 +893,19 @@ def create_app(
         if auth is not None:
             auth.logout()
         return {"ok": True, "graph": _graph_status()}
+
+    # --- API Teams web (docs/teams-web-api.md): voie par action + santé de la signature ---
+    @app.get("/api/teams-web")
+    def teams_web_status():
+        d = watcher.driver
+        routes = getattr(d, "routes", None)
+        signing = getattr(d, "signing", None)
+        return {"ok": True, "api": {
+            "driver": type(d).__name__,
+            "routes": routes() if callable(routes) else {},
+            # Santé de la signature (statut HTTP d'une sonde signée) ; None si pas mesurée.
+            "signing": signing() if callable(signing) else None,
+        }}
 
     @app.get("/api/health")
     def get_health():

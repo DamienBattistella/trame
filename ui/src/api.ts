@@ -786,6 +786,21 @@ const DEMO_GRAPH: GraphStatus = {
   },
 };
 
+// « API Teams web » : voie suivie par action (appel API depuis la page / DOM) et santé de la
+// signature des appels API (le jeton reste dans la page, docs/teams-web-api.md).
+export type ApiRoute = { via: "api" | "page"; reason: string | null; at: string };
+export type ApiSigning = { ok?: boolean; status?: number; source?: string; error?: string } | null;
+export type TeamsApiStatus = { driver: string; routes: Record<string, ApiRoute>; signing: ApiSigning };
+const DEMO_TEAMS_API: TeamsApiStatus = {
+  driver: "WebApiDriver",
+  routes: {
+    list: { via: "page", reason: "lu via la page Teams", at: "10:02:11" },
+    read: { via: "page", reason: "lu via la page Teams", at: "10:02:12" },
+    send: { via: "page", reason: "écrit via la page Teams", at: "10:02:13" },
+  },
+  signing: { ok: true, status: 200, source: "path" },
+};
+
 async function request<T = {}>(method: string, path: string, body?: unknown): Promise<Result<T>> {
   try {
     const res = await fetch(HTTP + path, {
@@ -1927,6 +1942,12 @@ export function useTrame() {
     return request("POST", "/api/graph/logout");
   };
 
+  /** « API Teams web » : voie par action (API page / DOM) et santé de la signature. */
+  const teamsApiStatus = async (): Promise<Result<{ api: TeamsApiStatus }>> => {
+    if (!connectedRef.current) return demo(200, { api: DEMO_TEAMS_API });
+    return request("GET", "/api/teams-web");
+  };
+
   /** Diagnostic de calibration du pilote Teams (structure seulement, pas le texte des messages). */
   const diagnoseTeams = async (threadId?: string): Promise<Result<{ report: unknown }>> => {
     if (!connectedRef.current) {
@@ -2289,6 +2310,7 @@ export function useTrame() {
     ignoreFollowUp,
     diagnoseTeams,
     teamsWebStatus,
+    teamsApiStatus,
     graphStatus,
     graphConfigure,
     graphLogin,
