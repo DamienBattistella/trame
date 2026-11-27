@@ -192,19 +192,79 @@ def test_image_or_file_alone_is_named_as_such():
 
 
 def test_one_to_one_also_linked_when_the_page_shows_the_same_time_of_last_message():
-    # Aperçu non comparable (« a envoyé une image », emoji…) : la même heure à la minute suffit.
+    # Aperçu non comparable (« a envoyé une image », emoji…) : la même heure ou le même jour suffit,
+    # comparés sur la date réelle du message.
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    t1344 = int(now.replace(hour=13, minute=44, second=0, microsecond=0).timestamp() * 1000)
     page = FakePage([row(GROUP, "group", "Projet X", 1000), row(DM, "dm", "Ana Martin", 1000, text="")])
-    page.rows[1]["last"]["at"] = "13:44"
+    page.rows[1]["last"]["ts"] = t1344
     page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message A envoyé une image 13:44"
     d = WebApiDriver(page)
-    tick(d)
-    assert page.chat_aliases == {"name:Ana Martin": DM}
-    # Autre heure (le cas réel : mardi 11:02 contre 13:44) : jamais relié.
-    page.rows[1]["last"]["at"] = "mardi 11:02"
+    if now.hour * 60 + now.minute >= 13 * 60 + 44:  # 13:44 aujourd'hui, déjà passé
+        tick(d)
+        assert page.chat_aliases == {"name:Ana Martin": DM}
+    # Le cas réel : la page dit 13:44, le service a un message de mardi : jamais relié.
+    page.rows[1]["last"]["ts"] = int((now - timedelta(days=3)).timestamp() * 1000)
     tick(d)
     assert page.chat_aliases == {}
-    # Une date affichée par la page : même jour côté service de chat.
-    page.rows[1]["last"]["at"] = "25/11 16:05"
-    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message A envoyé une image 25/11"
+    # La liste écrit la date (« 26/11 ») là où le fil écrit « Hier 18:31 » : même jour.
+    y = now - timedelta(days=1)
+    page.rows[1]["last"]["ts"] = int(y.replace(hour=18, minute=31).timestamp() * 1000)
+    page.labels["name:Ana Martin"] = f"Chat Ana Martin Away Last message A envoyé une image {y:%d/%m}"
     tick(d)
     assert page.chat_aliases == {"name:Ana Martin": DM}
+
+
+def test_chat_with_myself_is_found_as_notes_or_as_a_one_to_one_with_me():
+    # Nouveau Teams : la conversation avec soi-même est un tête-à-tête « 19:<moi>_<moi>@unq ».
+    me_guid = "11111111-2222-3333-4444-555555555555"
+    self_id = f"19:{me_guid}_{me_guid}@unq.gbl.spaces"
+    page = FakePage([row(GROUP, "group", "Projet X", 1000), row(self_id, "dm", "Damien B", 1000, frm=ME, text="Note à moi")])
+    page.rows[1]["other"] = ME
+    page.labels = {"title-" + GROUP: "Chat Projet X Last message Paul: bonjour 09:00",
+                   "name:Damien B": "Chat Damien B (You) Last message You: Note à moi 10:00"}
+    page._kinds["name:Damien B"] = Surface.dm
+    orig = page._entities
+
+    def entities(items):
+        out = orig([i for i in items if i["thread_id"] != "name:Damien B"])
+        out.append(WatchEntity(thread_id="name:Damien B", display_name="Damien B", surface=Surface.dm, is_self=True))
+        return out
+
+    page._entities = entities
+    d = WebApiDriver(page)
+    tick(d)
+    assert page.chat_aliases == {"name:Damien B": self_id}
+
+
+
+def test_list_time_is_compared_on_the_real_date_of_the_last_message():
+    from datetime import datetime
+    from drivers.web_api import _same_when
+    now = datetime(2026, 11, 27, 15, 0)
+    ms = lambda d: int(d.timestamp() * 1000)
+    assert _same_when("13:44", ms(datetime(2026, 11, 27, 13, 44)), now)
+    assert not _same_when("13:44", ms(datetime(2026, 11, 25, 13, 44)), now)  # même heure, autre jour
+    assert _same_when("26/11", ms(datetime(2026, 11, 26, 18, 31)), now)       # constaté : « Hier 18:31 »
+    assert _same_when("Hier", ms(datetime(2026, 11, 26, 9, 0)), now)
+    assert _same_when("03/01/2025", ms(datetime(2025, 1, 3, 8, 0)), now)
+    assert not _same_when("03/01/2024", ms(datetime(2025, 1, 3, 8, 0)), now)
+    assert not _same_when("mardi", ms(datetime(2026, 11, 24, 8, 0)), now)     # inconnu : non (prudence)
+    assert not _same_when("", ms(now), now) and not _same_when("13:44", 0, now)
+
+
+
+def test_evidence_strength_text_and_minute_are_strong_day_is_weak():
+    from datetime import datetime, timedelta
+    from drivers.web_api import _evidence
+    now = datetime.now()
+    r = row(DM, "dm", "Ana Martin", 1000, text="Tu as deux minutes ?")
+    assert _evidence(("Tu as deux min…", "26/11"), r) == "text"
+    r["last"]["ts"] = int((now - timedelta(minutes=1)).timestamp() * 1000)
+    hm = (now - timedelta(minutes=1)).strftime("%H:%M")
+    assert _evidence(("(image)", hm), r) == "minute"
+    y = now - timedelta(days=1)
+    r["last"]["ts"] = int(y.timestamp() * 1000)
+    assert _evidence(("(image)", y.strftime("%d/%m")), r) == "day"
+    assert _evidence(("autre chose", "02/01"), r) is None

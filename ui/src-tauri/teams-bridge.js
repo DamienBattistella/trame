@@ -585,6 +585,46 @@
       e.stage = "chatsvc";
       throw e;
     };
+    // --- Écritures : une table fermée, UN seul essai (jamais rejoué sur l'autre adresse du
+    // service : un envoi en double est pire qu'un envoi incertain) ---
+    const CONV = /^(19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)|48:notes)$/;
+    const MID = /^\d{1,20}$/;
+    const WRITES = {
+      markread: (c) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/properties`, "?name=consumptionhorizon"],
+      react: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}/properties`, "?name=emotions"],
+      delete: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, "?behavior=softDelete"],
+      send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
+    };
+    // { ok, status } ; { sent: false } si rien n'est parti (refus avant l'appel) ; { sent: true,
+    // unknown: true } si l'appel est parti sans réponse lisible (réseau coupé en route).
+    const write = async (kind, conv, mid, body) => {
+      if (!WRITES[kind] || !CONV.test(String(conv || "")) || (mid != null && !MID.test(String(mid))))
+        return { ok: false, sent: false, error: "écriture non autorisée" };
+      let s;
+      try {
+        s = await ensure(false);
+      } catch (err) {
+        return { ok: false, sent: false, stage: err.stage || "authz", error: String((err && err.message) || err) };
+      }
+      const [method, path, search] = WRITES[kind](conv, mid);
+      try {
+        const res = await fetch(s.bases[0] + path + search, {
+          method,
+          credentials: "omit",
+          headers: { Authentication: `skypetoken=${s.token}`, Accept: "application/json", "Content-Type": "application/json" },
+          body: body == null ? undefined : JSON.stringify(body),
+        });
+        if (res.status === 401) session = null; // la prochaine opération rouvre la session
+        let json = null;
+        try {
+          const t = await res.text();
+          json = t ? JSON.parse(t) : null;
+        } catch {}
+        return { ok: res.ok, sent: true, status: res.status, json };
+      } catch (err) {
+        return { ok: false, sent: true, unknown: true, error: `réseau coupé pendant l'appel : ${String((err && err.message) || err)}` };
+      }
+    };
     // GET sur un chemin permis. Renvoie { ok, status, json } : corps métier seulement.
     const get = async ({ path, query } = {}) => {
       const p = String(path || "");
@@ -677,7 +717,15 @@
       }
       return Object.fromEntries((mris || []).filter((m) => names.has(m)).map((m) => [m, names.get(m)]));
     };
-    return { get, selftest, image, people, me: () => (session ? session.me : ""), last: () => lastTest };
+    // Mon identifiant, la session ouverte au besoin (« » si elle ne s'ouvre pas).
+    const whoami = async () => {
+      try {
+        return (await ensure(false)).me || "";
+      } catch {
+        return "";
+      }
+    };
+    return { get, write, selftest, image, people, whoami, me: () => (session ? session.me : ""), last: () => lastTest };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -2246,6 +2294,149 @@
     };
   })();
 
+  // --- Gestes sur le service de chat : lu, réaction, suppression, envoi ---
+  // Chaque geste vérifie AVANT d'écrire qu'il vise bien ce que l'utilisateur a vu (message
+  // retrouvé par son id, même auteur, même début de texte ; pour supprimer : un de SES
+  // messages), puis le PROUVE en relisant le service. Réponse : { ok } prouvé ; { attempted:
+  // false } rien n'est parti (la page peut faire le geste) ; { uncertain: true } parti sans
+  // preuve (jamais refait automatiquement).
+  const chatGestures = (() => {
+    const enc = (c) => encodeURIComponent(c);
+    const fold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[…\s]+/g, " ").trim();
+    const convertOf = (raw) => chatMessage.convert(raw, chatsvc.me(), chatMessage.parseHtml, messageParts);
+    const getConv = async (c) => chatsvc.get({ path: `/v1/users/ME/conversations/${enc(c)}` });
+    const getMsg = async (c, mid) => chatsvc.get({ path: `/v1/users/ME/conversations/${enc(c)}/messages/${mid}` });
+    const mriOf = (from) => {
+      const m = /\/contacts\/([^/?#]+)$/.exec(String(from || ""));
+      return m ? decodeURIComponent(m[1]) : String(from || "");
+    };
+    const notSent = (error, extra = {}) => ({ ok: false, attempted: false, error, ...extra });
+    const uncertain = (error) => ({ ok: false, attempted: true, uncertain: true, error });
+    const proven = async (check, tries = [0, 700, 1500]) => {
+      for (const wait of tries) {
+        if (wait) await sleep(wait);
+        try {
+          const v = await check();
+          if (v) return v;
+        } catch {}
+      }
+      return null;
+    };
+    // Le message visé est-il celui que l'utilisateur a vu ? Même id, même auteur, même début.
+    const target = async (c, ref) => {
+      const mid = String((ref && ref.id) || "");
+      if (!/^\d{1,20}$/.test(mid)) return { error: "message sans identifiant Teams" };
+      const r = await getMsg(c, mid);
+      if (!r.ok || !r.json) return { error: r.error || "message introuvable sur le service de chat" };
+      const raw = r.json;
+      const seen = convertOf(raw);
+      const want = fold(ref.text).slice(0, 40);
+      if (ref.sender && fold(ref.sender) !== fold(raw.imdisplayname)) return { error: "auteur différent de celui affiché" };
+      if (want && !fold(seen.text).startsWith(want)) return { error: "texte différent de celui affiché" };
+      return { mid, raw, seen };
+    };
+    const markread = async ({ thread }) => {
+      const r = await getConv(thread);
+      if (!r.ok || !r.json) return notSent(r.error || "conversation introuvable sur le service de chat");
+      const last = r.json.lastMessage || {};
+      const arrived = Date.parse(last.originalarrivaltime || "");
+      if (!last.id || !Number.isFinite(arrived)) return { ok: true, already: true };
+      const current = Number(String((r.json.properties || {}).consumptionhorizon || "").split(";")[0]) || 0;
+      if (current >= arrived) return { ok: true, already: true };
+      const w = await chatsvc.write("markread", thread, null, { consumptionhorizon: `${arrived};${Date.now()};${last.clientmessageid || last.id}` });
+      if (!w.sent) return notSent(w.error);
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `marquer comme lu refusé (HTTP ${w.status})` };
+      const ok = await proven(async () => {
+        const v = await getConv(thread);
+        return v.ok && Number(String((v.json.properties || {}).consumptionhorizon || "").split(";")[0]) >= arrived;
+      });
+      return ok ? { ok: true } : uncertain("lu non confirmé par le service de chat");
+    };
+    const react = async ({ thread, message, reaction }) => {
+      if (!["like", "heart", "laugh", "surprised"].includes(reaction)) return notSent("réaction inconnue");
+      const t = await target(thread, message);
+      if (t.error) return notSent(t.error);
+      if (t.seen.reactions.includes(reaction)) return { ok: true, already: true }; // déjà là : rien à faire
+      const w = await chatsvc.write("react", thread, t.mid, { emotions: { key: reaction, value: Date.now() } });
+      if (!w.sent) return notSent(w.error);
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `réaction refusée (HTTP ${w.status})` };
+      const ok = await proven(async () => {
+        const v = await getMsg(thread, t.mid);
+        return v.ok && convertOf(v.json).reactions.includes(reaction);
+      });
+      return ok ? { ok: true } : uncertain("réaction non confirmée par le service de chat");
+    };
+    const remove = async ({ thread, message }) => {
+      const t = await target(thread, message);
+      if (t.error) return notSent(`${t.error} : rien n'a été supprimé`);
+      const me = await chatsvc.whoami();
+      if (!me || mriOf(t.raw.from) !== me) return notSent("ce message n'est pas à toi : rien n'a été supprimé");
+      if ((t.raw.properties || {}).deletetime) return notSent("message déjà supprimé");
+      const w = await chatsvc.write("delete", thread, t.mid, null);
+      if (!w.sent) return notSent(w.error);
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `suppression refusée (HTTP ${w.status})` };
+      const ok = await proven(async () => {
+        const v = await getMsg(thread, t.mid);
+        return v.ok && Boolean((v.json.properties || {}).deletetime);
+      });
+      return ok ? { ok: true } : uncertain("suppression non confirmée par le service de chat");
+    };
+    // Texte brut → HTML du composeur de Teams : un paragraphe par ligne, liens cliquables.
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const linkify = (s) => s.replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]/g, (u) => `<a href="${u}" title="${u}" target="_blank" rel="noreferrer noopener">${u}</a>`);
+    const toHtml = (text) =>
+      String(text)
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((line) => `<p>${line.trim() ? linkify(esc(line)) : "&nbsp;"}</p>`)
+        .join("");
+    const clientId = () => {
+      const a = new Uint32Array(3);
+      crypto.getRandomValues(a);
+      return (String(a[0]) + String(a[1]) + String(a[2])).replace(/^0+/, "1").padEnd(19, "7").slice(0, 19);
+    };
+    const send = async ({ thread, text }) => {
+      const body = String(text || "").trim();
+      if (!body) return notSent("message vide");
+      if (body.length > 28000) return notSent("message trop long");
+      const me = await chatsvc.whoami();
+      const names = me ? await chatsvc.people([me]) : {};
+      const cid = clientId();
+      const w = await chatsvc.write("send", thread, null, {
+        content: toHtml(body),
+        messagetype: "RichText/Html",
+        contenttype: "text",
+        amsreferences: [],
+        clientmessageid: cid,
+        imdisplayname: names[me] || "",
+        properties: { importance: "", subject: "" },
+      });
+      if (!w.sent) return notSent(w.error);
+      // Preuve : le message relu sur le service, retrouvé par son clientmessageid.
+      const found = await proven(async () => {
+        const v = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 20 } });
+        const hit = v.ok && ((v.json && v.json.messages) || []).find((m) => m && m.clientmessageid === cid);
+        return hit ? { id: String(hit.id) } : null;
+      }, w.ok ? [0, 700, 1500, 3000] : [0, 1500]);
+      if (found) return { ok: true, id: found.id };
+      // Refusé net par le service et absent à la relecture : rien n'est parti.
+      if (!w.ok && !w.unknown && w.status >= 400 && w.status < 500) return notSent(`envoi refusé par le service de chat (HTTP ${w.status})`);
+      return uncertain("envoi non confirmé : vérifie dans Teams avant de renvoyer");
+    };
+    const run = { markread, react, delete: remove, send };
+    return async (args) => {
+      const kind = String((args && args.kind) || "");
+      if (!run[kind]) return notSent("geste inconnu");
+      if (!/^(19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)|48:notes)$/.test(String(args.thread || "")))
+        return notSent("conversation sans identifiant Teams");
+      try {
+        return await run[kind](args);
+      } catch (err) {
+        return uncertain(String((err && err.message) || err));
+      }
+    };
+  })();
+
   // --- Mentions (@quelqu'un) ---
   // Teams n'ouvre ses suggestions de mention que sur une vraie frappe : les événements
   // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
@@ -2842,6 +3033,8 @@
     chatread: (args) => chatThread(args || {}),
     // La liste des conversations sur le service de chat (complète, puis ce qui a changé).
     chatlist: (args) => chatList(args || {}),
+    // Un geste sur le service de chat (lu, réaction, suppression, envoi), vérifié puis prouvé.
+    chatgesture: (args) => chatGestures(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.

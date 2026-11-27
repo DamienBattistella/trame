@@ -561,6 +561,21 @@ class WebBridgeDriver(TeamsDriver):
         rows = [r for r in (res.get("rows") or []) if isinstance(r, dict) and self.chat_id(str(r.get("id") or ""))]
         return {"rows": rows, "sync": str(res.get("sync") or ""), "full": bool(res.get("full")), "me": str(res.get("me") or "")}
 
+    def chat_gesture(self, kind: str, thread_id: str, timeout: float = 25.0, **args: Any) -> dict:
+        """Un geste sur le service de chat (markread, react, delete, send), fait DANS la page :
+        vérifié avant (bon message, le sien pour supprimer) puis prouvé par relecture.
+        {ok} prouvé ; {attempted: False} rien n'est parti ; {uncertain: True} parti sans preuve."""
+        chat = self.chat_aliases.get(thread_id) or self.chat_id(thread_id)
+        if not chat:
+            return {"ok": False, "attempted": False, "error": "conversation sans identifiant Teams"}
+        try:
+            res = self._rpc("chatgesture", kind=kind, thread=chat, timeout=timeout, **args)
+        except Exception as e:
+            # Sans réponse de la page, on ne sait pas si le geste est parti.
+            return {"ok": False, "attempted": True, "uncertain": True, "error": str(e)}
+        return res if isinstance(res, dict) else {"ok": False, "attempted": True, "uncertain": True,
+                                                  "error": "réponse illisible de la page"}
+
     @staticmethod
     def chat_id(thread_id: str) -> Optional[str]:
         """L'id de la conversation pour le service de chat (« 19:…@thread.v2 »). Les lignes de

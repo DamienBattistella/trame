@@ -620,3 +620,181 @@ test("chatlist incrémental : seulement le syncState, une seule page, noms déj�
   assert.ok(chat[0].includes("syncState=NEXT123") && !chat[0].includes("pageSize"), chat[0]);
   assert.equal(calls.filter((u) => u.includes("fetchShortProfile")).length, 0);
 });
+
+
+// --- Gestes sur le service de chat (op chatgesture) ----------------------------------------
+const GROUP_ID = "19:grp@thread.v2";
+const MY_MRI = `8:orgid:${ME_GUID}`;
+const AUTHZ_TWO = JSON.stringify({
+  tokens: { skypeToken: jwt({ skypeid: `orgid:${ME_GUID}` }), expiresIn: 86400 },
+  region: "emea",
+  regionGtms: { chatService: "https://emea.ng.msg.teams.microsoft.com", chatServiceAfd: "https://teams.microsoft.com/api/chatsvc/emea" },
+});
+const msgRaw = (id: string, extra: any = {}) => ({
+  id,
+  messagetype: "RichText/Html",
+  imdisplayname: "Ana Martin",
+  from: "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/contacts/8:orgid:ana",
+  originalarrivaltime: new Date(Number(id)).toISOString(),
+  content: "<p>Bonjour à tous</p>",
+  properties: {},
+  ...extra,
+});
+// Un faux service de chat : messages en mémoire, écritures appliquées, appels notés.
+const chatServer = (p: any, messages: Record<string, any>, conv: any = {}) => {
+  const writes: Array<{ url: string; method: string; body: any }> = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes("fetchShortProfile")) return fakeResponse(JSON.stringify({ value: [{ mri: MY_MRI, displayName: "Damien B" }] }));
+    const method = (init && init.method) || "GET";
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    if (method !== "GET") writes.push({ url, method, body });
+    const m = /\/messages\/(\d+)/.exec(url);
+    if (method === "PUT" && url.includes("name=emotions") && m) {
+      const raw = messages[m[1]];
+      raw.properties.emotions = [{ key: body.emotions.key, users: [{ mri: MY_MRI, time: body.emotions.value }] }];
+      return fakeResponse("", { status: 200 });
+    }
+    if (method === "DELETE" && m) {
+      messages[m[1]].properties.deletetime = String(Date.now());
+      return fakeResponse("", { status: 200 });
+    }
+    if (method === "PUT" && url.includes("name=consumptionhorizon")) {
+      conv.properties = { consumptionhorizon: body.consumptionhorizon };
+      return fakeResponse("", { status: 200 });
+    }
+    if (method === "POST" && url.endsWith("/messages")) {
+      const id = String(1795777999000 + Object.keys(messages).length);
+      messages[id] = msgRaw(id, { clientmessageid: body.clientmessageid, from: MY_MRI, content: body.content });
+      return fakeResponse(JSON.stringify({ OriginalArrivalTime: Number(id) }), { status: 201 });
+    }
+    if (m) return messages[m[1]] ? fakeResponse(JSON.stringify(messages[m[1]])) : fakeResponse("{}", { status: 404 });
+    if (url.includes("/messages")) return fakeResponse(JSON.stringify({ messages: Object.values(messages).reverse() }));
+    return fakeResponse(JSON.stringify({ id: GROUP_ID, ...conv }));
+  });
+  return writes;
+};
+
+test("chatgesture react : vérifie le message vu, pose la réaction, la prouve en relisant", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = { "1795777000001": msgRaw("1795777000001") };
+  const writes = chatServer(p, messages);
+  const ref = { id: "1795777000001", sender: "Ana Martin", text: "Bonjour à tous" };
+  const r = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like" })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, "PUT");
+  assert.ok(writes[0].url.endsWith(`/v1/users/ME/conversations/${encodeURIComponent(GROUP_ID)}/messages/1795777000001/properties?name=emotions`));
+  assert.equal(writes[0].body.emotions.key, "like");
+  // Déjà posée : rien n'est réécrit.
+  const again = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like" })).result;
+  assert.equal(again.already, true);
+  assert.equal(writes.length, 1);
+});
+
+test("chatgesture : un message différent de celui affiché n'est jamais touché", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const writes = chatServer(p, { "1795777000001": msgRaw("1795777000001") });
+  for (const ref of [
+    { id: "1795777000001", sender: "Paul Durand", text: "Bonjour à tous" },
+    { id: "1795777000001", sender: "Ana Martin", text: "Autre chose" },
+    { id: "", sender: "Ana Martin", text: "Bonjour à tous" },
+  ]) {
+    const r = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "heart" })).result;
+    assert.equal(r.ok, false);
+    assert.equal(r.attempted, false); // la page peut refaire le geste en vérifiant à son tour
+  }
+  assert.equal(writes.length, 0);
+});
+
+test("chatgesture delete : seulement un de MES messages, prouvé supprimé", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001"),
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Damien B", content: "<p>Je regarde</p>" }),
+  };
+  const writes = chatServer(p, messages);
+  const notMine = (await p.run("chatgesture", { kind: "delete", thread: GROUP_ID, message: { id: "1795777000001", sender: "Ana Martin", text: "Bonjour" } })).result;
+  assert.equal(notMine.ok, false);
+  assert.equal(notMine.attempted, false);
+  assert.equal(writes.length, 0);
+  const mine = (await p.run("chatgesture", { kind: "delete", thread: GROUP_ID, message: { id: "1795777000002", sender: "Damien B", text: "Je regarde" } })).result;
+  assert.equal(mine.ok, true);
+  assert.equal(writes[0].method, "DELETE");
+  assert.ok(writes[0].url.endsWith("/messages/1795777000002?behavior=softDelete"));
+});
+
+test("chatgesture markread : horizon = arrivée du dernier message, prouvé à la relecture", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const last = msgRaw("1795777000009", { clientmessageid: "123456" });
+  const conv: any = { lastMessage: last, properties: { consumptionhorizon: "1795777000000;1;0" } };
+  const writes = chatServer(p, {}, conv);
+  const r = (await p.run("chatgesture", { kind: "markread", thread: GROUP_ID })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
+  assert.ok(writes[0].url.endsWith("/properties?name=consumptionhorizon"));
+  const [arrived, , cid] = writes[0].body.consumptionhorizon.split(";");
+  assert.equal(Number(arrived), 1795777000009);
+  assert.equal(cid, "123456");
+  // Déjà lu : rien n'est écrit.
+  const again = (await p.run("chatgesture", { kind: "markread", thread: GROUP_ID })).result;
+  assert.equal(again.already, true);
+  assert.equal(writes.length, 1);
+});
+
+test("chatgesture send : HTML du composeur (échappé, liens), prouvé par son clientmessageid", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = {};
+  const writes = chatServer(p, messages);
+  const text = "Voir <script>x</script> & https://github.com/o/r/pull/1.\n\nMerci";
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
+  const b = writes[0].body;
+  assert.equal(writes[0].method, "POST");
+  assert.equal(b.messagetype, "RichText/Html");
+  assert.equal(b.imdisplayname, "Damien B");
+  assert.match(b.clientmessageid, /^\d{19}$/);
+  assert.equal(
+    b.content,
+    '<p>Voir &lt;script&gt;x&lt;/script&gt; &amp; <a href="https://github.com/o/r/pull/1" title="https://github.com/o/r/pull/1" target="_blank" rel="noreferrer noopener">https://github.com/o/r/pull/1</a>.</p><p>&nbsp;</p><p>Merci</p>',
+  );
+  assert.equal(r.id, Object.keys(messages)[0]);
+  // Uniquement la première adresse du service : jamais de second envoi.
+  assert.ok(writes[0].url.startsWith("https://emea.ng.msg.teams.microsoft.com/"));
+});
+
+test("chatgesture send : réseau coupé pendant l'envoi → incertain, aucun second envoi", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const posts: string[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes("fetchShortProfile")) return fakeResponse(JSON.stringify({ value: [] }));
+    if (init && init.method === "POST") {
+      posts.push(url);
+      throw new TypeError("Failed to fetch");
+    }
+    return fakeResponse(JSON.stringify({ messages: [] }));
+  });
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "Bonjour" })).result;
+  assert.equal(r.ok, false);
+  assert.equal(r.uncertain, true);
+  assert.equal(posts.length, 1);
+});
+
+test("chatgesture : conversation sans id Teams, rien ne part", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const before = p.fetchCalls.length;
+  const r = (await p.run("chatgesture", { kind: "send", thread: "name:Ana", text: "x" })).result;
+  assert.equal(r.attempted, false);
+  assert.equal(p.fetchCalls.length, before);
+});

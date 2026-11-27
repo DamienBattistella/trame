@@ -15,13 +15,14 @@ est exposée pour l'écran Réglages.
 Enveloppe transparente : tout ce qui n'est pas défini ici est délégué au pilote de la page.
 """
 from __future__ import annotations
+import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable, Optional
 
-from drivers.base import TeamsDriver
-from models import IncomingMessage, Surface, WatchEntity
+from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
+from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
 _OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
@@ -36,16 +37,48 @@ def _same_message(seen: Optional[tuple], row: dict) -> bool:
     """Le dernier message que la page affiche est-il celui de cette conversation sur le service de
     chat ? Oui si l'aperçu (souvent tronqué) est le début de son texte, ou si l'heure affichée est
     la même à la minute (« 13:44 ») ou le même jour (« 25/11 », « Hier »). Sinon : non (prudence)."""
+    return _evidence(seen, row) is not None
+
+
+def _evidence(seen: Optional[tuple], row: dict) -> Optional[str]:
+    """Force de la concordance : « text » (même début de texte), « minute » (même heure à la
+    minute), « day » (même jour seulement), None (aucune). Lire se contente du jour ; écrire
+    exige le texte ou la minute (deux conversations d'une même personne, actives le même jour,
+    ne doivent jamais être confondues pour un envoi)."""
     preview, when = seen if isinstance(seen, tuple) else (seen, None)
     last = row.get("last") or {}
     p, a = _norm(preview), _norm(last.get("text"))
     n = min(len(p), len(a), 24)
     if n >= 3 and p[:n] == a[:n]:
-        return True
-    shown, at = str(when or "").strip().casefold(), str(last.get("at") or "").strip().casefold()
-    if not shown or not at:
+        return "text"
+    if not _same_when(when, last.get("ts")):
+        return None
+    return "minute" if ":" in str(when or "") else "day"
+
+
+def _same_when(shown: Optional[str], ts: Any, now: Optional[datetime] = None) -> bool:
+    """L'heure affichée par la liste de la page (« 13:44 », « Hier », « 26/11 », « 26/11/2025 »)
+    désigne-t-elle le moment `ts` (ms) du dernier message ? Comparé sur la date réelle : la liste
+    écrit « 26/11 » là où le fil écrit « Hier 18:31 »."""
+    try:
+        when = datetime.fromtimestamp(int(ts) / 1000)
+    except (TypeError, ValueError, OSError):
         return False
-    return at == shown if ":" in shown else at.startswith(shown + " ")
+    s = str(shown or "").strip().casefold()
+    now = now or datetime.now()
+    if not s or int(ts) <= 0:
+        return False
+    hm = re.fullmatch(r"(\d{1,2})[:h](\d{2})", s)
+    if hm:
+        return (when.hour, when.minute) == (int(hm.group(1)), int(hm.group(2))) and (now - when).total_seconds() < 86400
+    if s in ("hier", "yesterday"):
+        return when.date() == (now - timedelta(days=1)).date()
+    dmy = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", s)
+    if dmy:
+        year = dmy.group(3)
+        same = (when.day, when.month) == (int(dmy.group(1)), int(dmy.group(2)))
+        return same and (year is None or when.year % 100 == int(year) % 100)
+    return False
 
 
 def _shown_text(last: dict) -> str:
@@ -81,6 +114,10 @@ class _ChatState:
         self.primed_at: Optional[float] = None
         self.mapped: dict[str, str] = {}  # thread_id de Trame -> id Teams
         self.refused = 0  # reliées par le nom mais dont l'aperçu ne concorde pas
+        self.self_seen: dict = {}  # conversation avec soi-même : candidats (heures seulement)
+        # Reliées par le nom avec une preuve forte (texte, minute, ou soi-même) : seules celles-ci
+        # (et celles dont l'id Teams est dans l'id de la page) reçoivent des gestes par le service.
+        self.strong: set[str] = set()
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -90,7 +127,7 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read", "watch", "unread"})
+    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send"})
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
@@ -188,12 +225,26 @@ class WebApiDriver:
         # affiche doit être le dernier message de cette conversation. Sinon, rien (constaté en
         # direct : un tête-à-tête relié par son nom à une autre conversation de la même personne).
         if entity.is_self:
-            cid = "48:notes" if "48:notes" in rows else None
+            # Conversation avec soi-même : « 48:notes », ou un tête-à-tête dont l'autre est soi.
+            me = self._chat.me
+            mine = [c for c, r in rows.items() if c == "48:notes" or (r.get("kind") == "dm" and me and r.get("other") == me)]
+            self._chat.self_seen = {"page_time": (preview or (None, None))[1],
+                                    "candidates": [{"kind": "notes" if c == "48:notes" else "dm", "at": (rows[c].get("last") or {}).get("at")}
+                                                   for c in mine]}
+            hit = next((c for c in mine if _same_message(preview, rows[c])), None)
+            if hit:  # tous les candidats sont à soi : un geste ne peut pas partir chez un autre
+                self._chat.strong.add(entity.thread_id)
+            return hit
         elif entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
             cid = dm_names.get(entity.display_name.casefold())
-        if cid and not _same_message(preview, rows[cid]):
+        if not cid:
+            return None
+        proof = _evidence(preview, rows[cid])
+        if proof is None:
             self._chat.refused += 1
             return None
+        if proof in ("text", "minute"):
+            self._chat.strong.add(entity.thread_id)
         return cid
 
     def _map(self, entities: list[WatchEntity], previews: Optional[dict[str, tuple]] = None) -> dict[str, str]:
@@ -208,6 +259,7 @@ class WebApiDriver:
                 dm_names[name] = None if name in dm_names else cid
         mapped = {}
         self._chat.refused = 0
+        self._chat.strong = set()
         for e in entities:
             cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
             if cid:
@@ -324,11 +376,77 @@ class WebApiDriver:
         return {"ok": st.ok, "conversations": len(st.rows), "by_kind": kinds,
                 "dm_named": sum(1 for r in st.rows.values() if r.get("kind") == "dm" and r.get("name")),
                 "mapped": len(st.mapped), "mapped_by_name": sum(1 for t in st.mapped if t.startswith("name:")),
-                "refused_by_preview": st.refused,
+                "refused_by_preview": st.refused, "self": st.self_seen,
+                "writable_by_name": sum(1 for t in st.mapped if t.startswith("name:") and t in st.strong),
                 # Non-lus selon le service de chat : ids et horizon seulement (aucun texte).
                 "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
                             "type_user": (st.rows[c].get("last") or {}).get("user")}
                            for t, c in st.mapped.items() if c in st.rows and self._unread(st.rows[c])][:20]}
+
+    # --- Gestes sur le service de chat, sans ouvrir la conversation ----------------------
+    # Prouvés par relecture du service. Rien n'est parti (pas d'id Teams, message différent,
+    # service indisponible avant l'appel) : la page fait le geste, comme avant. Parti sans
+    # preuve : « incertain », jamais refait (un double est pire qu'un doute).
+    def _gesture(self, action: str, kind: str, thread_id: str, **args: Any) -> Optional[dict]:
+        gesture = getattr(self._inner, "chat_gesture", None)
+        if not callable(gesture):
+            return None
+        chat_id = getattr(self._inner, "chat_id", None)
+        if not (callable(chat_id) and chat_id(thread_id)) and thread_id not in self._chat.strong:
+            self._route(action, "page", "repli sur la page : conversation reliée sans preuve suffisante pour écrire")
+            return None
+        res = gesture(kind, thread_id, **args)
+        if res.get("ok"):
+            self._route(action, "api")
+            return res
+        if not res.get("attempted"):
+            self._route(action, "page", f"repli sur la page : {res.get('error') or 'geste non tenté'}")
+            return None
+        self._route(action, "api", res.get("error"))
+        return res
+
+    def mark_read(self, thread_id: str) -> bool:
+        res = self._gesture("mark_read", "markread", thread_id)
+        if res is None:
+            return self._inner.mark_read(thread_id)
+        if not res.get("ok"):
+            self._inner.last_error = res.get("error") or "marquer comme lu non confirmé"
+        return bool(res.get("ok"))
+
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
+        res = self._gesture("react", "react", thread_id, message=self._inner._ref(target), reaction=reaction)
+        if res is None:
+            return self._inner.react_focused(thread_id, target, reaction, restore=restore)
+        if res.get("uncertain"):
+            raise ReactUncertain(res.get("error") or "réaction non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def delete_focused(self, thread_id: str, target: MessageRef, restore: bool = True) -> Focus:
+        res = self._gesture("delete", "delete", thread_id, message=self._inner._ref(target))
+        if res is None:
+            return self._inner.delete_focused(thread_id, target, restore=restore)
+        if res.get("uncertain"):
+            raise DeleteUncertain(res.get("error") or "suppression non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
+                     reply_to: Optional[MessageRef] = None, mentions: Any = (), files: Any = ()) -> Focus:
+        """Un envoi de texte simple part par le service de chat ; une saisie sans envoi, une
+        réponse citée, une mention ou une pièce jointe passent par la page."""
+        if send and reply_to is None and not mentions and not files and text.strip():
+            res = self._gesture("send", "send", thread_id, text=text)
+            if res is not None:
+                if res.get("uncertain"):
+                    raise SendUncertain(res.get("error") or "envoi non confirmé")
+                return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+        kwargs: dict[str, Any] = {}
+        if reply_to is not None:
+            kwargs["reply_to"] = reply_to
+        if mentions:
+            kwargs["mentions"] = mentions
+        if files:
+            kwargs["files"] = files
+        return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
 
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont
