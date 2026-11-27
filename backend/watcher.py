@@ -286,7 +286,13 @@ class Watcher:
             if not isinstance(raw, dict) or not raw.get("ready"):
                 return None
             self._landmark_marks = teamscheck.merge_marks(self._landmark_marks, raw.get("marks"))
-            check = teamscheck.evaluate(raw.get("results"), self._landmark_marks)
+            # Ce que le pilote fait par l'API Teams web n'a plus besoin de ces repères (repli seul).
+            served_by = getattr(self.driver, "api_features", None)
+            try:
+                served = served_by() if callable(served_by) else set()
+            except Exception:
+                served = set()
+            check = teamscheck.evaluate(raw.get("results"), self._landmark_marks, served=served)
             before = self.state.teams_check
             self.state.teams_check = check
         was = {m.key for m in before.missing} if before else set()

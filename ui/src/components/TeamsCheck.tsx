@@ -56,10 +56,13 @@ export function TeamsCheckRow({ trame }: { trame: Trame }) {
     else if (res.check?.ok) toast.success("Teams n'a pas changé", { description: `${res.check.verified} repères présents.` });
   };
 
+  const spare = check?.fallback.length ?? 0;
   const line = !check
     ? "Pas encore contrôlée : le contrôle tourne quand Teams se connecte, puis toutes les heures."
     : check.ok
-      ? `Rien n'a changé · ${check.verified} repères présents · contrôlé à ${time(check.at)}`
+      ? spare
+        ? `Rien d'utile n'a changé · ${spare} repère${spare > 1 ? "s" : ""} de repli absent${spare > 1 ? "s" : ""} · contrôlé à ${time(check.at)}`
+        : `Rien n'a changé · ${check.verified} repères présents · contrôlé à ${time(check.at)}`
       : `${check.missing.length} repère${check.missing.length > 1 ? "s" : ""} introuvable${check.missing.length > 1 ? "s" : ""} · contrôlé à ${time(check.at)}`;
 
   return (
@@ -90,6 +93,21 @@ export function TeamsCheckRow({ trame }: { trame: Trame }) {
                 <span className="text-muted-foreground">
                   {m.how === "usage" ? `Introuvable quand Trame s'en est servi, à ${time(m.at)}` : "Absent de la page au contrôle"}
                 </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {check && spare > 0 && (
+        <div className="border-t px-4 py-2.5 text-xs">
+          <p className="mb-1.5 text-muted-foreground">
+            Absents de la page, sans conséquence : ces actions passent par l'API Teams web. La page ne sert plus qu'en
+            repli, si l'API ne répond pas.
+          </p>
+          <ul className="flex flex-col gap-1">
+            {check.fallback.map((m) => (
+              <li key={m.key}>
+                <span>{m.label}</span> <span className="font-mono text-muted-foreground">{m.key}</span>
               </li>
             ))}
           </ul>
