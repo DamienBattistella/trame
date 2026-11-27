@@ -252,7 +252,7 @@ class Archived(BaseModel):
     at: str  # ISO, heure locale
     auto: bool = False  # archivée par l'archivage automatique (sinon à la main)
     label: Optional[str] = None  # heure de la liste Teams au moment de l'archivage
-    hidden: bool = False  # aussi masquée dans Teams (Microsoft Graph)
+    hidden: bool = False  # aussi masquée dans Teams (service de chat de Teams)
 
 
 class UndoableSend(BaseModel):

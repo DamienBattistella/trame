@@ -608,6 +608,8 @@
       delete: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, "?behavior=softDelete"],
       edit: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, ""],
       send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
+      // Masquer / réafficher une conversation dans la liste de Teams (propriété « hidden »).
+      hide: (c) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/properties`, "?name=hidden"],
       // Création d'un tête-à-tête (c : son id calculé, jamais mis dans le chemin).
       thread: () => ["POST", "/v1/threads", ""],
     };
@@ -2661,7 +2663,25 @@
       });
       return ok ? { ok: true } : uncertain("modification non confirmée par le service de chat");
     };
-    const run = { markread, react, delete: remove, send, edit };
+    // Masquer (ou réafficher) une conversation dans la liste de Teams, comme son menu
+    // « Masquer » : propriété « hidden » de la conversation, puis relue. Teams la réaffiche
+    // d'elle-même au prochain message.
+    const hide = async ({ thread, hidden }) => {
+      const want = hidden === false ? "false" : "true";
+      const r = await getConv(thread);
+      if (!r.ok || !r.json) return notSent(r.error || "conversation introuvable sur le service de chat");
+      const now = () => String(((r.json && r.json.properties) || {}).hidden || "false") === "true";
+      if (now() === (want === "true")) return { ok: true, already: true };
+      const w = await chatsvc.write("hide", thread, null, { hidden: want });
+      if (!w.sent) return notSent(w.error);
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `${want === "true" ? "masquage" : "réaffichage"} refusé (HTTP ${w.status})` };
+      const ok = await proven(async () => {
+        const v = await getConv(thread);
+        return v.ok && String(((v.json && v.json.properties) || {}).hidden || "false") === want;
+      });
+      return ok ? { ok: true } : uncertain(`${want === "true" ? "masquage" : "réaffichage"} non confirmé par le service de chat`);
+    };
+    const run = { markread, react, delete: remove, send, edit, hide };
     return async (args) => {
       const kind = String((args && args.kind) || "");
       if (!run[kind]) return notSent("geste inconnu");

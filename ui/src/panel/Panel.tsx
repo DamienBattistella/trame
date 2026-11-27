@@ -805,8 +805,8 @@ const ARCHIVE_AFTER = [0, 7, 14, 30, 90];
 
 /**
  * Archivage automatique, désactivé par défaut : une conversation qui disparaît seule
- * surprendrait (Teams lui-même ne masque rien tout seul). Masquer aussi dans Teams
- * demande Microsoft Graph ; par la page Teams, l'option reste grisée et le dit.
+ * surprendrait (Teams lui-même ne masque rien tout seul). Masquer aussi dans Teams passe
+ * par le service de chat de Teams ; sans lui, l'option reste grisée et le dit.
  */
 function ArchiveSettingsBody({ trame, value, onChange }: { trame: Trame; value: Settings["archive"]; onChange: (a: Partial<Settings["archive"]>) => void }) {
   const [canHide, setCanHide] = useState<boolean | null>(null);
@@ -834,8 +834,8 @@ function ArchiveSettingsBody({ trame, value, onChange }: { trame: Trame; value: 
           label="Masquer aussi dans Teams"
           hint={
             canHide
-              ? "Par Microsoft Graph : la conversation disparaît aussi de ta liste Teams, et y revient quand tu la désarchives ou au prochain message."
-              : "Demande Microsoft Graph (Réglages › Général). Par la page Teams, l'archivage reste dans Trame."
+              ? "Par le service de chat de Teams : la conversation disparaît aussi de ta liste Teams, et y revient quand tu la désarchives ou au prochain message."
+              : "Demande le service de chat de Teams (Réglages › Général › API Teams web). Sans lui, l'archivage reste dans Trame."
           }
           checked={value.hideInTeams && Boolean(canHide)}
           disabled={!canHide}

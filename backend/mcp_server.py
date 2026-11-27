@@ -83,7 +83,8 @@ TOOLS: list[dict] = [
            "query": {"type": "string", "description": "Filtre sur le nom"},
            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200}}),
     _tool("read_conversation", "Lire une discussion",
-          "Derniers messages d'une discussion (Trame l'ouvre brièvement dans sa fenêtre Teams puis revient). "
+          "Derniers messages d'une discussion, lus sur le service de chat de Teams sans l'ouvrir (sinon Trame l'ouvre "
+          "brièvement dans sa fenêtre Teams puis revient). "
           "Au-delà de ce que Teams affiche, Trame remonte le fil ; start_of_conversation dit s'il n'y a rien de plus ancien. " + UNTRUSTED,
           {**TARGET, "last_n": {"type": "integer", "minimum": 5, "maximum": 500, "default": 30},
            "fresh": {"type": "boolean", "default": False, "description": "Relire depuis Teams au lieu du cache (2 min)"}}),
@@ -96,7 +97,7 @@ TOOLS: list[dict] = [
     _tool("get_persona", "Persona (SOUL.md)", "Le SOUL.md qui décrit la voix et les habitudes de l'utilisateur."),
     _tool("get_my_status", "Mon statut Teams",
           "Statut Teams de l'utilisateur (available, busy, dnd, brb, away, offline…) et son message de statut, "
-          "tels que Teams les affiche. Trame ouvre brièvement le menu du profil dans sa fenêtre Teams pour lire le message."),
+          "lus sur le service de présence de Teams (sinon dans le menu du profil de sa fenêtre Teams)."),
     # --- réunions : transcriptions (lecture seule dans Teams) ---
     _tool("list_meetings", "Réunions et transcriptions",
           "Réunions Teams terminées des conversations de réunion récentes : meeting_id, titre, date (ISO), créneau, "
@@ -149,7 +150,7 @@ TOOLS: list[dict] = [
           "Change le statut Teams de l'utilisateur, visible par ses collègues : available (Disponible), busy (Occupé), "
           "dnd (Ne pas déranger), brb (De retour bientôt), away (Apparaître absent), offline (Apparaître hors ligne), "
           "reset (Teams décide à nouveau). message change aussi le message de statut (\"\" l'efface). "
-          "Réussi seulement si Teams affiche ensuite ce qui est demandé. À faire seulement à la demande de l'utilisateur.",
+          "Réussi seulement si Teams, relu ensuite, garde ce qui est demandé. À faire seulement à la demande de l'utilisateur.",
           {"presence": {"type": "string", "enum": list(presencemod.CHOICES)},
            "message": {"type": "string", "maxLength": presencemod.MESSAGE_MAX,
                        "description": "Message de statut ; chaîne vide pour l'effacer. Absent : inchangé."}},

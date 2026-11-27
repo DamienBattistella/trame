@@ -6,11 +6,13 @@ l'auth que le client Teams pose lui-même (le jeton ne quitte jamais la page, vo
 `drivers/web_bridge.py` et `docs/teams-web-api.md`).
 
 Teams v2 lit et écrit les messages par l'API REST de son service de chat (chatsvc), depuis un
-Web Worker. La page ouvre sa propre session sur ce service (`chatsvc` dans teams-bridge.js) ;
-aujourd'hui, lectures et écritures passent encore par la page (DOM) et `routes()` dit, action
-par action, la voie suivie (« api » / « page »), prête à basculer en « api » à mesure que les
-actions sont câblées. La santé de la signature et de la session chatsvc (auto-tests du pont)
-est exposée pour l'écran Réglages.
+Web Worker. La page ouvre sa propre session sur ce service (`chatsvc` dans teams-bridge.js) et
+appelle aussi le service de présence et le middletier avec le jeton que Teams y pose. Chaque
+action câblée essaie d'abord l'API, prouve son effet en relisant, et retombe sur la page (DOM)
+quand rien n'est parti ; `routes()` dit, action par action, la voie suivie (« api » / « page »)
+et si elle a servi depuis le démarrage. Restent sur la page : les réunions et les
+transcriptions. La santé de la signature et de la session chatsvc (auto-tests du pont) est
+exposée pour l'écran Réglages.
 
 Enveloppe transparente : tout ce qui n'est pas défini ici est délégué au pilote de la page.
 """
@@ -136,14 +138,14 @@ class _ChatState:
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
            "search_messages", "mark_read", "react", "delete", "edit", "set_status", "set_note",
-           "send", "start_chat", "meetings", "transcript")
+           "send", "start_chat", "hide", "meetings", "transcript")
 
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
                              "presence", "my_status", "set_status", "set_note", "search_people", "start_chat",
-                             "search_messages"})
+                             "search_messages", "hide"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -151,7 +153,7 @@ class WebApiDriver:
     NOTE_NEVER = _note_never()
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
-    PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
+    PAGE_REASON = "via la page Teams (pas encore câblé sur l'API Teams web)"
 
     def __init__(self, inner: TeamsDriver) -> None:
         object.__setattr__(self, "_inner", inner)
@@ -503,6 +505,21 @@ class WebApiDriver:
             return None
         self._route(action, "api", res.get("error"))
         return res
+
+    # --- Masquer dans Teams (archivage de Trame) -----------------------------------------
+    @property
+    def can_hide_chat(self) -> bool:
+        return callable(getattr(self._inner, "chat_gesture", None))
+
+    def hide_chat(self, thread_id: str, hide: bool) -> bool:
+        """Masque (ou réaffiche) la conversation dans la liste de Teams, par le service de chat,
+        puis relit. Pas de repli sur la page : son menu « Masquer » n'est pas piloté."""
+        res = self._gesture("hide", "hide", thread_id, hidden=bool(hide))
+        if res is None:
+            raise RuntimeError("conversation sans identifiant Teams prouvé")
+        if not res.get("ok"):
+            raise RuntimeError(res.get("error") or "non confirmé par Teams")
+        return True
 
     def mark_read(self, thread_id: str) -> bool:
         res = self._gesture("mark_read", "markread", thread_id)

@@ -797,7 +797,7 @@ const DEMO_TEAMS_API: TeamsApiStatus = {
   driver: "WebApiDriver",
   routes: Object.fromEntries(
     ["list", "read", "watch", "unread", "presence", "my_status", "search_people", "search_messages", "meetings", "transcript",
-      "send", "start_chat", "react", "mark_read", "delete", "edit", "set_status", "set_note"].map((k) => [
+      "send", "start_chat", "hide", "react", "mark_read", "delete", "edit", "set_status", "set_note"].map((k) => [
       k,
       k === "read"
         ? { via: "api" as const, reason: null, at: "10:02:11", tried: true }
@@ -2259,7 +2259,7 @@ export function useTrame() {
     setState((s) => ({ ...s, archived: res.ok ? mapArchived(res.archived) : prev }));
     return res;
   };
-  /** Masquer dans Teams n'est possible que par Microsoft Graph connecté. */
+  /** Masquer dans Teams passe par le service de chat de Teams (API Teams web). */
   const archiveStatus = async (): Promise<Result<{ canHideInTeams: boolean }>> => {
     if (!connectedRef.current) return { ok: true, canHideInTeams: false };
     const res = await request<{ can_hide_in_teams: boolean }>("GET", "/api/archive");

@@ -1226,3 +1226,31 @@ test("chatsearch : chaque mot présent (casse et accents ignorés), fils récent
   const short = (await p.run("chatsearch", { query: "a" })).result;
   assert.equal(short.ok, false);
 });
+
+test("chatgesture hide : propriété « hidden » de la conversation, prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const conv: any = { properties: {} };
+  const writes: any[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    const method = (init && init.method) || "GET";
+    if (method === "PUT" && url.includes("/properties?name=hidden")) {
+      const body = JSON.parse(init.body);
+      writes.push({ url, body });
+      conv.properties.hidden = body.hidden;
+      return fakeResponse("", { status: 200 });
+    }
+    if (url.includes(`/conversations/${encodeURIComponent(GROUP_ID)}`)) return fakeResponse(JSON.stringify(conv));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
+  assert.equal(r.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(writes[0].body)), { hidden: "true" });
+  const again = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
+  assert.equal(again.already, true);
+  const back = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: false })).result;
+  assert.equal(back.ok, true);
+  assert.equal(conv.properties.hidden, "false");
+  assert.equal(writes.length, 2);
+});

@@ -27,6 +27,7 @@ const GROUPS: { label: string; actions: Record<string, string> }[] = [
     actions: {
       send: "Envoi",
       start_chat: "Nouvelle conversation",
+      hide: "Masquer dans Teams",
       react: "Réactions",
       mark_read: "Marquer comme lu",
       delete: "Suppression",

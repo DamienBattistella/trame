@@ -120,7 +120,7 @@ def follow_up_delay(f: dict) -> int:
 
 class ArchiveSettings(BaseModel):
     """Archivage automatique des conversations sans activité depuis after_days jours
-    (0 : jamais), et masquage dans Teams par Microsoft Graph (désactivé par défaut)."""
+    (0 : jamais), et masquage dans Teams par le service de chat de Teams (désactivé par défaut)."""
     after_days: int = Field(default=0, ge=0, le=365)
     hide_in_teams: bool = False
 

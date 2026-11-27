@@ -1,13 +1,15 @@
 # Trame et les API internes de Teams web
 
-Trame pilote Teams web dans une fenêtre cachée (« Teams intégré ») : aujourd'hui il lit et
-clique **dans le DOM** de la page (`ui/src-tauri/teams-bridge.js`). Chaque changement de
-l'interface de Teams casse un geste (« Répondre » introuvable, pièce jointe non confirmée,
-repère absent).
+Trame pilote Teams web dans une fenêtre cachée (« Teams intégré »). À l'origine il lisait et
+cliquait **dans le DOM** de la page (`ui/src-tauri/teams-bridge.js`) : chaque changement de
+l'interface de Teams cassait un geste (« Répondre » introuvable, pièce jointe non confirmée,
+repère absent). Le DOM reste aujourd'hui le repli de chaque action câblée sur l'API.
 
 La voie choisie pour fiabiliser ces actions : faire, **depuis la page**, les mêmes appels
 réseau que le client Teams fait déjà — ses **API internes** — en réutilisant la session web
-**déjà authentifiée** de l'utilisateur. Pas de Microsoft Graph, pas de demande à la DSI.
+**déjà authentifiée** de l'utilisateur. Pas d'application Microsoft Graph à enregistrer, pas
+de demande à la DSI (Graph n'est appelé que dans la page, avec le jeton que Teams y a posé, pour
+résoudre un lien de fichier comme Teams le fait).
 
 > Cette approche **a remplacé** l'ancienne voie Microsoft Graph : le `WebApiDriver` et la carte
 > « API Teams web » des réglages ont pris la place du `GraphDriver` et de la carte « Microsoft
@@ -51,11 +53,10 @@ l'exécute avec sa session et ne renvoie que le corps parsé.
     « métier » avant l'envoi, et la page refuse d'en poser. L'auth reste portée par la page.
   - **Aucun en-tête de réponse renvoyé** (hors `Content-Type`) : seul le corps métier, borné à
     2 Mo, remonte au moteur.
-- **Portée actuelle (étape de découverte)** : `credentials: "include"` rejoue les **cookies** de
-  la page. Les services qui exigent un **bearer token** (jeton applicatif que Teams garde en
-  mémoire, pas dans un cookie) répondront 401 tant que la page ne rejoue pas elle-même cette auth
-  — ce rejeu, **entièrement dans la page** (le jeton n'en sort pas), est le sujet de l'étape
-  « lectures ». D'ici là, ces actions restent sur le DOM.
+- **Jetons** : `credentials: "include"` rejoue les **cookies** de la page ; avec `sign`, la page
+  resigne l'appel avec le bearer que Teams vient de poser sur le même endpoint (même audience),
+  gardé **en mémoire de la page** seulement. Le service de chat (§ 3), la présence (§ 7) et le
+  middletier utilisent ce même rejeu, entièrement dans la page.
 
 ### 2. Capture réseau en lecture seule (découverte)
 
@@ -206,6 +207,7 @@ Requêtes relevées dans le code de Teams, faites dans la page avec la session d
 | marquer comme lu | `PUT …/conversations/{id}/properties?name=consumptionhorizon` `{"consumptionhorizon": "<arrivée du dernier>;<maintenant>;<clientmessageid ou id>"}` |
 | réaction | `PUT …/messages/{mid}/properties?name=emotions` `{"emotions": {"key": "like", "value": <maintenant>}}` |
 | suppression | `DELETE …/messages/{mid}?behavior=softDelete` |
+| masquer / réafficher | `PUT …/conversations/{id}/properties?name=hidden` `{"hidden": "true" \| "false"}` (archivage de Trame, option « Masquer aussi dans Teams ») |
 | envoi | `POST …/conversations/{id}/messages` (`RichText/Html`, `clientmessageid` de 19 chiffres) |
 | réponse citée | même envoi, précédé de `<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="{mid}"><strong itemprop="mri" itemid="{mri}">{nom}</strong><span itemprop="time" itemid="{ms}"></span><p itemprop="preview">{extrait}</p></blockquote>` (format du composeur de Teams) |
 | mentions | même envoi : un `<span itemscope itemtype="http://schema.skype.com/Mention" itemid="{n}">{mot}</span>` par mot du nom (comme Teams v2), et `properties.mentions` = JSON `[{"@type": "http://schema.skype.com/Mention", "itemid": n, "mri": …, "mentionType": "person", "displayName": "{mot}"}]` |
@@ -291,5 +293,5 @@ Jamais un texte, un nom ou une valeur.
 4. ~~Écritures simples~~ (#128), ~~réponse citée~~ (#138), ~~mentions~~.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
    ~~nouvelle conversation~~ (#142, #144), ~~recherche dans les fils récents~~ (#146), ~~liste
-   complétée par le service~~.
+   complétée par le service~~, ~~masquer dans Teams~~ ; restent les réunions et les transcriptions.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
