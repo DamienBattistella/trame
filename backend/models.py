@@ -203,6 +203,8 @@ class AppState(BaseModel):
     capabilities: Capabilities = Field(default_factory=Capabilities)
     # Son propre statut Teams, tel que Teams l'affiche ; None quand il ne le dit pas.
     my_presence: Optional[Presence] = None
+    # Sa photo de profil Teams (data URL, 96 px) ; None sans photo ou tant qu'elle n'est pas lue.
+    my_photo: Optional[str] = None
     # Messages que tu as envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est.
     outbox: list["QueuedSend"] = Field(default_factory=list)
     # thread id -> compteur : change dès qu'un message arrive ou que Trame en envoie un

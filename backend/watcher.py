@@ -278,6 +278,10 @@ class Watcher:
         return check
 
     PRESENCE_REFRESH = 20.0
+    # The profile photo rarely changes: read hourly, retried sooner while unknown.
+    PHOTO_REFRESH = 3600.0
+    PHOTO_RETRY = 300.0
+    _photo_at: Optional[float] = None
 
     def _presence_loop(self) -> None:
         """Copy the drivers' presence onto the conversations every PRESENCE_REFRESH s.
@@ -285,6 +289,7 @@ class Watcher:
         Teams anything more."""
         while True:
             self.apply_presence()
+            self.apply_my_photo()
             if self._stop.wait(self.PRESENCE_REFRESH):
                 return
 
@@ -299,6 +304,20 @@ class Watcher:
                 if w.presence != value:
                     w.presence = value
         self.apply_own_status()
+
+    def apply_my_photo(self, force: bool = False) -> None:
+        """The user's own profile photo, for the avatar at the bottom of the rail."""
+        now = time.monotonic()
+        wait = self.PHOTO_REFRESH if self.state.my_photo else self.PHOTO_RETRY
+        if not force and self._photo_at is not None and now - self._photo_at < wait:
+            return
+        self._photo_at = now
+        try:
+            photo = self.driver.my_photo()
+        except Exception:
+            return  # Teams unreachable: keep the photo already shown
+        with self._lock:
+            self.state.my_photo = photo
 
     def apply_own_status(self) -> None:
         """The user's own status, read on Teams' profile button (no menu opened)."""

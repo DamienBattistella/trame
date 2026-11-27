@@ -2434,6 +2434,32 @@
       toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "message non affiché comme supprimé, vérifie dans Teams" };
     },
+    // Sa photo de profil, celle du bouton du profil (en haut à droite) : redessinée en
+    // 96 px. Sans photo, Teams met des initiales sans <img> : rien à renvoyer.
+    myphoto: async () => {
+      const trigger = document.querySelector(ME);
+      if (!trigger) return { ok: false, error: "bouton du profil introuvable dans Teams" };
+      const img = trigger.querySelector("img");
+      if (!img || !(await waitFor(() => img.complete && img.naturalWidth > 0, 3000))) return { ok: true, photo: null };
+      const draw = (source) => {
+        const c = document.createElement("canvas");
+        c.width = c.height = 96;
+        c.getContext("2d").drawImage(source, 0, 0, 96, 96);
+        return c.toDataURL("image/jpeg", 0.85);
+      };
+      try {
+        return { ok: true, photo: draw(img) };
+      } catch {
+        // Image d'un autre domaine (canvas « tainted ») : la relire dans la page, avec sa session.
+        try {
+          const res = await fetch(img.currentSrc || img.src, { credentials: "include" });
+          if (!res.ok) return { ok: true, photo: null };
+          return { ok: true, photo: draw(await createImageBitmap(await res.blob())) };
+        } catch {
+          return { ok: true, photo: null };
+        }
+      }
+    },
     mystatus: async ({ message } = {}) => {
       if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
       if (!message) return { ok: true, labels: myLabels() };

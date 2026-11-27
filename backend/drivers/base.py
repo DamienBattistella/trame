@@ -252,6 +252,11 @@ class TeamsDriver(ABC):
         in any case."""
         raise NotSupported(self.status_unsupported)
 
+    def my_photo(self) -> Optional[str]:
+        """The user's own profile photo as a small data URL (image/png or image/jpeg),
+        or None when the driver cannot show it. Raises only when Teams is unreachable."""
+        return None
+
     def set_status_message(self, text: str) -> str:
         """Set (or, empty, clear) the status message. Returns the message Teams shows
         afterwards, checked by the caller. Raises when it could not be done."""
