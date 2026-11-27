@@ -255,6 +255,19 @@ export interface ThreadMessage {
   links?: MessageLink[];
   /** Cartes d'aperçu sous le message (Jira, GitHub, un site), résumées. */
   cards?: LinkCard[];
+  /** Message cité par cette réponse (« Répondre » dans Teams), lu dans Teams. */
+  quote?: MessageQuote | null;
+  /** Personnes mentionnées (@nom), telles qu'elles apparaissent dans le texte. */
+  mentions?: string[];
+  /** Modifié par son auteur après l'envoi (« Modifié » dans Teams). */
+  edited?: boolean;
+}
+
+/** Le message cité au-dessus d'une réponse : auteur, heure telle que Teams l'affiche, extrait. */
+export interface MessageQuote {
+  sender: string;
+  at: string;
+  text: string;
 }
 
 /** Un lien du texte d'un message : son texte tel qu'affiché, son adresse (http/https). */

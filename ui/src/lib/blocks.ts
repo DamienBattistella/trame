@@ -90,3 +90,23 @@ export function codeSpans(text: string): { code: boolean; text: string }[] {
   if (last < text.length) out.push({ code: false, text: text.slice(last) });
   return out;
 }
+
+/** Morceaux d'un texte où apparaissent les personnes mentionnées (« @Ana Lopez » s'affiche
+ *  « Ana Lopez » dans Teams) : alternance texte / mention, la concaténation redonne le texte.
+ *  Nom entier seulement (pas « Lou » dans « Louis »), le plus long d'abord. */
+export function mentionSpans(text: string, names: string[] = []): { mention: boolean; text: string }[] {
+  const list = [...new Set(names.map((n) => n.trim()).filter((n) => n.length > 1))].sort((a, b) => b.length - a.length);
+  if (!list.length) return [{ mention: false, text }];
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_])@?(?:${list.map(esc).join("|")})(?![\\p{L}\\p{N}_])`, "gu");
+  const out: { mention: boolean; text: string }[] = [];
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const at = m.index ?? 0;
+    if (at > last) out.push({ mention: false, text: text.slice(last, at) });
+    out.push({ mention: true, text: m[0] });
+    last = at + m[0].length;
+  }
+  if (last < text.length) out.push({ mention: false, text: text.slice(last) });
+  return out.length ? out : [{ mention: false, text }];
+}

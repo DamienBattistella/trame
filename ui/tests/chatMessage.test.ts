@@ -119,5 +119,27 @@ test("citation (Répondre) : auteur, heure du message cité, extrait — comme l
       `<strong itemprop="mri" itemid="8:orgid:abc">Paul Durand</strong><span itemprop="time" itemid="${quoted}"></span>` +
       `<p itemprop="preview">Le point de jeudi</p></blockquote><p>D'accord pour moi</p>`,
   });
-  assert.equal(m.text, "Paul Durand\n05/11/2026 14:02\nLe point de jeudi\nD'accord pour moi");
+  // La citation sort du texte : rendue à part, comme dans Teams.
+  assert.equal(m.text, "D'accord pour moi");
+  assert.deepEqual(m.quote, { sender: "Paul Durand", at: "05/11/2026 14:02", text: "Le point de jeudi" });
+  assert.equal(m.edited, false);
+});
+
+test("mentions : nom complet recollé quand Teams le découpe par mot", () => {
+  const m = convert({
+    ...base,
+    content:
+      '<p><span itemscope="" itemtype="http://schema.skype.com/Mention" itemid="0">Alex</span>&nbsp;' +
+      '<span itemscope="" itemtype="http://schema.skype.com/Mention" itemid="1">Martin</span> et ' +
+      '<span itemscope="" itemtype="http://schema.skype.com/Mention" itemid="2">Lou</span>, vous validez ?</p>',
+  });
+  assert.equal(m.text, "Alex Martin et Lou, vous validez ?");
+  assert.deepEqual(m.mentions, ["Alex Martin", "Lou"]);
+  assert.equal(m.quote, null);
+});
+
+test("message modifié : repéré par edittime, jamais sur un message supprimé", () => {
+  assert.equal(convert({ ...base, content: "v2", properties: { edittime: "1795777009999" } }).edited, true);
+  assert.equal(convert({ ...base, content: "v1" }).edited, false);
+  assert.equal(convert({ ...base, content: "", properties: { edittime: "1", deletetime: "2" } }).edited, false);
 });

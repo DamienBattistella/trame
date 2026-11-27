@@ -47,7 +47,11 @@ export function demoHistory(who: string): ThreadMessage[] {
     other("h24", "Hier 17:12", "Je demande à Lucas."),
     me("h25", "Hier 18:05", "Bonne soirée !"),
     other("h26", "08:41", "Bonjour ! Lucas a relu, deux remarques mineures."),
+    other("h26b", "08:44", "Lucas Bernard tu peux confirmer pour la seconde ?", { mentions: ["Lucas Bernard"], edited: true }),
     other("h27", "08:42", "La maquette de l'écran de suivi est prête aussi : https://www.figma.com/design/AbC123/Suivi-des-resultats"),
-    me("h28", "08:58", "Je traite les remarques ce matin."),
+    me("h28", "08:58", "Je traite les remarques ce matin.", {
+      quote: { sender: who, at: "08:41", text: "Bonjour ! Lucas a relu, deux remarques mineures." },
+      edited: true,
+    }),
   ];
 }

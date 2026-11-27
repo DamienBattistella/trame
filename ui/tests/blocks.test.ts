@@ -1,7 +1,21 @@
 // node --test tests/ : tableaux Markdown et code en ligne dans un message.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blocksOf, cells, codeSpans } from "../src/lib/blocks.ts";
+import { blocksOf, cells, codeSpans, mentionSpans } from "../src/lib/blocks.ts";
+
+test("mentions : nom entier, le plus long d'abord, « @ » gardé, caractères spéciaux sans risque", () => {
+  const spans = mentionSpans("Alex Martin et @Lou, voyez avec Louis. Alex ?", ["Lou", "Alex Martin", "Alex", "(x"]);
+  assert.deepEqual(spans, [
+    { mention: true, text: "Alex Martin" },
+    { mention: false, text: " et " },
+    { mention: true, text: "@Lou" },
+    { mention: false, text: ", voyez avec Louis. " },
+    { mention: true, text: "Alex" },
+    { mention: false, text: " ?" },
+  ]);
+  assert.deepEqual(mentionSpans("rien", []), [{ mention: false, text: "rien" }]);
+  assert.equal(mentionSpans("(x) Élodie", ["(x", "Élodie"]).map((s) => s.text).join(""), "(x) Élodie");
+});
 
 test("un tableau entre deux paragraphes", () => {
   const text = "Point du jour :\n| Sujet | GitHub | État |\n| --- | :---: | ---: |\n| Préadmission | #4849 | en cours |\n| Date \\| heure | #4645 |\nFin.";

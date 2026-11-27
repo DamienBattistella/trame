@@ -34,7 +34,7 @@ from github import context as gh
 from github import knowledge as ghknow
 from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
-                    FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
+                    FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, QuoteRef, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
 from drivers.base import DeleteUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
@@ -796,23 +796,22 @@ class Watcher:
 
         if mode == "auto":
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
-            # Sent without a click: the people on the other side see it went out alone.
-            outgoing = safety.mark_automatic(proposal) if safety.marks_automatic(cfg) else proposal
+            react = safety.marks_automatic(cfg)
             guard = self._auto_guard(msg.thread_id)
             if guard:
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi automatique à {msg.sender} retenu : {guard}. Réponse gardée en brouillon")
                 return "draft"
             when = "tout de suite" if not secs else f"dans {secs} s (la pause l'annule)"
-            self.log("info", f"Réponse à {msg.sender} envoyée {when} : « {outgoing} »")
+            self.log("info", f"Réponse à {msg.sender} envoyée {when} : « {proposal} »")
             if not self._countdown_ok(secs):
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi à {msg.sender} annulé : réponse gardée en brouillon")
                 return "draft"
-            if self._deliver(msg.thread_id, outgoing, send=True, restore=True, auto=True):
-                self.log("sent", f"Envoyé à {msg.sender} : « {outgoing[:60]} »")
-                self._offer_undo(msg.thread_id, entity.display_name, outgoing)
-                self._record_auto(msg.thread_id, entity.display_name, outgoing)
+            if self._deliver(msg.thread_id, proposal, send=True, restore=True, auto=True, react=react):
+                self.log("sent", f"Envoyé à {msg.sender} : « {proposal[:60]} »")
+                self._offer_undo(msg.thread_id, entity.display_name, proposal)
+                self._record_auto(msg.thread_id, entity.display_name, proposal)
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
             self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
@@ -1013,8 +1012,8 @@ class Watcher:
         return f" Raison : {reason}." if reason else " La conversation n'a pas pu être confirmée dans Teams."
 
     def _deliver(self, thread_id: str, text: str, send: bool, restore: bool, auto: bool = False,
-                 reply_to: Optional[MessageRef] = None, mentions: Sequence[str] = (),
-                 files: Sequence[Attachment] = ()) -> bool:
+                 react: bool = False, reply_to: Optional[MessageRef] = None,
+                 mentions: Sequence[str] = (), files: Sequence[Attachment] = ()) -> bool:
         """Type into thread_id through the driver's guard. False on any doubt or error.
         restore=True puts the user's previous conversation back afterwards. Pause (for
         automatic sends) and screen share are re-checked under the UI lock, right before
@@ -1067,6 +1066,11 @@ class Watcher:
             if focus.ok and send:
                 self._unconfirmed.pop(thread_id, None)
                 self._touch(thread_id)
+            if focus.ok and send and react:
+                try:
+                    self.driver.react_to_last(thread_id)
+                except Exception as e:
+                    self.log("debug", f"Réaction non ajoutée : {e}")
         self._warn_if_not_restored(focus)
         return focus.ok
 
@@ -1548,7 +1552,9 @@ class Watcher:
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
                 "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
                 "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted,
-                "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards]} for m in msgs]
+                "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards],
+                "quote": m.quote.model_dump() if m.quote else None, "mentions": list(m.mentions), "edited": m.edited}
+               for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
@@ -2526,7 +2532,8 @@ class Watcher:
         msgs, _top = self.thread_history(thread_id, self.FACT_CHECK_MESSAGES)
         reflection.check_cancelled()
         def said(m: dict) -> str:
-            return brain_text(m["text"], [LinkRef(**x) for x in m.get("links") or []], [CardRef(**x) for x in m.get("cards") or []])
+            return brain_text(m["text"], [LinkRef(**x) for x in m.get("links") or []], [CardRef(**x) for x in m.get("cards") or []],
+                              QuoteRef(**m["quote"]) if m.get("quote") else None)
         lines = [f"[{m['at']}] {m['sender']}: {said(m)}" if m.get("at") else f"{m['sender']}: {said(m)}" for m in msgs]
         if target is not None:
             when = f" ({target.at})" if target.at else ""
@@ -2611,7 +2618,7 @@ class Watcher:
         numbers = numbers or []
         extra = [f"[fichier joint : {f.name}]" for f in m.files] + \
             [f"[image {numbers[j]}]" if j < len(numbers) and numbers[j] else "[image]" for j in range(len(m.images))]
-        if not extra and not m.links and not m.cards:
+        if not extra and not m.links and not m.cards and not m.quote:
             return m
         return m.model_copy(update={"text": "\n".join([m.brain_text(), *extra]).strip(), "images": []})
 

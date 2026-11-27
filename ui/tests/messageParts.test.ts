@@ -63,6 +63,17 @@ test("aperçu GitHub : hors du texte, titre générique remplacé par l'adresse 
   ]);
 });
 
+test("citation de la page (carte Teams) : auteur, heure, extrait hors du texte ; ses liens non repris", () => {
+  const root = parse(
+    '<div><div data-tid="quoted-reply-card"><div>Paul Durand</div><div>Hier 15:10</div>' +
+      '<p>Voir <a href="https://example.com/a">la page</a></p></div><p>Je regarde.</p></div>'
+  ).childNodes[0] as MiniElement;
+  const p = messageParts(root) as Parts & { quote: unknown };
+  assert.equal(p.text, "Je regarde.");
+  assert.deepEqual(p.quote, { sender: "Paul Durand", at: "Hier 15:10", text: "Voir la page" });
+  assert.deepEqual(p.links, []);
+});
+
 test("message simple : mention gardée, adresse en clair, javascript: refusé, Safe Links déballé, <pre> intact", () => {
   const p = messageParts(fixture("plain"));
   assert.equal(
@@ -74,7 +85,7 @@ test("message simple : mention gardée, adresse en clair, javascript: refusé, S
 });
 
 test("sans racine : rien", () => {
-  assert.deepEqual(messageParts(null), { text: "", links: [], cards: [] });
+  assert.deepEqual(messageParts(null), { text: "", links: [], cards: [], quote: null, mentions: [] });
 });
 
 test("tableau Teams : transcrit en Markdown, cellules sur une ligne, barres échappées, liens gardés", () => {
