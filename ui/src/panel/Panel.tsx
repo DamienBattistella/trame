@@ -602,8 +602,8 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
             onChange={(v) => update("safety", { safety: { ...safety, selftestGate: v } })}
           />
           <ToggleRow
-            label="Marquer les envois auto d'un 🤖"
-            hint="Tes interlocuteurs savent qu'une réponse est partie seule. Suivi d'un emoji selon le ton (😊 😔 😎 🎉 🤔). Rien n'est ajouté quand tu cliques sur « Envoyer »."
+            label="Réagir aux envois auto d'un 🤖"
+            hint="Tes interlocuteurs savent qu'une réponse est partie seule grâce à une réaction 🤖 sur le message. Rien n'est ajouté quand tu cliques sur « Envoyer »."
             checked={safety.markAutoReplies}
             onChange={(v) => update("safety", { safety: { ...safety, markAutoReplies: v } })}
           />
