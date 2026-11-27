@@ -5,6 +5,7 @@ export const demoSkills = (): SkillsSummary => ({
   ownDir: String.raw`C:\Users\vous\AppData\Roaming\Trame\skills`,
   dirs: ["~/.agents/skills"],
   repos: [],
+  autoUpdateHours: 6,
   sources: [
     { label: "Trame", path: String.raw`C:\Users\vous\AppData\Roaming\Trame\skills`, exists: true, defaultOn: true },
     { label: "~/.agents/skills", path: String.raw`C:\Users\vous\.agents\skills`, exists: true, defaultOn: false },

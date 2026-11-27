@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -44,6 +45,10 @@ MAX_DESCRIPTION = 4096
 CATALOG_DESCRIPTION = 400
 MAX_ACTIVE = 40
 MAX_SKILLS = 300
+# Git repositories are brought up to date in the background this often, unless the
+# user changed it (skills.autoUpdateHours in config.json; 0 turns it off).
+AUTO_UPDATE_HOURS = 6
+AUTO_UPDATE_CHOICES = (0, 1, 6, 24)
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _TEXT_EXT = {".md", ".markdown", ".txt", ".csv", ".json", ".yaml", ".yml", ".xml", ".vtt", ".tsv"}
@@ -267,7 +272,8 @@ class Registry:
     """The skills Trame knows, read again on demand (Recharger) and when the sources
     change. State in config.json, section `skills`:
       dirs:  extra folders (default ~/.agents/skills);
-      repos: git repositories cloned into <data>/skill-repos (url, branch);
+      repos: git repositories cloned into <data>/skill-repos (url, branch), brought up
+             to date every autoUpdateHours (default AUTO_UPDATE_HOURS, 0 = only by hand);
       state: {name: true/false}; a name absent keeps its default: on for Trame's own
              folder, off for shared folders and repositories (their text joins a prompt
              only once the user said so)."""
@@ -280,23 +286,59 @@ class Registry:
         self._lock = threading.Lock()
         self.skills: list[Skill] = []
         self.ignored: list[Ignored] = []
+        # Last update of each repository (slug -> commit, at, error), this session only.
+        self.repo_status: dict[str, dict] = {}
         self.reload()
 
     def _cfg(self) -> dict:
         s = (self._get_cfg() or {}).get("skills")
         return s if isinstance(s, dict) else {}
 
+    def auto_update_hours(self) -> int:
+        value = self._cfg().get("autoUpdateHours")
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else AUTO_UPDATE_HOURS
+
+    def repos(self) -> list[tuple[str, str]]:
+        """(url, branch) of the configured repositories."""
+        return [(r["url"], r.get("branch") or "") for r in self._cfg().get("repos", []) or []
+                if isinstance(r, dict) and isinstance(r.get("url"), str)]
+
     def sources(self) -> list[tuple[str, Path, bool]]:
+        """Trame's folder, then the repositories (kept up to date by Trame, so they win
+        over an older copy of the same skill in a shared folder), then shared folders."""
         out: list[tuple[str, Path, bool]] = [("Trame", self.own_dir, True)]
+        for url, branch in self.repos():
+            folder = self.repos_dir / repo_slug(url, branch)
+            inner = folder / "skills"
+            out.append((f"git {url}", inner if inner.is_dir() else folder, False))
         for raw in self._cfg().get("dirs", ["~/.agents/skills"]) or []:
             if isinstance(raw, str) and raw.strip():
                 out.append((raw.strip(), _expand(raw), False))
-        for repo in self._cfg().get("repos", []) or []:
-            if isinstance(repo, dict) and isinstance(repo.get("url"), str):
-                folder = self.repos_dir / repo_slug(repo["url"], repo.get("branch") or "")
-                inner = folder / "skills"
-                out.append((f"git {repo['url']}", inner if inner.is_dir() else folder, False))
         return out
+
+    def update_repo(self, url: str, branch: str, sync: Optional[Callable[..., str]] = None) -> str:
+        """Clone or update one repository and remember the outcome. Raises on failure
+        (the error is kept for the UI); the caller reloads."""
+        slug = repo_slug(url, branch)
+        try:
+            commit = (sync or sync_repo)(self.repos_dir / slug, url, branch)
+        except Exception as e:
+            self.repo_status[slug] = {**self.repo_status.get(slug, {}), "at": time.time(), "error": str(e)[:300]}
+            raise
+        self.repo_status[slug] = {"commit": commit, "at": time.time(), "error": ""}
+        return commit
+
+    def update_all(self, sync: Optional[Callable[..., str]] = None) -> list[tuple[str, str]]:
+        """Every repository brought up to date, then one reload. Returns (url, error) of
+        those that failed: the previous copy stays in use."""
+        failed: list[tuple[str, str]] = []
+        for url, branch in self.repos():
+            try:
+                self.update_repo(url, branch, sync)
+            except Exception as e:
+                failed.append((url, str(e)[:300]))
+        self.reload()
+        return failed
 
     def reload(self) -> None:
         try:
@@ -328,14 +370,19 @@ class Registry:
         return {
             "ownDir": str(self.own_dir),
             "dirs": [d for d in (cfg.get("dirs", ["~/.agents/skills"]) or []) if isinstance(d, str)],
-            "repos": [{"url": r.get("url", ""), "branch": r.get("branch", "")} for r in (cfg.get("repos") or [])
-                      if isinstance(r, dict)],
+            "repos": [{"url": url, "branch": branch, **self._status(url, branch)} for url, branch in self.repos()],
+            "autoUpdateHours": self.auto_update_hours(),
             "sources": [{"label": label, "path": str(path), "exists": path.is_dir(), "defaultOn": on}
                         for label, path, on in self.sources()],
             "skills": [s.as_dict(self.enabled(s)) for s in skills],
             "ignored": [i.as_dict() for i in ignored],
             "limits": {"skillKb": MAX_SKILL_BYTES // 1024, "fileKb": MAX_FILE_BYTES // 1024, "maxActive": MAX_ACTIVE},
         }
+
+
+    def _status(self, url: str, branch: str) -> dict:
+        st = self.repo_status.get(repo_slug(url, branch)) or {}
+        return {"commit": st.get("commit", ""), "syncedAt": st.get("at"), "error": st.get("error", "")}
 
 
 _REGISTRY: Optional[Registry] = None

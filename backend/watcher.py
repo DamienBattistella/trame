@@ -177,6 +177,7 @@ class Watcher:
         # Contrôle des repères de la page Teams : au démarrage, à la connexion, toutes les
         # heures, et peu après une opération refusée par Teams (réveil par le pilote).
         self._check_wake = threading.Event()
+        self._skill_repos_wake = threading.Event()
         self._check_lock = threading.Lock()
         self._landmark_marks: dict[str, dict] = {}
         driver.on_page_failure = self._check_wake.set
@@ -252,9 +253,11 @@ class Watcher:
         threading.Thread(target=self._check_loop, daemon=True).start()
         threading.Thread(target=self._follow_up_loop, daemon=True).start()
         threading.Thread(target=self._archive_loop, daemon=True).start()
+        threading.Thread(target=self._skill_repos_loop, daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._skill_repos_wake.set()
 
     def _run(self) -> None:
         self.driver.watch(self._on_message, self._stop.is_set)
@@ -2830,9 +2833,8 @@ class Watcher:
             url, branch = skillsmod.check_repo(url, branch)
         except ValueError as e:
             raise ActionError(422, str(e))
-        target = self.skills.repos_dir / skillsmod.repo_slug(url, branch)
         try:
-            commit = skillsmod.sync_repo(target, url, branch)
+            commit = self.skills.update_repo(url, branch)
         except Exception as e:
             self.log("warn", f"Dépôt de skills {url} : {e}")
             raise ActionError(502, f"Récupération impossible : {e}")
@@ -2844,6 +2846,48 @@ class Watcher:
         self.skills.reload()
         self.log("info", f"Dépôt de skills {url} à jour ({commit or 'commit inconnu'})")
         return self.skills.summary()
+
+    def set_skill_auto_update(self, hours: int) -> dict:
+        if hours not in skillsmod.AUTO_UPDATE_CHOICES:
+            raise ActionError(422, "Fréquence non prise en charge.")
+        self._save_skills(lambda s: s.__setitem__("autoUpdateHours", hours))
+        self._skill_repos_wake.set()
+        self.log("info", f"Mise à jour automatique des dépôts de skills : "
+                         f"{'désactivée' if not hours else f'toutes les {hours} h'}")
+        return self.skills.summary()
+
+    # First pass shortly after start (Teams and the brain come first), then every
+    # skills.autoUpdateHours; a change of that setting restarts the wait.
+    SKILL_REPOS_FIRST = 60.0
+
+    def _skill_repos_loop(self) -> None:
+        first = time.monotonic() + self.SKILL_REPOS_FIRST
+        last: Optional[float] = None
+        while not self._stop.is_set():
+            hours = self.skills.auto_update_hours()
+            due = first if last is None else last + hours * 3600.0
+            timeout = None if not hours else max(0.0, due - time.monotonic())
+            if self._skill_repos_wake.wait(timeout):
+                self._skill_repos_wake.clear()
+                continue
+            if self._stop.is_set():
+                return
+            self.update_skill_repos()
+            last = time.monotonic()
+
+    def update_skill_repos(self) -> None:
+        """Every git repository of skills brought up to date (nothing of them is run)."""
+        if not self.skills.repos():
+            return
+        try:
+            failed = self.skills.update_all()
+        except Exception as e:
+            self.log("warn", f"Mise à jour des dépôts de skills impossible : {e}")
+            return
+        for url, error in failed:
+            self.log("warn", f"Dépôt de skills {url} : {error} (la copie précédente reste utilisée)")
+        if not failed:
+            self.log("info", f"Dépôts de skills à jour ({len(self.skills.repos())})")
 
     def remove_skill_repo(self, url: str, branch: str) -> dict:
         target = self.skills.repos_dir / skillsmod.repo_slug(url, branch)

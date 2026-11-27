@@ -503,7 +503,10 @@ export interface SkillInfo {
 export interface SkillsSummary {
   ownDir: string;
   dirs: string[];
-  repos: { url: string; branch: string }[];
+  /** Dépôts git, avec leur dernière mise à jour de la session (syncedAt en secondes Unix, null avant la première). */
+  repos: { url: string; branch: string; commit?: string; syncedAt?: number | null; error?: string }[];
+  /** Mise à jour automatique des dépôts, en heures (0 = à la main seulement). */
+  autoUpdateHours?: number;
   sources: { label: string; path: string; exists: boolean; defaultOn: boolean }[];
   skills: SkillInfo[];
   ignored: { folder: string; source: string; reason: string }[];
