@@ -411,12 +411,9 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["mark_auto_replies"] = merged.safety.mark_auto_replies
     for key in ("auto_max_per_hour", "auto_quiet_hours", "auto_quiet_from", "auto_quiet_to", "auto_weekends"):
         safety[key] = getattr(merged.safety, key)
-    out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
-    out["follow_ups"] = merged.follow_ups.model_dump()
-    out["archive"] = merged.archive.model_dump()
-    out["telemetry"] = merged.telemetry.model_dump()
-    out["mcp"] = merged.mcp.model_dump()
-    out["teams_web"] = merged.teams_web.model_dump()
-    ui = out.get("ui")
-    out["ui"] = {**(ui if isinstance(ui, dict) else {}), **merged.ui.model_dump()}
+    # Merge, never replace: keys this version does not know (hand-edited, or written by
+    # another version) must survive a settings save, so an update never drops an option.
+    for name in ("brief", "follow_ups", "archive", "telemetry", "mcp", "teams_web", "ui"):
+        section = out.get(name)
+        out[name] = {**(section if isinstance(section, dict) else {}), **getattr(merged, name).model_dump()}
     return out, merged
