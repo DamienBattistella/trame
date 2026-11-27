@@ -896,6 +896,44 @@ test("chatgesture send en réponse : message cité différent de celui affiché 
   assert.equal(writes.length, 0);
 });
 
+test("chatgesture send avec mention : un élément par mot, liste properties.mentions, prouvée relue", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = { "1795777000001": msgRaw("1795777000001") }; // Ana Martin a écrit dans le fil
+  const writes = chatServer(p, messages);
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "@Ana Martin tu valides <ça> ?", mentions: ["Ana Martin"] })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
+  const b = writes[0].body;
+  assert.equal(
+    b.content,
+    '<p><span itemscope itemtype="http://schema.skype.com/Mention" itemid="0">Ana</span> <span itemscope itemtype="http://schema.skype.com/Mention" itemid="1">Martin</span> tu valides &lt;ça&gt; ?</p>',
+  );
+  assert.deepEqual(JSON.parse(b.properties.mentions), [
+    { "@type": "http://schema.skype.com/Mention", itemid: 0, mri: "8:orgid:ana", mentionType: "person", displayName: "Ana" },
+    { "@type": "http://schema.skype.com/Mention", itemid: 1, mri: "8:orgid:ana", mentionType: "person", displayName: "Martin" },
+  ]);
+});
+
+test("chatgesture send avec mention : personne absente du fil ou homonymes → rien ne part", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001"),
+    "1795777000002": msgRaw("1795777000002", { from: "https://x/v1/users/ME/contacts/8:orgid:ana2" }),
+  };
+  const writes = chatServer(p, messages);
+  const absent = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "@Marc oui", mentions: ["Marc"] })).result;
+  assert.equal(absent.ok, false);
+  assert.equal(absent.attempted, false);
+  const twins = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "@Ana Martin oui", mentions: ["Ana Martin"] })).result;
+  assert.equal(twins.attempted, false);
+  assert.match(twins.error, /plusieurs/);
+  assert.equal(writes.length, 0);
+});
+
 test("chatgesture send : réseau coupé pendant l'envoi → incertain, aucun second envoi", async () => {
   const p = teamsPage();
   p.ctx.crypto = globalThis.crypto;

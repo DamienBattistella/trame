@@ -459,12 +459,17 @@ class WebApiDriver:
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
                      reply_to: Optional[MessageRef] = None, mentions: Any = (), files: Any = ()) -> Focus:
-        """Un envoi de texte, en réponse citée ou non, part par le service de chat ; une saisie
-        sans envoi, une mention ou une pièce jointe passent par la page. Une réponse à un
-        message sans id Teams passe aussi par la page."""
+        """Un envoi de texte, en réponse citée ou non, avec ou sans mentions, part par le service
+        de chat ; une saisie sans envoi ou une pièce jointe passent par la page. Une réponse à
+        un message sans id Teams, ou une mention que le service ne sait pas relier à une
+        personne de la conversation, passent aussi par la page."""
         replyable = reply_to is None or bool(reply_to.id)
-        if send and replyable and not mentions and not files and text.strip():
-            extra = {"reply": self._inner._ref(reply_to)} if reply_to is not None else {}
+        if send and replyable and not files and text.strip():
+            extra: dict[str, Any] = {}
+            if reply_to is not None:
+                extra["reply"] = self._inner._ref(reply_to)
+            if mentions:
+                extra["mentions"] = [str(m) for m in mentions]
             res = self._gesture("send", "send", thread_id, text=text, **extra)
             if res is not None:
                 if res.get("uncertain"):
@@ -605,8 +610,8 @@ class WebApiDriver:
         return [str(p.get("name")) for p in res.get("people") or [] if p.get("name")][:limit]
 
     # Actions de Trame → fonctions du contrôle de la page (teams_check.FEATURES) qu'elles
-    # remplacent entièrement. L'envoi n'y est pas : brouillon, réponse citée, mentions et pièces
-    # jointes passent toujours par la zone de saisie de la page.
+    # remplacent entièrement. L'envoi n'y est pas : brouillon et pièces jointes passent toujours
+    # par la zone de saisie de la page.
     CHECK_FEATURES: dict[str, tuple[str, ...]] = {
         "read": ("read",), "react": ("react",), "delete": ("delete",), "mark_read": ("mark_read",),
         "my_status": ("own_status",), "set_note": ("status_note",),

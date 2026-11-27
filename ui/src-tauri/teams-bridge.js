@@ -2464,10 +2464,95 @@
         `<p itemprop="preview">${esc(cut)}</p></blockquote>`
       );
     };
-    const send = async ({ thread, text, reply }) => {
+    // Mentions (@Nom) : chaque nom doit être celui d'UNE personne de la conversation, l'autre
+    // personne d'un tête-à-tête ou un auteur récent du fil (jamais une recherche dans
+    // l'annuaire : on ne mentionne que quelqu'un qui est là). Sinon rien ne part, la page mentionne.
+    const MENTION = "http://schema.skype.com/Mention";
+    const membersOf = async (thread) => {
+      const me = await chatsvc.whoami();
+      const byName = new Map(); // nom replié -> Set(mri)
+      const add = (name, mri) => {
+        const k = fold(name);
+        if (!k || !mri || mri === me) return;
+        if (!byName.has(k)) byName.set(k, new Set());
+        byName.get(k).add(mri);
+      };
+      const one = /^19:([0-9a-f-]{36})_([0-9a-f-]{36})@unq\.gbl\.spaces$/i.exec(thread);
+      if (one) {
+        const mine = String(me || "").split(":").pop().toLowerCase();
+        const other = `8:orgid:${one[1].toLowerCase() === mine ? one[2] : one[1]}`;
+        const names = await chatsvc.people([other]);
+        if (names[other]) add(names[other], other);
+      }
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
+      for (const m of (r.ok && r.json && r.json.messages) || [])
+        if (m && chatMessage.isUser(m)) add(String(m.imdisplayname || ""), mriOf(m.from));
+      return byName;
+    };
+    const resolveMentions = async (thread, names) => {
+      const members = await membersOf(thread);
+      const out = [];
+      for (const n of names) {
+        const name = String(n || "").replace(/\s+/g, " ").trim();
+        const mris = members.get(fold(name));
+        if (!name || !mris) return { error: `« ${name} » n'est pas dans cette conversation` };
+        if (mris.size > 1) return { error: `plusieurs « ${name} » dans cette conversation` };
+        out.push({ name, mri: [...mris][0] });
+      }
+      return { people: out };
+    };
+    // Texte avec « @Nom » → HTML du composeur : un élément de mention par mot du nom, chacun
+    // avec son itemid, et la liste `properties.mentions` qui relie chaque itemid à la personne.
+    const withMentions = (text, people) => {
+      const list = [];
+      const line = (s) => {
+        let html = "";
+        let rest = s;
+        while (rest) {
+          let best = null;
+          for (const p of people) {
+            const i = rest.toLowerCase().indexOf("@" + p.name.toLowerCase());
+            if (i >= 0 && (!best || i < best.i)) best = { i, p };
+          }
+          if (!best) {
+            html += linkify(esc(rest));
+            break;
+          }
+          html += linkify(esc(rest.slice(0, best.i)));
+          html += best.p.name
+            .split(" ")
+            .map((word) => {
+              const itemid = list.length;
+              list.push({ "@type": MENTION, itemid, mri: best.p.mri, mentionType: "person", displayName: word });
+              return `<span itemscope itemtype="${MENTION}" itemid="${itemid}">${esc(word)}</span>`;
+            })
+            .join(" ");
+          rest = rest.slice(best.i + 1 + best.p.name.length);
+        }
+        return html;
+      };
+      const html = String(text)
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((l) => `<p>${l.trim() ? line(l) : "&nbsp;"}</p>`)
+        .join("");
+      return { html, list };
+    };
+    const send = async ({ thread, text, reply, mentions }) => {
       const body = String(text || "").trim();
       if (!body) return notSent("message vide");
       if (body.length > 28000) return notSent("message trop long");
+      const wanted = Array.isArray(mentions) ? mentions.slice(0, 20) : [];
+      let content = null;
+      let mentioned = [];
+      if (wanted.length) {
+        const m = await resolveMentions(thread, wanted);
+        if (m.error) return notSent(`${m.error} : rien n'a été envoyé`);
+        const w = withMentions(body, m.people);
+        if (w.list.length === 0) return notSent("aucune mention « @Nom » dans le texte : rien n'a été envoyé");
+        content = w.html;
+        mentioned = w.list;
+      }
       // Réponse citée : le message cité doit être celui que l'utilisateur a vu (id, auteur, texte).
       let quote = "";
       if (reply) {
@@ -2480,13 +2565,13 @@
       const names = me ? await chatsvc.people([me]) : {};
       const cid = clientId();
       const w = await chatsvc.write("send", thread, null, {
-        content: quote + toHtml(body),
+        content: quote + (content || toHtml(body)),
         messagetype: "RichText/Html",
         contenttype: "text",
         amsreferences: [],
         clientmessageid: cid,
         imdisplayname: names[me] || "",
-        properties: { importance: "", subject: "" },
+        properties: { importance: "", subject: "", ...(mentioned.length ? { mentions: JSON.stringify(mentioned) } : {}) },
       });
       if (!w.sent) return notSent(w.error);
       // Preuve : le message relu sur le service, retrouvé par son clientmessageid.
@@ -2495,6 +2580,11 @@
         const hit = v.ok && ((v.json && v.json.messages) || []).find((m) => m && m.clientmessageid === cid);
         // Une réponse n'est prouvée qu'avec sa citation relue.
         if (hit && quote && !convertOf(hit).quote) return null;
+        // Des mentions : prouvées quand chaque nom se relit mentionné.
+        if (hit && wanted.length) {
+          const got = convertOf(hit).mentions.map(fold);
+          if (!wanted.every((n) => got.includes(fold(n)))) return null;
+        }
         return hit ? { id: String(hit.id) } : null;
       }, w.ok ? [0, 700, 1500, 3000] : [0, 1500]);
       if (found) return { ok: true, id: found.id };
