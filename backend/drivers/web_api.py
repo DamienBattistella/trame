@@ -499,6 +499,8 @@ class WebApiDriver:
         out: dict = {"presence": presencemod.from_service(res.get("availability"), res.get("activity"), bool(res.get("ooo")))}
         if with_message:
             out["message"] = " ".join(str((res.get("note") or {}).get("message") or "").split())
+            # Échéance de la note (ISO UTC) ; « 9999-… » : jamais.
+            out["message_expiry"] = str((res.get("note") or {}).get("expiry") or "") or None
         return out
 
     def set_status_message(self, text: str) -> str:

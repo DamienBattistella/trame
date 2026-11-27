@@ -386,7 +386,10 @@ class Watcher:
                 raise ActionError(502, f"Statut Teams illisible : {e}")
         with self._lock:
             self.state.my_presence = got.get("presence")
-        return {"presence": got.get("presence"), "message": got.get("message") or ""}
+        out = {"presence": got.get("presence"), "message": got.get("message") or ""}
+        if got.get("message_expiry"):  # connue seulement par le service de présence
+            out["message_expiry"] = got["message_expiry"]
+        return out
 
     def set_my_status(self, choice: str, duration: Optional[str] = None, until: Optional[str] = None) -> dict:
         """Pick a status in Teams' menu, then check Teams shows it: never a false

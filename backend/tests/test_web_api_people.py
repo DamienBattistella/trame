@@ -62,7 +62,8 @@ def test_service_values_become_trame_statuses(availability, activity, ooo, expec
 
 def test_my_status_and_note_read_on_the_presence_service():
     d = WebApiDriver(FakePage({"me": ME}))
-    assert d.my_status(with_message=True) == {"presence": "in_meeting", "message": "En atelier jusqu'à 16 h"}
+    assert d.my_status(with_message=True) == {"presence": "in_meeting", "message": "En atelier jusqu'à 16 h",
+                                              "message_expiry": "2099-01-01T10:00:00.000Z"}
     assert d.routes()["my_status"]["via"] == "api"
 
 
