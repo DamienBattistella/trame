@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { EyeOff, MonitorUp } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { GroupList } from "@/components/kit";
 import { TeamsLogo } from "@/brands";
-import { isDesktop, teamsWebHide, teamsWebOpen } from "@/desktop";
+import { isDesktop, teamsWebHide, teamsWebOpen, teamsWebVisible } from "@/desktop";
 import { Trame } from "@/api";
 import { TeamsCheckRow } from "@/components/TeamsCheck";
 
@@ -12,12 +11,18 @@ type Status = { enabled: boolean; relay?: boolean; ready?: boolean; title?: stri
 /** Réglages › Général › Teams : la session Teams web de Trame (lecture et envoi). */
 export function TeamsWebSettings({ trame }: { trame: Trame }) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [shown, setShown] = useState(false);
 
   useEffect(() => {
     let live = true;
     const tick = async () => {
       const res = await trame.teamsWebStatus();
       if (live && res.ok) setStatus(res.status);
+      // La fenêtre se masque aussi par sa croix : l'interrupteur suit l'état réel.
+      if (isDesktop()) {
+        const visible = await teamsWebVisible();
+        if (live) setShown(visible);
+      }
     };
     tick();
     const id = setInterval(tick, 5000);
@@ -26,6 +31,13 @@ export function TeamsWebSettings({ trame }: { trame: Trame }) {
       clearInterval(id);
     };
   }, [trame.connected]);
+
+  const toggle = async (show: boolean) => {
+    setShown(show);
+    if (show) await teamsWebOpen(true);
+    else await teamsWebHide();
+    setShown(await teamsWebVisible());
+  };
 
   const line = !status
     ? "Vérification…"
@@ -46,14 +58,10 @@ export function TeamsWebSettings({ trame }: { trame: Trame }) {
           <span className="truncate text-xs text-muted-foreground">{line}</span>
         </div>
         {isDesktop() && (
-          <div className="flex shrink-0 items-center gap-1">
-            <Button variant="outline" size="sm" className="rounded-full" onClick={() => teamsWebOpen(true)}>
-              <MonitorUp className="size-4" /> Afficher
-            </Button>
-            <Button variant="ghost" size="sm" className="rounded-full" onClick={() => teamsWebHide()}>
-              <EyeOff className="size-4" /> Masquer
-            </Button>
-          </div>
+          <label className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+            Afficher la fenêtre
+            <Switch aria-label="Afficher la fenêtre Teams" checked={shown} onCheckedChange={toggle} />
+          </label>
         )}
       </div>
       <div className="border-t">

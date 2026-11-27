@@ -86,6 +86,14 @@ export async function teamsWebHide(): Promise<void> {
     /* fenêtre absente */
   }
 }
+/** La fenêtre Teams de Trame est-elle visible (à l'écran ou réduite) ? */
+export async function teamsWebVisible(): Promise<boolean> {
+  try {
+    return Boolean(await tauri()?.core?.invoke("teams_web_visible"));
+  } catch {
+    return false;
+  }
+}
 export async function teamsWebClose(): Promise<void> {
   try {
     await tauri()?.core?.invoke("teams_web_close");
