@@ -37,8 +37,12 @@ const GROUPS: { label: string; actions: Record<string, string> }[] = [
   },
 ];
 
+/** Câblée sur l'API mais pas encore servie depuis le démarrage : rien n'est prouvé. */
+const untried = (route: ApiRoute) => route.via === "api" && route.tried === false;
+
 function RouteChip({ label, route }: { label: string; route: ApiRoute }) {
   const api = route.via === "api";
+  const wait = untried(route);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -46,10 +50,17 @@ function RouteChip({ label, route }: { label: string; route: ApiRoute }) {
           tabIndex={0}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs",
-            api ? "border-success/40 bg-success/10 text-foreground" : "text-muted-foreground",
+            wait
+              ? "border-dashed border-success/50 text-foreground"
+              : api
+                ? "border-success/40 bg-success/10 text-foreground"
+                : "text-muted-foreground",
           )}
         >
-          <span className={cn("size-1.5 rounded-full", api ? "bg-success" : "bg-muted-foreground/40")} aria-hidden />
+          <span
+            className={cn("size-1.5 rounded-full", wait ? "border border-success" : api ? "bg-success" : "bg-muted-foreground/40")}
+            aria-hidden
+          />
           {label}
         </span>
       </TooltipTrigger>
@@ -109,6 +120,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
   })).filter((g) => g.items.length > 0);
   const total = groups.reduce((n, g) => n + g.items.length, 0);
   const viaApi = groups.reduce((n, g) => n + g.items.filter((i) => i.route.via === "api").length, 0);
+  const waiting = groups.reduce((n, g) => n + g.items.filter((i) => untried(i.route)).length, 0);
 
   return (
     <GroupList>
@@ -133,6 +145,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
           <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
             <span className={cn("text-sm font-medium", viaApi > 0 ? "text-foreground" : "text-muted-foreground")}>{viaApi}</span>
             /{total} via l'API
+            {waiting > 0 && <span className="block">dont {waiting} pas encore essayée{waiting > 1 ? "s" : ""}</span>}
           </span>
         )}
       </div>
@@ -148,9 +161,12 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
               </div>
             </div>
           ))}
-          <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-success" aria-hidden /> API signée dans la page
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full border border-success" aria-hidden /> Câblée, pas encore essayée
             </span>
             <span className="flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-muted-foreground/40" aria-hidden /> Interface de la page

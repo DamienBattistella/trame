@@ -120,3 +120,12 @@ def test_webapi_exposes_chatsvc_session_health_from_the_bridge():
     assert d.diagnose()["teams_web"]["chatsvc"]["stage"] == "ok"
     # Pas encore mesurée : None, jamais d'exception.
     assert WebApiDriver(FakeInner()).chatsvc() is None
+
+
+def test_webapi_routes_say_whether_each_way_was_tried():
+    d = WebApiDriver(FakeInner())
+    routes = d.routes()
+    assert routes["send"]["via"] == "api" and routes["send"]["tried"] is False
+    assert routes["list"]["tried"] is False
+    d._route("send", "api")
+    assert d.routes()["send"]["tried"] is True

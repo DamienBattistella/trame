@@ -176,11 +176,12 @@ class WebApiDriver:
         out = {}
         for a in ACTIONS:
             if a in seen:
-                out[a] = dict(seen[a])
+                out[a] = {**seen[a], "tried": True}
             elif a in self.API_ACTIONS:
-                out[a] = {"via": "api", "reason": "service de chat de Teams (pas encore utilisé)", "at": at}
+                # Câblée sur l'API, mais pas encore essayée depuis le démarrage : rien de prouvé.
+                out[a] = {"via": "api", "reason": "câblé sur l'API Teams web, pas encore essayé", "at": at, "tried": False}
             else:
-                out[a] = {"via": "page", "reason": self.PAGE_REASON, "at": at}
+                out[a] = {"via": "page", "reason": self.PAGE_REASON, "at": at, "tried": False}
         return out
 
     def _route(self, action: str, via: str, reason: Optional[str] = None) -> None:
