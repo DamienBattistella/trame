@@ -448,6 +448,17 @@ class WebApiDriver:
             kwargs["files"] = files
         return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
 
+    # Actions de Trame → fonctions du contrôle de la page (teams_check.FEATURES) qu'elles
+    # remplacent entièrement. L'envoi n'y est pas : brouillon, réponse citée, mentions et pièces
+    # jointes passent toujours par la zone de saisie de la page.
+    CHECK_FEATURES = {"read": "read", "react": "react", "delete": "delete", "mark_read": "mark_read"}
+
+    def api_features(self) -> set[str]:
+        """Fonctions faites aujourd'hui par le service de chat (voie « api » au dernier essai) :
+        leurs repères de page ne servent plus qu'en repli. Un repli sur la page les en retire."""
+        routes = self.routes()
+        return {f for a, f in self.CHECK_FEATURES.items() if routes.get(a, {}).get("via") == "api"}
+
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont
         (`sign_selftest`), ou None si pas encore mesurée. Statut HTTP seulement, aucun jeton."""
