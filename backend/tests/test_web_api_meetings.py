@@ -16,7 +16,7 @@ class FakePage:
 
     def chat_list(self, sync=""):
         return {"full": True, "sync": "S", "me": "8:orgid:me", "rows": [
-            {"id": MEET, "kind": "meeting", "topic": "Migration weekly", "last": {"id": "2", "ts": 2000}},
+            {"id": MEET, "kind": "meeting", "topic": "Point hebdo", "last": {"id": "2", "ts": 2000}},
             {"id": "19:grp@thread.v2", "kind": "group", "topic": "Projet X", "last": {"id": "9", "ts": 9000}},
         ]}
 
@@ -24,7 +24,7 @@ class FakePage:
         self.asked.append(list(threads))
         if self.fail:
             raise WebBridgeDriver.ApiError(self.fail)
-        return [{"thread": MEET, "recaps": [{"mid": "1795774816062", "when": "vendredi 27 novembre 2026 11:00 - 11:20",
+        return [{"thread": MEET, "recaps": [{"mid": "1700000000999", "when": "vendredi 27 novembre 2026 11:00 - 11:20",
                                              "transcript": True}]}]
 
     def list_meetings(self, limit=None):
@@ -37,8 +37,8 @@ def test_meetings_are_read_on_the_service_with_the_page_ids():
     d = WebApiDriver(page)
     got = d.list_meetings()
     assert page.asked == [[MEET]] and page.page == []
-    assert got == [{"thread_id": "title-" + MEET, "chat": "Migration weekly", "mid": "1795774816062",
-                    "title": "Migration weekly", "when": "vendredi 27 novembre 2026 11:00 - 11:20", "transcript": True}]
+    assert got == [{"thread_id": "title-" + MEET, "chat": "Point hebdo", "mid": "1700000000999",
+                    "title": "Point hebdo", "when": "vendredi 27 novembre 2026 11:00 - 11:20", "transcript": True}]
     assert d.routes()["meetings"]["via"] == "api"
 
 

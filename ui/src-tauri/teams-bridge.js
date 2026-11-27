@@ -2848,10 +2848,20 @@
       const m = new RegExp(`<${name}>([^<]{1,80})</${name}>`, "i").exec(String(html || ""));
       return m ? m[1].trim() : "";
     };
+    // Relevé en direct : `starttime` / `endtime` sont en UTC SANS « Z » (« 2026-11-26T08:00:00 »
+    // pour 09:00 à Paris) ; lus sinon comme heure locale, avec une heure d'écart.
     const dateOf = (v) => {
       if (!v) return null;
-      const d = new Date(/^\d{10,16}$/.test(v) ? Number(v) : v);
+      const s = /^\d{10,16}$/.test(v) ? Number(v) : /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(v) ? `${v}Z` : v;
+      const d = new Date(s);
       return Number.isNaN(d.getTime()) ? null : d;
+    };
+    // Une réunion récurrente porte la date de DÉBUT DE SÉRIE : on garde le jour de l'appel lui-même
+    // et seulement les heures prévues (« jeudi 15 octobre » pour chaque occurrence, sinon).
+    const onDay = (day, at) => {
+      const d = new Date(day);
+      d.setHours(at.getHours(), at.getMinutes(), 0, 0);
+      return d;
     };
     const one = async (thread) => {
       const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
@@ -2875,8 +2885,10 @@
         }
         const startId = start ? Number(start.id) : endId;
         const planned = start ? [dateOf(tag(start.content, "starttime")), dateOf(tag(start.content, "endtime"))] : [null, null];
-        const a = planned[0] || new Date(startId);
-        const b = planned[1] || new Date(endId);
+        const actual = new Date(startId);
+        const a = planned[0] ? onDay(actual, planned[0]) : actual;
+        let b = planned[1] ? onDay(actual, planned[1]) : new Date(endId);
+        if (b < a) b = new Date(endId);
         // Transcrite : un message de transcription entre le début et peu après la fin.
         const transcript = msgs.some((x) => x.messagetype === "RichText/Media_CallTranscript" && Number(x.id) >= startId && Number(x.id) <= endId + 10 * 60 * 1000);
         recaps.push({ mid: String(m.id), when: when(a, b), transcript, ts: endId });

@@ -1338,3 +1338,24 @@ test("chatmeetings : une carte par fin d'appel (mid = message de fin), créneau 
   assert.equal(later.transcript, false);
   assert.equal(later.when, "samedi 28 novembre 2026 11:20 - 11:30");
 });
+
+test("chatmeetings : heures prévues en UTC sans « Z » (relevé en direct), réunion récurrente au jour de l'appel", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_serie@thread.v2";
+  // L'appel du 26/11 à 09:01 (heure locale), d'une série commencée le 15/10 à 09:00 - 09:20 locales.
+  const start = new Date("2026-11-26T09:01:10").getTime();
+  const end = new Date("2026-11-26T09:24:00").getTime();
+  const utc = (local: string) => new Date(local).toISOString().replace(/\.\d{3}Z$/, ""); // sans « Z »
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: `<partlist><meetingdetails><starttime>${utc("2026-10-15T09:00:00")}</starttime><endtime>${utc("2026-10-15T09:20:00")}</endtime></meetingdetails></partlist>` },
+    { id: String(end), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
+  assert.equal(r.chats[0].recaps[0].when, "jeudi 26 novembre 2026 09:00 - 09:20");
+});
