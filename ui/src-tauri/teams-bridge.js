@@ -1629,14 +1629,18 @@
           return;
         }
         if (seen && isMention(n)) {
-          // Teams découpe un nom mentionné en un élément par mot : « Ana » puis « Lopez ».
-          const from = last && !out.slice(last.end).trim() ? last.start : out.length;
+          // Teams découpe un nom mentionné en un élément par mot : « Ana » puis « Lopez ». Deux
+          // éléments voisins ne forment un seul nom que s'ils sont à la même personne (data-mri,
+          // quand le service le dit ; sans lui, le voisinage seul, comme dans la page).
+          const mri = attr(n, "data-mri");
+          const same = last && !out.slice(last.end).trim() && (!mri || !last.mri || mri === last.mri);
+          const from = same ? last.start : out.length;
           for (const c of Array.from(n.childNodes || [])) walk(c, pre);
           const name = one(out.slice(from));
           if (!name) return;
           if (last && from === last.start) seen.mentions[seen.mentions.length - 1] = name;
           else seen.mentions.push(name);
-          last = { start: from, end: out.length };
+          last = { start: from, end: out.length, mri };
           return;
         }
         if (t === "BR") {
@@ -2181,12 +2185,28 @@
       }
       return root;
     };
+    // Mentions : `properties.mentions` dit qui est derrière chaque itemid. Chaque élément de
+    // mention reçoit l'identifiant de sa personne (data-mri) : deux personnes mentionnées côte à
+    // côte ne se recollent jamais en un seul nom (Teams découpe un nom en un élément par mot).
+    const mentionOwners = (root, raw) => {
+      let list = [];
+      try {
+        list = JSON.parse(String(raw || "[]"));
+      } catch {}
+      const owner = new Map((Array.isArray(list) ? list : []).filter((m) => m && m.mri != null).map((m) => [String(m.itemid), String(m.mri)]));
+      if (!owner.size) return root;
+      for (const el of all(root, (x) => /schema\.skype\.com\/Mention/i.test(attr(x, "itemtype")))) {
+        const mri = owner.get(attr(el, "itemid"));
+        if (mri && el.attributes) el.attributes["data-mri"] = mri;
+      }
+      return root;
+    };
     // raw : message du service de chat ; me : mri de l'utilisateur ; parse(html) → élément racine.
     const convert = (raw, me, parse, parts, now) => {
       const props = raw.properties || {};
       const ts = Date.parse(raw.originalarrivaltime || raw.composetime || "");
       const deleted = Boolean(props.deletetime);
-      const root = deleted ? null : quoteTimes(parse(String(raw.content || "")));
+      const root = deleted ? null : mentionOwners(quoteTimes(parse(String(raw.content || ""))), props.mentions);
       const p = root ? parts(root) : { text: "", links: [], cards: [], quote: null, mentions: [] };
       return {
         sender: String(raw.imdisplayname || "").trim(),
@@ -4086,8 +4106,9 @@
       if (shown) return { ok: true };
       return { ok: false, uncertain: true, error: off ? "réaction toujours visible sous le message, vérifie dans Teams" : "réaction non visible sous le message, vérifie dans Teams" };
     },
-    // Réaction 🤖 sur le dernier message de la conversation (best-effort).
-    react: async ({ name }) => {
+    // Réaction 🤖 sur le dernier message de la conversation (best-effort). Nommée à part :
+    // une seconde clé « react » écrasait la réaction précise ci-dessus.
+    reactlast: async ({ name }) => {
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
       const msgs = document.querySelectorAll(MSGS);
       const last = msgs[msgs.length - 1];

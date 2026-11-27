@@ -677,7 +677,7 @@ const chatServer = (p: any, messages: Record<string, any>, conv: any = {}) => {
     }
     if (method === "POST" && url.endsWith("/messages")) {
       const id = String(1795777999000 + Object.keys(messages).length);
-      messages[id] = msgRaw(id, { clientmessageid: body.clientmessageid, from: MY_MRI, content: body.content });
+      messages[id] = msgRaw(id, { clientmessageid: body.clientmessageid, from: MY_MRI, content: body.content, properties: { ...(body.properties || {}) } });
       return fakeResponse(JSON.stringify({ OriginalArrivalTime: Number(id) }), { status: 201 });
     }
     if (m) return messages[m[1]] ? fakeResponse(JSON.stringify(messages[m[1]])) : fakeResponse("{}", { status: 404 });
@@ -1253,4 +1253,31 @@ test("chatgesture hide : propriété « hidden » de la conversation, prouvée r
   assert.equal(back.ok, true);
   assert.equal(conv.properties.hidden, "false");
   assert.equal(writes.length, 2);
+});
+
+test("les ops du pont ont des noms uniques : une clé en double écraserait silencieusement la première", () => {
+  const start = BRIDGE.indexOf("const ops = {");
+  assert.ok(start > 0);
+  const names = [...BRIDGE.slice(start).matchAll(/^    ([a-z]+): (?:async )?\(/gm)].map((m) => m[1]);
+  const seen = new Set<string>();
+  const twice = names.filter((n) => (seen.has(n) ? true : (seen.add(n), false)));
+  assert.deepEqual(twice, []);
+  assert.ok(names.includes("react") && names.includes("reactlast"));
+});
+
+test("chatgesture send : deux personnes mentionnées côte à côte, relues séparément, envoi prouvé", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001"),
+    "1795777000002": msgRaw("1795777000002", { imdisplayname: "Marc Dupont", from: "https://x/v1/users/ME/contacts/8:orgid:marc" }),
+  };
+  chatServer(p, messages);
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "@Ana Martin @Marc Dupont on se voit ?", mentions: ["Ana Martin", "Marc Dupont"] })).result;
+  assert.equal(r.ok, true, r.error);
+  const sent = Object.values(messages).find((m: any) => m.clientmessageid) as any;
+  const back = (await p.run("chatread", { thread: GROUP_ID, last: 10 })).result;
+  const mine = back.messages.find((m: any) => m.id === String(sent.id));
+  assert.deepEqual(JSON.parse(JSON.stringify(mine.mentions)), ["Ana Martin", "Marc Dupont"]);
 });
