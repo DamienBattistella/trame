@@ -15,12 +15,18 @@ on:
         type: choice
         options: [auto, patch, minor, major]
         default: auto
+      dry_run:
+        description: "Essai à blanc : tout construire sans publier de Release (pour tester la pipeline depuis une branche)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+  actions: read # « Wait for sidecar » lit l'état des jobs du run
 
 concurrency:
-  group: release
+  # Un essai à blanc a son propre groupe : il ne remplace jamais une vraie release en attente.
+  group: release${{ inputs.dry_run && '-dry' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -45,24 +51,25 @@ jobs:
           MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: bash .github/scripts/next-version.sh
 
-  tauri:
-    name: Tauri build
+  # Le moteur Python est construit dans son propre job, en parallèle de la préparation
+  # du job Tauri (Node, Rust, npm ci…) : « Tauri build » ne l'attend qu'au moment d'en
+  # avoir besoin.
+  sidecar:
+    name: Backend sidecar
     needs: version
     if: needs.version.outputs.release == 'true'
     runs-on: windows-latest
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-      TAG: v${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.sha }}
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Build backend sidecar (PyInstaller)
         shell: pwsh
@@ -86,8 +93,6 @@ jobs:
             --add-data "..\SOUL.md;." `
             --add-data "..\ENTOURAGE.json;." `
             run.py
-          New-Item -ItemType Directory -Force -Path ..\ui\src-tauri\binaries | Out-Null
-          Copy-Item dist\trame-backend.exe ..\ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe
 
       # Le moteur compilé doit démarrer et répondre, avec le vrai pilote Windows
       # (sans Teams sur le runner : auto-test en échec, mais API debout).
@@ -108,6 +113,28 @@ jobs:
           if (-not $ok) { Write-Error "Le moteur empaqueté ne répond pas sur 127.0.0.1:8731"; exit 1 }
           if (-not (Test-Path (Join-Path $env:TRAME_HOME "otel.jsonl"))) { Write-Error "OpenTelemetry ne démarre pas dans le moteur empaqueté"; exit 1 }
           Write-Host "Moteur OK, auto-test Teams : $($r.selftest_ok)"
+
+      - name: Upload sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: trame-backend
+          path: backend/dist/trame-backend.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  tauri:
+    name: Tauri build
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -143,6 +170,34 @@ jobs:
           $path = "src-tauri/tauri.conf.json"
           (Get-Content $path -Raw) -replace '"version":\s*"[^"]+"', ('"version": "' + $v + '"') | Set-Content $path -Encoding utf8NoBOM
         working-directory: ui
+
+      # Attend la fin du job « Backend sidecar » (construit en parallèle), échoue s'il
+      # a échoué, puis récupère le moteur empaqueté.
+      - name: Wait for sidecar
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $url = "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/attempts/$env:GITHUB_RUN_ATTEMPT/jobs"
+          $deadline = (Get-Date).AddMinutes(15)
+          while ($true) {
+            $job = (gh api $url | ConvertFrom-Json).jobs | Where-Object name -eq "Backend sidecar" | Select-Object -First 1
+            if ($job -and $job.status -eq "completed") { break }
+            if ((Get-Date) -gt $deadline) { Write-Error "Le job Backend sidecar ne s'est pas terminé à temps"; exit 1 }
+            Start-Sleep -Seconds 5
+          }
+          if ($job.conclusion -ne "success") { Write-Error "Le job Backend sidecar a échoué ($($job.conclusion))"; exit 1 }
+          Write-Host "Sidecar prêt."
+
+      - name: Download sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: trame-backend
+          path: ui/src-tauri/binaries
+
+      - name: Place sidecar
+        shell: pwsh
+        run: Move-Item ui\src-tauri\binaries\trame-backend.exe ui\src-tauri\binaries\trame-backend-x86_64-pc-windows-msvc.exe -Force
 
       # Mises à jour signées : sans la clé (secret absent), on construit l'installeur
       # sans artefacts de mise à jour plutôt que d'échouer.
@@ -194,6 +249,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
