@@ -36,7 +36,7 @@ def test_webapi_routes_lists_every_action_read_on_the_chat_service():
     routes = d.routes()
     assert set(routes) == set(ACTIONS)
     on_api = {"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
-              "presence", "my_status", "set_status", "set_note", "search_people", "start_chat"}
+              "presence", "my_status", "set_status", "set_note", "search_people", "start_chat", "search_messages"}
     assert all(routes[a]["via"] == "api" for a in on_api)
     assert all(r["via"] == "page" for a, r in routes.items() if a not in on_api)
 

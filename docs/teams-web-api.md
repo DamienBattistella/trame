@@ -261,8 +261,12 @@ y est refusé).
   "uniquerosterthread": true}}` : un seul fil par paire, jamais de doublon), puis relu. Aucun
   message n'est envoyé ; rien n'est ouvert dans la page. La conversation reste reliée au service
   (lecture et écriture) même si la page ne la montre pas. Tout échec : la page, comme avant.
-- La **recherche de messages** reste sur la page : elle passe par `substrate.office.com`, dont la
-  page n'expose pas le jeton.
+- **Recherche de messages** : la recherche de Teams passe par `substrate.office.com`, depuis un Web
+  Worker, avec un jeton que la page n'expose pas. Trame cherche donc lui-même sur le service de
+  chat (op `chatsearch`) : les 200 derniers messages des 40 conversations les plus récentes, chaque
+  mot de la requête présent (casse et accents ignorés), au plus 8 lectures par seconde. Rien
+  trouvé, ou service indisponible : la recherche de Teams dans la page, qui couvre tout
+  l'historique.
 
 ### 8. Sonde des conversations de réunion — op `meetingshapes`
 
@@ -280,5 +284,5 @@ Jamais un texte, un nom ou une valeur.
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
 4. ~~Écritures simples~~ (#128), ~~réponse citée~~ (#138), ~~mentions~~.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
-   ~~nouvelle conversation~~ (#142 et création du tête-à-tête) ; reste la recherche de messages.
+   ~~nouvelle conversation~~ (#142, #144), ~~recherche dans les fils récents~~.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
