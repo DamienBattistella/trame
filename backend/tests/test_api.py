@@ -169,7 +169,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
-        "ui": {"conversation_sort": "watched", "update_check_minutes": 15},
+        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark"},
     }
 
 
@@ -226,7 +226,7 @@ def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_hom
     r = client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     assert r.status_code == 200
     ui = r.json()["settings"]["ui"]
-    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60}
+    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["update_check_minutes"] == 60
     # 0: at launch only; values outside the offered choices are refused.
@@ -240,6 +240,29 @@ def test_update_check_minutes_hand_edited_falls_back_to_15():
     for bad in (7, "15", True, None, -5):
         assert from_config({"ui": {"update_check_minutes": bad}}).ui.update_check_minutes == 15
     assert from_config({"ui": {"update_check_minutes": 360}}).ui.update_check_minutes == 360
+
+
+def test_theme_defaults_to_dark_and_persists_without_losing_other_ui_keys(make_client, fresh_home):
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["theme"] == "dark"
+    client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
+    r = client.put("/api/settings", json={"ui": {"theme": "light"}})
+    assert r.status_code == 200
+    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light"}
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["ui"]["theme"] == "light"
+    assert saved["ui"]["update_check_minutes"] == 60
+    assert client.put("/api/settings", json={"ui": {"theme": "blue"}}).status_code == 422
+
+
+def test_theme_hand_edited_falls_back_to_dark():
+    from settings import from_config
+
+    for bad in ("blue", "LIGHT", True, None, 1):
+        assert from_config({"ui": {"theme": bad}}).ui.theme == "dark"
+    assert from_config({"ui": {"theme": "light"}}).ui.theme == "light"
+    # A config written before the theme existed keeps its other UI choices.
+    assert from_config({"ui": {"conversation_sort": "alpha"}}).ui.conversation_sort == "alpha"
 
 
 def test_settings_put_same_brain_keeps_instance(make_client):

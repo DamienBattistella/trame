@@ -1,6 +1,5 @@
-import { forwardRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { CalendarDays, MessagesSquare, Moon, Pause, Play, ScrollText, Settings, Sun } from "lucide-react";
+import { CalendarDays, MessagesSquare, Pause, Play, ScrollText, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { OwnStatus } from "@/components/OwnStatus";
@@ -38,46 +37,21 @@ function Tip({ label, keys, children }: { label: React.ReactNode; keys?: string[
   );
 }
 
-/** Thème clair ou sombre : dans le rail, et dans l'en-tête tant que le rail n'est pas là (wizard). */
-export const ThemeButton = forwardRef<HTMLButtonElement, { dark: boolean; onToggle: () => void; className?: string } & React.ComponentProps<"button">>(
-  function ThemeButton({ dark, onToggle, className, ...rest }, ref) {
-    return (
-      <button ref={ref} type="button" {...rest} aria-label={dark ? "Thème clair" : "Thème sombre"} onClick={(e) => { rest.onClick?.(e); onToggle(); }} className={cn(iconButton, className)}>
-        <AnimatePresence mode="popLayout" initial={false}>
-          <motion.span
-            key={dark ? "sun" : "moon"}
-            initial={{ rotate: -90, scale: 0 }}
-            animate={{ rotate: 0, scale: 1 }}
-            exit={{ rotate: 90, scale: 0 }}
-            transition={{ type: "spring", stiffness: 500, damping: 25 }}
-          >
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </motion.span>
-        </AnimatePresence>
-      </button>
-    );
-  }
-);
-
 /**
  * Navigation principale, toujours à gauche, sur tous les écrans. En haut les sections
  * (icône et libellé, libellé en infobulle sous 1024 px) ; en bas, comme la zone de profil
- * de Teams ou Slack, ce qui règle l'application : mise à jour, thème, pause, Réglages et
+ * de Teams ou Slack, ce qui règle l'application : mise à jour, pause, Réglages et
  * ton statut Teams. Les sections portent aria-current, jamais un rôle d'onglet.
  */
 export function AppRail({
   trame,
   tab,
   onTab,
-  dark,
-  onToggleDark,
   onTogglePause,
 }: {
   trame: Trame;
   tab: PanelTab;
   onTab: (t: PanelTab) => void;
-  dark: boolean;
-  onToggleDark: () => void;
   onTogglePause: (paused: boolean) => void;
 }) {
   const drafts = trame.state.drafts.length;
@@ -136,9 +110,6 @@ export function AppRail({
 
       <div className="flex w-full flex-col items-center gap-1 px-1.5">
         <UpdateLed side="right" />
-        <Tip label="Thème clair ou sombre" keys={["Alt", "D"]}>
-          <ThemeButton dark={dark} onToggle={onToggleDark} />
-        </Tip>
         {/* Interrupteur global : vert quand Trame lit Teams, orange en pause (le bandeau du panneau le redit). */}
         <Tip label={paused ? "Trame est en pause : reprendre" : "Trame est actif : mettre en pause"}>
           <button

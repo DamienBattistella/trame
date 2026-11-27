@@ -42,7 +42,7 @@ import { mergeSettings, Result, Trame } from "@/api";
 import { HealthPane } from "@/components/HealthPane";
 import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
 import { loadPrefs, savePrefs, type NotifyPrefs, type NotifyScope } from "@/lib/notifyPrefs";
-import { DraftItem, Settings, SettingsPatch, Surface, WatchEntity } from "@/types";
+import { DraftItem, Settings, SettingsPatch, Surface, Theme, WatchEntity } from "@/types";
 
 
 type OpenBrief = (t: BriefTarget) => void;
@@ -357,6 +357,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         <TeamsWebSettings trame={trame} />
         <GraphSettings trame={trame} />
         <GroupList>
+          <ThemeRow value={trame.theme} onChange={trame.setTheme} />
           <UpdatesRow checkMinutes={trame.updateCheckMinutes} />
           <UpdateFrequencyRow value={trame.updateCheckMinutes} onChange={trame.setUpdateCheckMinutes} />
           <ChangelogRow />
@@ -1210,6 +1211,26 @@ const SCOPES: { value: NotifyScope; label: string }[] = [
   { value: "direct", label: "Messages privés, mentions et conversations suivies" },
   { value: "mentions", label: "Seulement quand on me mentionne" },
 ];
+
+const THEMES = [
+  { value: "dark", label: "Sombre" },
+  { value: "light", label: "Clair" },
+] as const;
+
+/** Réglages › Général › Thème. Alt+D bascule aussi, de n'importe où dans Trame. */
+function ThemeRow({ value, onChange }: { value: Theme; onChange: (t: Theme) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="flex min-w-0 flex-col">
+        <span className="text-sm">Thème</span>
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          Bascule de n'importe où avec <Kbd>Alt</Kbd> <Kbd>D</Kbd>
+        </span>
+      </div>
+      <Segment label="Thème de l'interface" value={value} options={THEMES} onChange={onChange} />
+    </div>
+  );
+}
 
 function NotificationsRow() {
   const [on, setOn] = useState(notificationsEnabled);

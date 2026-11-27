@@ -158,12 +158,14 @@ ConversationSort = Literal["watched", "recent", "alpha"]
 # Minutes between two looks for a new release while the app runs (0: at launch only).
 UpdateCheckMinutes = Literal[0, 5, 15, 60, 360]
 UPDATE_CHECK_CHOICES = (0, 5, 15, 60, 360)
+Theme = Literal["dark", "light"]
 
 
 class UiSettings(BaseModel):
     """Interface preferences, kept in config.json (in %APPDATA%) so updates keep them."""
     conversation_sort: ConversationSort = "watched"
     update_check_minutes: UpdateCheckMinutes = 15
+    theme: Theme = "dark"
 
 
 class Settings(BaseModel):
@@ -259,6 +261,7 @@ class TeamsWebPatch(_Patch):
 class UiPatch(_Patch):
     conversation_sort: Optional[ConversationSort] = None
     update_check_minutes: Optional[UpdateCheckMinutes] = None
+    theme: Optional[Theme] = None
 
 
 class SettingsPatch(_Patch):
@@ -364,6 +367,7 @@ def _ui(u: dict) -> UiSettings:
     return UiSettings(
         conversation_sort=sort if sort in ("watched", "recent", "alpha") else "watched",
         update_check_minutes=every if type(every) is int and every in UPDATE_CHECK_CHOICES else 15,
+        theme="light" if u.get("theme") == "light" else "dark",
     )
 
 

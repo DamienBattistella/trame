@@ -12,6 +12,7 @@ import {
   ConversationSort,
   UPDATE_CHECK_CHOICES,
   UpdateCheckMinutes,
+  Theme,
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
@@ -361,9 +362,15 @@ function mapSettings(s: any): Settings {
     },
     mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? ""), allowSend: Boolean(s?.mcp?.allow_send) },
     teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
-    ui: { conversationSort: toSort(s?.ui?.conversation_sort), updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes) },
+    ui: {
+      conversationSort: toSort(s?.ui?.conversation_sort),
+      updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes),
+      theme: s?.ui?.theme === "light" ? "light" : "dark",
+    },
   };
 }
+/** Copie locale du thème, pour le premier rendu avant la réponse du moteur. */
+const THEME_KEY = "trame.theme";
 const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
 const toCheckMinutes = (v: unknown): UpdateCheckMinutes =>
   UPDATE_CHECK_CHOICES.includes(v as UpdateCheckMinutes) ? (v as UpdateCheckMinutes) : 15;
@@ -601,6 +608,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     const u: Record<string, unknown> = {};
     if (p.ui.conversationSort !== undefined) u.conversation_sort = p.ui.conversationSort;
     if (p.ui.updateCheckMinutes !== undefined) u.update_check_minutes = p.ui.updateCheckMinutes;
+    if (p.ui.theme !== undefined) u.theme = p.ui.theme;
     out.ui = u;
   }
   return out;
@@ -685,7 +693,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched", updateCheckMinutes: 15 },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark" },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -884,8 +892,15 @@ export function useTrame() {
   const [conversationSort, setConversationSortState] = useState<ConversationSort>(localSettings.ui.conversationSort);
   // Fréquence de recherche des mises à jour, enregistrée dans config.json et transmise à l'application.
   const [updateCheckMinutes, setUpdateCheckMinutesState] = useState<UpdateCheckMinutes>(localSettings.ui.updateCheckMinutes);
+  // Thème clair ou sombre, enregistré dans config.json ; recopié en local pour peindre le bon thème dès le démarrage.
+  const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"));
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
   const applyPrefs = (s: Settings) => {
     setBriefPrefs(prefsOf(s));
+    setThemeState(s.ui.theme);
     setConversationSortState(s.ui.conversationSort);
     setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
     void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
@@ -1170,6 +1185,16 @@ export function useTrame() {
     void setDesktopUpdateCheckMinutes(minutes);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { updateCheckMinutes: minutes } });
   };
+
+  /** Optimiste, comme le tri : le thème change tout de suite, puis est enregistré. */
+  const setTheme = (next: Theme) => {
+    setThemeState(next);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { theme: next } });
+  };
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  /** Alt+D, de n'importe où : bascule à partir du thème affiché. */
+  const toggleTheme = () => setTheme(themeRef.current === "dark" ? "light" : "dark");
 
   /** Relit la liste des conversations dans Teams ; l'état arrive ensuite par le flux habituel. */
   const refreshConversations = async (): Promise<Result<{ count: number }>> => {
@@ -2237,6 +2262,9 @@ export function useTrame() {
     setConversationSort,
     updateCheckMinutes,
     setUpdateCheckMinutes,
+    theme,
+    setTheme,
+    toggleTheme,
     getBrief,
     generateBrief,
     githubStatus,
