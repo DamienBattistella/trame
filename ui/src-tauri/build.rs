@@ -12,6 +12,7 @@ fn main() {
             "teams_bridge_reply",
             "teams_type_trusted",
             "notify",
+            "set_tray_badge",
         ]),
     ))
     .expect("échec du build Tauri");
