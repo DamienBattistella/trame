@@ -253,3 +253,58 @@ def test_connection_reads_the_whole_list_and_keeps_known_conversations(make_clie
     assert calls == [] and len(watcher.state.watchlist) == 5
     started[0].run()
     assert calls == ["full"] and len(watcher.state.watchlist) == 6
+
+
+# --- Service de chat (chatsvc) : session ouverte dans la page --------------------------
+
+def test_chat_get_sends_only_an_allowed_path_and_query_and_returns_the_body():
+    d = WebBridgeDriver()
+    calls = []
+
+    def rpc(op, **kw):
+        calls.append((op, kw))
+        return {"ok": True, "status": 200, "region": "emea", "json": {"conversations": [{"id": "19:a@thread.v2"}]}}
+
+    d._rpc = rpc
+    out = d.chat_get("/v1/users/ME/conversations", {"view": "msnp24Equivalent", "pageSize": 5, "evil": "x"})
+    assert out == {"conversations": [{"id": "19:a@thread.v2"}]}
+    op, kw = calls[0]
+    assert op == "chatsvc" and kw["path"] == "/v1/users/ME/conversations"
+    # Paramètre inconnu retiré ; aucun en-tête, aucun credential ne part vers la page.
+    assert kw["query"] == {"view": "msnp24Equivalent", "pageSize": 5}
+    assert set(kw) == {"path", "query", "timeout"}
+
+
+def test_chat_get_refuses_paths_outside_the_allowlist_without_calling_the_page():
+    d = WebBridgeDriver()
+    calls = []
+    d._rpc = lambda op, **kw: calls.append(op)
+    for bad in ("/v1/users/ME/endpoints", "/v1/users/ME/conversations/19:x/properties",
+                "/v1/users/ME/conversations/../../x", "https://evil.example.com/v1/users/ME/conversations",
+                "/v1/users/ME/conversations/a/messages/abc", "/v1/users/ME/conversations/..",
+                "/v1/users/ME/conversations/a%2F..%2Fb", "/v1/users/ME/conversations\n", ""):
+        try:
+            d.chat_get(bad)
+            assert False, f"chemin accepté à tort : {bad}"
+        except WebBridgeDriver.ApiError:
+            pass
+    assert calls == []
+
+
+def test_chat_conversation_path_encodes_the_thread_id():
+    p = WebBridgeDriver.chat_conversation_path("19:abc_def@thread.v2", messages=True)
+    assert p == "/v1/users/ME/conversations/19%3Aabc_def%40thread.v2/messages"
+    # Le chemin encodé passe la liste blanche.
+    from drivers.web_bridge import CHAT_PATHS
+    assert CHAT_PATHS.fullmatch(p)
+    assert CHAT_PATHS.fullmatch(WebBridgeDriver.chat_conversation_path("8:orgid:0f1e-aa"))
+
+
+def test_chat_get_raises_with_status_so_caller_falls_back_to_dom():
+    d = WebBridgeDriver()
+    d._rpc = lambda op, **kw: {"ok": False, "stage": "authz", "status": 401, "error": "authsvc refusé (HTTP 401)"}
+    try:
+        d.chat_get("/v1/users/ME/conversations")
+        assert False, "un échec doit lever ApiError"
+    except WebBridgeDriver.ApiError as e:
+        assert e.status == 401 and "authsvc" in str(e)

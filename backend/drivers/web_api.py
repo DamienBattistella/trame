@@ -5,11 +5,12 @@ Teams web déjà authentifiée de l'utilisateur. Les appels API se font DANS la 
 l'auth que le client Teams pose lui-même (le jeton ne quitte jamais la page, voir
 `drivers/web_bridge.py` et `docs/teams-web-api.md`).
 
-Aujourd'hui, lectures et écritures passent par la page (DOM) : en Teams v2, les messages, la
-liste et la présence arrivent par le canal temps réel (WebSocket trouter), pas par du REST.
-`routes()` dit, action par action, la voie suivie (« api » / « page »), comme le faisait le
-GraphDriver — prêt à basculer en « api » quand un endpoint REST est câblé. La santé de la
-signature (auto-test du pont) est exposée pour l'écran Réglages.
+Teams v2 lit et écrit les messages par l'API REST de son service de chat (chatsvc), depuis un
+Web Worker. La page ouvre sa propre session sur ce service (`chatsvc` dans teams-bridge.js) ;
+aujourd'hui, lectures et écritures passent encore par la page (DOM) et `routes()` dit, action
+par action, la voie suivie (« api » / « page »), prête à basculer en « api » à mesure que les
+actions sont câblées. La santé de la signature et de la session chatsvc (auto-tests du pont)
+est exposée pour l'écran Réglages.
 
 Enveloppe transparente : tout ce qui n'est pas défini ici est délégué au pilote de la page.
 """
@@ -62,9 +63,22 @@ class WebApiDriver:
         st = page.get("sign_selftest") if isinstance(page, dict) else None
         return st if isinstance(st, dict) else None
 
+    def chatsvc(self) -> Optional[dict]:
+        """Santé de la session du service de chat ouverte dans la page (`chatsvc_selftest`) :
+        statut HTTP, étape (bearer / authz / chatsvc / ok) et région ; None si pas mesurée.
+        Ni jeton ni contenu."""
+        try:
+            page = self._inner.diagnose().get("diagnose")
+        except Exception:
+            return None
+        st = page.get("chatsvc_selftest") if isinstance(page, dict) else None
+        return st if isinstance(st, dict) else None
+
     def diagnose(self, thread_id: Optional[str] = None) -> dict:
         out = self._inner.diagnose(thread_id) or {}
         page = out.get("diagnose") if isinstance(out, dict) else None
         signing = page.get("sign_selftest") if isinstance(page, dict) else None
+        chat = page.get("chatsvc_selftest") if isinstance(page, dict) else None
         return {**out, "teams_web": {"routes": self.routes(),
-                                     "signing": signing if isinstance(signing, dict) else None}}
+                                     "signing": signing if isinstance(signing, dict) else None,
+                                     "chatsvc": chat if isinstance(chat, dict) else None}}

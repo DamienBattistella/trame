@@ -861,11 +861,14 @@ def create_app(
         d = watcher.driver
         routes = getattr(d, "routes", None)
         signing = getattr(d, "signing", None)
+        chat = getattr(d, "chatsvc", None)
         return {"ok": True, "api": {
             "driver": type(d).__name__,
             "routes": routes() if callable(routes) else {},
             # Santé de la signature (statut HTTP d'une sonde signée) ; None si pas mesurée.
             "signing": signing() if callable(signing) else None,
+            # Session du service de chat ouverte dans la page ; None si pas mesurée.
+            "chatsvc": chat() if callable(chat) else None,
         }}
 
     @app.get("/api/health")

@@ -90,6 +90,16 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
           ? `Signature indisponible : ${sign.error}`
           : `Signature refusée (HTTP ${sign.status ?? "?"}) : repli sur la page`;
   const dot = !api || sign == null ? "bg-muted-foreground/40" : sign.ok ? "bg-success" : "bg-amber-500";
+  // Session du service de chat (là où Teams lit et écrit les messages), ouverte dans la page.
+  const chat = api?.chatsvc ?? null;
+  const chatLine = !api || chat == null
+    ? null
+    : chat.ok
+      ? `Service de chat connecté${chat.region ? ` (${chat.region})` : ""}`
+      : chat.stage === "bearer"
+        ? "Service de chat : en attente d'un jeton Teams"
+        : `Service de chat indisponible${chat.status ? ` (HTTP ${chat.status})` : ""} : repli sur la page`;
+  const chatDot = chat?.ok ? "bg-success" : "bg-amber-500";
 
   const routes = api?.routes ?? {};
   const groups = GROUPS.map((g) => ({
@@ -111,6 +121,12 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
             <span className={cn("size-1.5 shrink-0 rounded-full", dot)} aria-hidden />
             <span className="truncate">{line}</span>
           </span>
+          {chatLine && (
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={cn("size-1.5 shrink-0 rounded-full", chatDot)} aria-hidden />
+              <span className="truncate">{chatLine}</span>
+            </span>
+          )}
         </div>
         {total > 0 && (
           <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
@@ -143,7 +159,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
       )}
       <div className="border-t px-4 py-2.5 text-xs text-muted-foreground">
         Trame s'appuie sur ta session Teams web déjà connectée : les appels sont signés dans la page et le jeton
-        n'en sort jamais. Les nouveaux messages arrivent par le canal temps réel de Teams.
+        n'en sort jamais. Les messages se lisent sur le service de chat de Teams, avec sa propre session ouverte dans la page.
       </div>
     </GroupList>
   );

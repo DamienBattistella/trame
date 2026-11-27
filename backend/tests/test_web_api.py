@@ -74,3 +74,16 @@ def test_api_teams_web_endpoint_exposes_routes_and_signing(make_client):
     assert res["ok"] and res["api"]["driver"] == "WebApiDriver"
     assert set(res["api"]["routes"]) == set(ACTIONS)
     assert res["api"]["signing"] == {"ok": True, "status": 200, "source": "path"}
+
+
+def test_webapi_exposes_chatsvc_session_health_from_the_bridge():
+    class WithChat(FakeInner):
+        def diagnose(self, thread_id=None):
+            page = {**self._page, "chatsvc_selftest": {"ok": True, "status": 200, "stage": "ok", "region": "emea"}}
+            return {"driver": "web_bridge", "diagnose": page}
+
+    d = WebApiDriver(WithChat())
+    assert d.chatsvc() == {"ok": True, "status": 200, "stage": "ok", "region": "emea"}
+    assert d.diagnose()["teams_web"]["chatsvc"]["stage"] == "ok"
+    # Pas encore mesurée : None, jamais d'exception.
+    assert WebApiDriver(FakeInner()).chatsvc() is None

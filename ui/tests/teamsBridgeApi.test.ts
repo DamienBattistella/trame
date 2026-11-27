@@ -59,12 +59,14 @@ const teamsPage = () => {
     location: { hostname: "teams.microsoft.com", origin: "https://teams.microsoft.com", href: "https://teams.microsoft.com/" },
     document: doc,
     URL,
+    URLSearchParams,
     setTimeout: (fn: Function, ms?: number) => setTimeout(fn as any, ms),
     clearTimeout: (id: any) => clearTimeout(id),
     addEventListener: () => {},
     fetch: async (url: any, init: any) => {
       fetchCalls.push({ url: String(url), init });
-      return nextResponse;
+      // Une fonction route la réponse selon l'URL (session chatsvc : authz puis service de chat).
+      return typeof nextResponse === "function" ? nextResponse(String(url), init) : nextResponse;
     },
     WebSocket: FakeWS,
     // Stub XHR : présent sur la vraie page, il doit l'être ici pour que le bloc d'install
@@ -292,4 +294,105 @@ test("la capture ne retient que la structure : chemin masqué, NOMS d'auth, aucu
   // Aucune valeur de jeton nulle part dans la capture.
   const dump = JSON.stringify(cap);
   assert.ok(!/TRES-SECRET|AUSSI-SECRET|token=zzz|zzz/.test(dump), dump);
+});
+
+
+// --- Session du service de chat (chatsvc) ---------------------------------------------
+const AUTHZ_BODY = JSON.stringify({
+  tokens: { skypeToken: "SKYPE-CHAT-SECRET", expiresIn: 86400 },
+  region: "emea",
+  regionGtms: { chatService: "https://emea.ng.msg.teams.microsoft.com", chatServiceAfd: "https://teams.microsoft.com/api/chatsvc/emea" },
+});
+// Teams pose lui-même son bearer middletier (audience api.spaces.skype.com).
+const withTeamsBearer = async (p: any, token = "Bearer MT-SECRET") => {
+  await p.ctx.window.fetch("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/me/settings/42", {
+    headers: { authorization: token },
+  });
+  await new Promise((r) => setImmediate(r));
+};
+
+test("chatsvc ouvre la session dans la page et ne renvoie que le corps métier", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse((url: string) =>
+    url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse('{"conversations":[{"id":"19:a@thread.v2"}]}'),
+  );
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations", query: { view: "msnp24Equivalent", pageSize: 1, evil: "x" } });
+  assert.equal(r.result.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.result.json)), { conversations: [{ id: "19:a@thread.v2" }] });
+  // 1) authz avec le bearer de Teams, sans cookies ; 2) service de chat avec le jeton du chat.
+  const [authz, call] = p.fetchCalls.slice(before);
+  assert.equal(authz.url, "https://teams.microsoft.com/api/authsvc/v1.0/authz");
+  assert.equal(authz.init.method, "POST");
+  assert.equal(authz.init.headers.Authorization, "Bearer MT-SECRET");
+  assert.equal(authz.init.credentials, "omit");
+  assert.equal(call.url, "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations?view=msnp24Equivalent&pageSize=1");
+  assert.equal(call.init.headers.Authentication, "skypetoken=SKYPE-CHAT-SECRET");
+  // Aucun jeton dans ce qui revient au moteur, ni dans le diagnostic.
+  assert.ok(!/SKYPE-CHAT-SECRET|MT-SECRET/.test(JSON.stringify(r)), JSON.stringify(r));
+  const diag = (await p.run("diagnose")).result;
+  assert.ok(!/SKYPE-CHAT-SECRET|MT-SECRET/.test(JSON.stringify(diag)), "jeton dans diagnose");
+  assert.equal(diag.chatsvc_selftest.ok, true);
+  assert.equal(diag.chatsvc_selftest.region, "emea");
+});
+
+test("chatsvc réutilise la session : un seul authz pour plusieurs lectures", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse('{"messages":[]}')));
+  const before = p.fetchCalls.length;
+  await p.run("chatsvc", { path: "/v1/users/ME/conversations/19%3Aa%40thread.v2/messages", query: { pageSize: 20 } });
+  await p.run("chatsvc", { path: "/v1/users/ME/conversations/19%3Aa%40thread.v2" });
+  const urls = p.fetchCalls.slice(before).map((c) => c.url);
+  assert.equal(urls.filter((u) => u.includes("/authsvc/")).length, 1);
+  assert.equal(urls.length, 3);
+});
+
+test("chatsvc refuse un chemin hors liste blanche sans aucun appel réseau", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const before = p.fetchCalls.length;
+  for (const path of ["/v1/users/ME/endpoints", "/v1/users/ME/conversations/x/properties", "/v1/users/ME/conversations/../../x", "/v1/users/ME/conversations/..", "/v1/users/ME/conversations/a%2f..%2fb", "https://evil.example.com/x"]) {
+    const r = await p.run("chatsvc", { path });
+    assert.equal(r.result.ok, false, path);
+  }
+  assert.equal(p.fetchCalls.length, before);
+});
+
+test("chatsvc rouvre la session une fois sur un 401 puis rend la main", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  let chatCalls = 0;
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_BODY);
+    chatCalls++;
+    return chatCalls === 1 ? fakeResponse("{}", { status: 401 }) : fakeResponse('{"conversations":[]}');
+  });
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, true);
+  const urls = p.fetchCalls.slice(before).map((c) => c.url);
+  assert.equal(urls.filter((u) => u.includes("/authsvc/")).length, 2); // session rouverte une fois
+  assert.equal(chatCalls, 2);
+});
+
+test("chatsvc sans jeton Teams observé : étape « bearer », aucun appel réseau", async () => {
+  const p = teamsPage();
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.stage, "bearer");
+  assert.equal(p.fetchCalls.length, before);
+});
+
+test("chatsvc : authz refusé remonte l'étape et le statut, sans corps", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse(fakeResponse('{"error":"SECRET-DETAIL"}', { status: 403 }));
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.stage, "authz");
+  assert.equal(r.result.status, 403);
+  assert.ok(!/SECRET-DETAIL/.test(JSON.stringify(r)));
 });
