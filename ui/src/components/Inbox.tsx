@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, BellRing, CheckCheck, ChevronRight, EllipsisVertical, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, Timer, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, BellRing, Bot, CheckCheck, ChevronRight, EllipsisVertical, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { InitialsAvatar, spring } from "@/components/kit";
+import { AUTO_HINT, InitialsAvatar, spring } from "@/components/kit";
 import { DiscussionView } from "@/components/DiscussionView";
 import { NewConversation } from "@/components/NewConversation";
 import { MessageSearchResults } from "@/components/MessageSearchResults";
@@ -785,7 +785,7 @@ type Marker = { id: "auto" | "draft" | "followUp" | "unread"; tip: string };
  */
 function rowMarkers(c: WatchEntity, draft: DraftItem | null, followUp: string | null): Marker[] {
   const out: Marker[] = [];
-  if (c.watch && c.mode === "auto") out.push({ id: "auto", tip: "Mode Auto : Trame répond seul après le compte à rebours" });
+  if (c.watch && c.mode === "auto") out.push({ id: "auto", tip: AUTO_HINT });
   if (draft) out.push({ id: "draft", tip: "Réponse à relire : ouvre la conversation pour l'envoyer ou la modifier" });
   else if (followUp) out.push({ id: "followUp", tip: "Relance proposée : ta question est restée sans réponse" });
   else if (c.unread) out.push({ id: "unread", tip: "Non lu" });
@@ -800,10 +800,7 @@ function RowMarkers({ markers, forceOpen }: { markers: Marker[]; forceOpen: bool
         <span aria-hidden className="flex shrink-0 items-center gap-1.5">
           {markers.map((m) =>
             m.id === "auto" ? (
-              <span key={m.id} className="flex h-4 items-center gap-0.5 rounded-full border px-1.5 text-[10px] font-medium leading-none text-muted-foreground">
-                <Timer className="size-2.5" />
-                Auto
-              </span>
+              <Bot key={m.id} className="size-3.5 text-muted-foreground" />
             ) : m.id === "draft" ? (
               <PenLine key={m.id} className="size-3.5 text-warning" />
             ) : m.id === "followUp" ? (

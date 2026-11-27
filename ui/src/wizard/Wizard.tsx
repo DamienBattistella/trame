@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw, Timer } from "lucide-react";
+import { Bot, Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { BrainId } from "@/components/BrainPicker";
@@ -12,7 +12,7 @@ import { SoulHelp } from "@/components/SoulHelp";
 import { SoulInsight } from "@/components/SoulInsight";
 import { SoulEditor } from "@/components/SoulEditor";
 import { GithubConnect } from "@/components/GithubConnect";
-import { GroupList, InitialsAvatar, Segment, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
+import { AutoToggle, GroupList, InitialsAvatar, SelectCircle, StatusDot, Status, pop, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { SOUL_MAX_BYTES, Trame } from "@/api";
 import { isDesktop, teamsWebHide, teamsWebOpen } from "@/desktop";
@@ -383,7 +383,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
                   <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>
                 </div>
                 <div className="shrink-0">
-                  <Segment value={c.mode} onChange={(v) => setMode(c.threadId, v)} />
+                  <AutoToggle name={c.displayName} mode={c.mode} onChange={(v) => setMode(c.threadId, v)} />
                 </div>
               </div>
             )}
@@ -726,7 +726,7 @@ function ModeCard({
     >
       <div className="flex items-center gap-2.5">
         <span className={cn("grid size-8 place-items-center rounded-full", auto ? "bg-warning/15 text-warning" : "bg-primary/10 text-link")}>
-          {auto ? <Timer className="size-4" /> : <PenLine className="size-4" />}
+          {auto ? <Bot className="size-4" /> : <PenLine className="size-4" />}
         </span>
         <span className="font-semibold">{auto ? "Auto" : "Brouillon"}</span>
         <span className="relative ml-auto h-7 overflow-hidden">
