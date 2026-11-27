@@ -207,30 +207,13 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
             <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
               <ContextButton trame={trame} onBrief={onBrief} compact target={{ threadId: c.threadId, displayName: c.displayName }} />
             </span>
-            <AnimatePresence initial={false}>
-              {c.watch && (
-                <motion.div
-                  key="mode"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={spring}
-                >
-                  <AutoToggle
-                    name={c.displayName}
-                    mode={c.mode}
-                    onChange={(v) => trame.setMode(c.threadId, v).then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
             <span className="flex w-16 justify-end">
               <ConversationMeta c={c} />
             </span>
-            <Switch
-              aria-label={`Suivre ${c.displayName}`}
-              checked={c.watch}
-              onCheckedChange={() => trame.toggleWatch(c.threadId).then(report(`Impossible de modifier « ${c.displayName} »`))}
+            <AutoToggle
+              name={c.displayName}
+              mode={c.watch ? c.mode : "draft"}
+              onChange={(v) => trame.setAuto(c.threadId, v === "auto").then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
             />
           </div>
         )}

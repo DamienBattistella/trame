@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useAnimationControls } from "motion/react";
+import { motion, useAnimationControls } from "motion/react";
 import { ExternalLink, Loader2, PenLine, RotateCcw, Send } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
@@ -93,31 +92,15 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
             <SheetTitle className="truncate">{live.displayName}</SheetTitle>
             <SheetDescription>{[KIND[live.surface], live.presence && PRESENCE[live.presence]?.label].filter(Boolean).join(" · ")}</SheetDescription>
           </div>
+          <AutoToggle
+            name={live.displayName}
+            mode={live.watch ? live.mode : "draft"}
+            onChange={(v) => trame.setAuto(live.threadId, v === "auto").then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
+          />
           <Button variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Ouvrir dans Teams" title="Ouvrir dans Teams" onClick={openInTeams}>
             <ExternalLink className="size-4" />
           </Button>
         </SheetHeader>
-
-        <div className="flex items-center gap-3 border-b px-4 py-2">
-          <label className="flex items-center gap-2 text-sm">
-            <Switch
-              checked={live.watch}
-              onCheckedChange={() => trame.toggleWatch(live.threadId).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
-            />
-            Suivie
-          </label>
-          <AnimatePresence initial={false}>
-            {live.watch && (
-              <motion.div key="mode" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="ml-auto">
-                <AutoToggle
-                  name={live.displayName}
-                  mode={live.mode}
-                  onChange={(v) => trame.setMode(live.threadId, v).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
 
         <StickToBottom className="relative min-h-0 flex-1 overflow-y-auto" resize="smooth" initial="instant">
           <StickToBottom.Content className="flex flex-col gap-2 px-4 py-4">
