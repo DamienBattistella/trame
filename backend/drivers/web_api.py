@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
-from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
+from drivers.base import DeleteUncertain, EditUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
@@ -92,6 +92,13 @@ def _shown_text(last: dict) -> str:
     return "(image)" if last.get("images") else ""
 
 
+def _note_never() -> str:
+    try:
+        return datetime(9999, 12, 31).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, ValueError, OSError):
+        return "9999-12-31T00:00:00Z"
+
+
 def _newer(lid: str, prev: Optional[str]) -> bool:
     """Ids de messages Teams : des horodatages en ms, croissants. Sans précédent : nouveau."""
     if not prev:
@@ -123,18 +130,19 @@ class _ChatState:
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
-           "search_messages", "mark_read", "react", "delete", "set_status", "set_note",
+           "search_messages", "mark_read", "react", "delete", "edit", "set_status", "set_note",
            "send", "start_chat", "meetings", "transcript")
 
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send",
+    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
                              "presence", "my_status", "set_note", "search_people"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
-    # Note de statut sans échéance : « jamais », comme le choix par défaut de Teams.
-    NOTE_NEVER = "9999-12-31T23:59:59.999Z"
+    # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
+    # (« 9999-12-30T23:00:00Z » à Paris) ; si la conversion de fuseau déborde, minuit UTC.
+    NOTE_NEVER = _note_never()
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
@@ -438,6 +446,14 @@ class WebApiDriver:
             return self._inner.delete_focused(thread_id, target, restore=restore)
         if res.get("uncertain"):
             raise DeleteUncertain(res.get("error") or "suppression non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def edit_focused(self, thread_id: str, target: MessageRef, text: str, restore: bool = True) -> Focus:
+        res = self._gesture("edit", "edit", thread_id, message=self._inner._ref(target), text=text)
+        if res is None:
+            return self._inner.edit_focused(thread_id, target, text, restore=restore)
+        if res.get("uncertain"):
+            raise EditUncertain(res.get("error") or "modification non confirmée")
         return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,

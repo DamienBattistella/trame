@@ -660,6 +660,13 @@ const chatServer = (p: any, messages: Record<string, any>, conv: any = {}) => {
       raw.properties.emotions = (raw.properties.emotions || []).filter((e: any) => e.key !== body.emotions.key);
       return fakeResponse("", { status: 200 });
     }
+    if (method === "PUT" && m && !url.includes("?")) {
+      if (!conv.ignoreEdits) {
+        messages[m[1]].content = body.content;
+        messages[m[1]].properties.edittime = String(Date.now());
+      }
+      return fakeResponse("", { status: 200 });
+    }
     if (method === "DELETE" && m) {
       messages[m[1]].properties.deletetime = String(Date.now());
       return fakeResponse("", { status: 200 });
@@ -754,6 +761,65 @@ test("chatgesture delete : seulement un de MES messages, prouvé supprimé", asy
   assert.equal(mine.ok, true);
   assert.equal(writes[0].method, "DELETE");
   assert.ok(writes[0].url.endsWith("/messages/1795777000002?behavior=softDelete"));
+});
+
+test("chatgesture edit : seulement un de MES messages, nouveau texte prouvé et marqué modifié", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001"),
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Je regarde</p>" }),
+  };
+  const writes = chatServer(p, messages);
+  const theirs = { id: "1795777000001", sender: "Ana Martin", text: "Bonjour" };
+  const notMine = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: theirs, text: "Salut" })).result;
+  assert.equal(notMine.ok, false);
+  assert.equal(writes.length, 0);
+  const ref = { id: "1795777000002", sender: "Alex Moreau", text: "Je regarde" };
+  const mine = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: "Je regarde <ça>\nhttps://ex.test/a" })).result;
+  assert.equal(mine.ok, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, "PUT");
+  assert.ok(writes[0].url.endsWith(`/conversations/${encodeURIComponent(GROUP_ID)}/messages/1795777000002`));
+  // HTML du composeur : échappé, une ligne par paragraphe, lien cliquable.
+  assert.match(writes[0].body.content, /^<p>Je regarde &lt;ça&gt;<\/p><p><a href="https:\/\/ex.test\/a"/);
+  assert.equal(writes[0].body.messagetype, "RichText/Html");
+  // Même texte qu'affiché : rien n'est réécrit.
+  const same = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: { ...ref, text: "Je regarde" }, text: "Je regarde <ça> https://ex.test/a" })).result;
+  assert.equal(same.already, true);
+  assert.equal(writes.length, 1);
+});
+
+test("chatgesture edit : message riche ou texte vide refusés pour de bon, sans repli sur la page", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const files = JSON.stringify([{ fileName: "plan.pdf", objectUrl: "https://ex.sharepoint.com/plan.pdf" }]);
+  const messages: any = {
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Le plan</p>", properties: { files } }),
+  };
+  const writes = chatServer(p, messages);
+  const ref = { id: "1795777000002", sender: "Alex Moreau", text: "Le plan" };
+  const rich = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: "Le nouveau plan" })).result;
+  assert.equal(rich.ok, false);
+  assert.equal(rich.attempted, true);
+  assert.equal(rich.refused, true);
+  const empty = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: "   " })).result;
+  assert.equal(empty.ok, false);
+  assert.equal(empty.refused, true);
+  assert.equal(writes.length, 0);
+});
+
+test("chatgesture edit : accepté mais pas relu modifié → incertain, jamais refait", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Je regarde</p>" }),
+  };
+  const writes = chatServer(p, messages, { ignoreEdits: true });
+  const r = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: { id: "1795777000002", sender: "Alex Moreau", text: "Je regarde" }, text: "Vu" })).result;
+  assert.equal(r.ok, false);
+  assert.equal(r.uncertain, true);
+  assert.equal(writes.length, 1);
 });
 
 test("chatgesture markread : horizon = arrivée du dernier message, prouvé à la relecture", async () => {

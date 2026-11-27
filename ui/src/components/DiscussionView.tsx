@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -137,6 +137,65 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** Modification d'un de tes messages, en place comme dans Teams : Entrée enregistre (Maj+Entrée
+ *  passe à la ligne), Échap annule. Le texte n'est changé dans le fil qu'une fois Teams l'a pris. */
+function MessageEditor({
+  value,
+  saving,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  value: string;
+  saving: boolean;
+  onChange: (text: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  return (
+    <div className="flex flex-col gap-2 whitespace-normal" data-testid="message-editor">
+      <Textarea
+        ref={box}
+        aria-label="Nouveau texte du message"
+        value={value}
+        disabled={saving}
+        rows={Math.min(8, Math.max(2, value.split("\n").length))}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            onSave();
+          }
+        }}
+        className="min-h-0 resize-none bg-background text-sm"
+      />
+      <div className="flex items-center justify-end gap-2">
+        <span className="mr-auto text-xs text-muted-foreground">
+          <Kbd>Entrée</Kbd> enregistrer · <Kbd>Échap</Kbd> annuler
+        </span>
+        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
+          Annuler
+        </Button>
+        <Button size="sm" disabled={saving || !value.trim()} onClick={onSave}>
+          {saving && <Loader2 className="animate-spin" />}
+          Enregistrer
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Copie le texte d'un message ; « copié » s'affiche un instant à la place de l'icône. */
 function CopyButton({ text, separated }: { text: string; separated: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -171,22 +230,25 @@ function CopyButton({ text, separated }: { text: string; separated: boolean }) {
 
 /** Barre de gestes au survol d'un message : le petit jeu de réactions Teams, « Répondre »,
  *  « Proposer une réponse à ce message » (le cerveau, jamais d'envoi), « Copier » (toujours
- *  là, il ne passe pas par Teams) et, sur tes messages, « Supprimer ». */
+ *  là, il ne passe pas par Teams) et, sur tes messages, « Modifier » et « Supprimer ». */
 function MessageActions({
   message,
   canReact,
   canReply,
+  canEdit,
   canDelete,
   propose,
   pending,
   onReact,
   onReply,
   onPropose,
+  onEdit,
   onDelete,
 }: {
   message: ThreadMessage;
   canReact: boolean;
   canReply: boolean;
+  canEdit: boolean;
   canDelete: boolean;
   /** « Proposer une réponse à ce message » : null si absent ; `blocked` dit pourquoi il est inactif. */
   propose: { busy: boolean; blocked: string | null } | null;
@@ -194,10 +256,11 @@ function MessageActions({
   onReact: (r: Reaction) => void;
   onReply: () => void;
   onPropose: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const canCopy = Boolean(message.text.trim()) && !message.deleted;
-  if (!canReact && !canReply && !propose && !canCopy && !canDelete) return null;
+  if (!canReact && !canReply && !propose && !canCopy && !canEdit && !canDelete) return null;
   const mine = message.reactions ?? [];
   return (
     <div
@@ -274,6 +337,22 @@ function MessageActions({
         </Tooltip>
       )}
       {canCopy && <CopyButton text={message.text} separated={canReact && !canReply && !propose} />}
+      {canEdit && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Modifier ce message"
+              disabled={Boolean(pending)}
+              onClick={onEdit}
+              className="ml-0.5 grid size-7 place-items-center rounded-full border-l text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <Pencil className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Modifier ce message</TooltipContent>
+        </Tooltip>
+      )}
       {canDelete && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -355,6 +434,9 @@ export function DiscussionView({
   // Suppression d'un de tes messages : à confirmer dans un dialogue, jamais en un clic.
   const [toDelete, setToDelete] = useState<ThreadMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Message en cours de modification (édité en place) et texte en cours.
+  const [editing, setEditing] = useState<{ ref: MessageRef; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
   const caps = trame.state.capabilities;
   const composer = useRef<HTMLTextAreaElement>(null);
   // Mentions : personnes choisies dans les suggestions « @ », et la liste ouverte.
@@ -681,6 +763,28 @@ export function DiscussionView({
     toast.success("Message supprimé dans Teams");
   };
 
+  const startEdit = (m: ThreadMessage) => {
+    if (saving) return;
+    setEditing({ ref: refOf(m), text: m.text });
+  };
+
+  // Envoyé tel quel à Teams, qui le montre ensuite « Modifié » ; rien n'est changé ici avant
+  // la preuve. Un texte inchangé ferme l'édition sans rien envoyer.
+  const saveEdit = async () => {
+    const e = editing;
+    if (!e || saving) return;
+    const text = e.text.trim();
+    if (!text) return void toast.error("Message non modifié", { description: "Le nouveau texte est vide : pour retirer le message, supprime-le." });
+    if (text === e.ref.text.trim()) return setEditing(null);
+    setSaving(true);
+    const res = await trame.editInThread(c.threadId, e.ref, text);
+    setSaving(false);
+    if (!res.ok) return void toast.error("Message non modifié", { description: res.error });
+    setEditing(null);
+    setMessages((list) => (list ?? []).map((x) => (sameRef(e.ref, x) ? { ...x, text, edited: true, links: [] } : x)));
+    toast.success("Message modifié dans Teams");
+  };
+
   const replyToMessage = (m: ThreadMessage) => {
     setReplyTo(refOf(m));
     requestAnimationFrame(() => composer.current?.focus());
@@ -935,12 +1039,25 @@ export function DiscussionView({
                 const canReply = live && caps.reply;
                 // Seulement tes messages, connus de Teams par leur identifiant.
                 const canDelete = live && caps.delete && m.mine && Boolean(m.id);
+                // Texte simple seulement : citation, mention, pièce jointe ou aperçu seraient
+                // perdus en le réécrivant (Teams les garde, à modifier là-bas).
+                const plain = !m.quote && !m.replyTo && !m.mentions?.length && !m.files?.length && !m.images?.length && !m.cards?.length;
+                const isEditing = Boolean(editing && m.mine && sameRef(editing.ref, m));
+                const canEdit = live && caps.edit && m.mine && Boolean(m.id) && Boolean(m.text.trim()) && plain && !editing;
                 const canPropose = live && Boolean(m.text.trim() || m.files?.length || m.images?.length);
                 const targeted = sameRef(replyTo, m);
                 const isFound = i === foundIndex;
                 const pending = reacting?.index === i ? reacting.reaction : null;
                 const edited = Boolean(m.edited && !m.deleted);
-                const body = m.deleted ? (
+                const body = isEditing && editing ? (
+                  <MessageEditor
+                    value={editing.text}
+                    saving={saving}
+                    onChange={(text) => setEditing((e) => (e ? { ...e, text } : e))}
+                    onCancel={() => !saving && setEditing(null)}
+                    onSave={saveEdit}
+                  />
+                ) : m.deleted ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground italic">
                     <Ban className="size-3.5 shrink-0" />
                     {DELETED_TEXT}
@@ -1010,24 +1127,27 @@ export function DiscussionView({
                         !m.mine && targeted && "bg-link/5 ring-1 ring-link/40"
                       )}
                     >
-                      <MessageActions
+                      {!isEditing && <MessageActions
                         message={m}
                         canReact={canReact}
                         canReply={canReply}
+                        canEdit={canEdit}
                         canDelete={canDelete}
                         propose={canPropose ? { busy: busy === "suggest" && sameRef(proposingFor, m), blocked: proposeBlocked } : null}
                         pending={pending}
                         onReact={(r) => react(m, i, r)}
                         onReply={() => replyToMessage(m)}
                         onPropose={() => proposeOn(m)}
+                        onEdit={() => startEdit(m)}
                         onDelete={() => setToDelete(m)}
-                      />
+                      />}
                       {m.mine ? (
                         <>
                           <div
                             title={row.tail ? undefined : m.at}
                             className={cn(
                               "flex max-w-full flex-col gap-1.5 rounded-2xl bg-muted px-3.5 py-2 text-sm leading-5 whitespace-pre-wrap",
+                              isEditing && "w-full",
                               isFound && "ring-2 ring-warning/70",
                               targeted && "ring-2 ring-link/50"
                             )}

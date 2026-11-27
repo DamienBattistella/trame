@@ -226,6 +226,7 @@ class MockTeamsDriver(TeamsDriver):
     supports_reply = True
     supports_mentions = True
     supports_delete = True
+    supports_edit = True
     # L'utilisateur de la démo : Teams ne propose « Supprimer » que sur ses messages.
     ME = "Damien Battistella"
 
@@ -246,11 +247,16 @@ class MockTeamsDriver(TeamsDriver):
         self.reactions: dict[str, list[str]] = {}
         # Messages supprimés, par « conversation/id ».
         self.deleted: set[str] = set()
+        # Messages modifiés : nouveau texte, par « conversation/id ».
+        self.edited: dict[str, str] = {}
 
     def _thread(self, thread_id: str) -> list[tuple[str, str, str, str]]:
         """(id, heure, auteur, texte) : ids stables, à la position du message dans le fil.
-        Un message supprimé ne montre plus que DELETED_TEXT, comme dans Teams."""
-        return [(f"m{i}", at, sender, DELETED_TEXT if f"{thread_id}/m{i}" in self.deleted else text)
+        Un message supprimé ne montre plus que DELETED_TEXT, comme dans Teams ; un message
+        modifié, son nouveau texte."""
+        def shown(key: str, text: str) -> str:
+            return DELETED_TEXT if key in self.deleted else self.edited.get(key, text)
+        return [(f"m{i}", at, sender, shown(f"{thread_id}/m{i}", text))
                 for i, (at, sender, text) in enumerate(_HISTORY.get(thread_id, []))]
 
     def _find(self, thread_id: str, ref: MessageRef) -> Optional[str]:
@@ -335,7 +341,9 @@ class MockTeamsDriver(TeamsDriver):
         return [
             IncomingMessage(thread_id=thread_id, sender=sender, text=text, received_at=at, surface=surface,
                             id=mid, reactions=list(self.reactions.get(f"{thread_id}/{mid}", [])),
-                            deleted=f"{thread_id}/{mid}" in self.deleted, **_RICH.get((thread_id, text), {}))
+                            deleted=f"{thread_id}/{mid}" in self.deleted,
+                            edited=f"{thread_id}/{mid}" in self.edited and f"{thread_id}/{mid}" not in self.deleted,
+                            **_RICH.get((thread_id, text), {}))
             for mid, at, sender, text in history
         ]
 
@@ -480,6 +488,21 @@ class MockTeamsDriver(TeamsDriver):
         self.deleted.add(f"{thread_id}/{mid}")
         self.reactions.pop(f"{thread_id}/{mid}", None)
         _say(f"[mock] SUPPRIMÉ -> {thread_id}/{mid}")
+        return True
+
+    def _edit_in_active(self, thread_id: str, target: MessageRef, text: str) -> bool:
+        if self._active != thread_id:
+            return False
+        mid = self._find(thread_id, target)
+        if mid is None:
+            raise RuntimeError("message introuvable ou différent de celui choisi")
+        sender = next(r[2] for r in self._thread(thread_id) if r[0] == mid)
+        if sender != self.ME:
+            raise RuntimeError("Teams ne propose pas « Modifier » sur ce message")
+        if f"{thread_id}/{mid}" in self.deleted:
+            raise RuntimeError("message supprimé")
+        self.edited[f"{thread_id}/{mid}"] = text
+        _say(f"[mock] MODIFIÉ -> {thread_id}/{mid}")
         return True
 
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

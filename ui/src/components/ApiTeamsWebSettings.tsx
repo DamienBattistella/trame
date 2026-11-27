@@ -30,6 +30,7 @@ const GROUPS: { label: string; actions: Record<string, string> }[] = [
       react: "Réactions",
       mark_read: "Marquer comme lu",
       delete: "Suppression",
+      edit: "Modification",
       set_status: "Changer mon statut",
       set_note: "Message de statut",
     },
