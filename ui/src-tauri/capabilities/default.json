@@ -32,6 +32,7 @@
     "allow-restart-backend",
     "allow-check-update",
     "allow-install-update",
+    "allow-set-update-check-minutes",
     "allow-teams-web-open",
     "allow-teams-web-hide",
     "allow-teams-web-close",

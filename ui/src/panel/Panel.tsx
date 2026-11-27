@@ -374,7 +374,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         <TeamsWebSettings trame={trame} />
         <GraphSettings trame={trame} />
         <GroupList>
-          <UpdatesRow />
+          <UpdatesRow checkMinutes={trame.updateCheckMinutes} onCheckMinutesChange={trame.setUpdateCheckMinutes} />
           <ChangelogRow />
           <NotificationsRow />
           <AutostartRow />
