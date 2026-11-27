@@ -149,3 +149,40 @@ def test_claude_without_images_keeps_plain_input(monkeypatch):
     monkeypatch.setattr(claude_mod.subprocess, "run", run)
     assert claude_mod.ClaudeBrain().complete("Bonjour") == "ok"
     assert "--input-format" not in seen["args"] and seen["input"] == "Bonjour"
+
+
+class IdDriver(ScreenshotDriver):
+    def read_context(self, thread_id, last_n):
+        msgs = super().read_context(thread_id, last_n)
+        return [m.model_copy(update={"id": f"m{i}"}) for i, m in enumerate(msgs)]
+
+
+def _mcp(client, name, args):
+    token = client.put("/api/settings", json={"mcp": {"enabled": True}}).json()["settings"]["mcp"]["token"]
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                  "params": {"name": name, "arguments": args}},
+                    headers={"Authorization": f"Bearer {token}"}).json()["result"]
+    return r["isError"], (json.loads(r["content"][0]["text"]) if not r["isError"] else r["content"][0]["text"])
+
+
+def test_mcp_suggest_reply_targets_a_message_and_says_what_it_showed(make_client):
+    brain = SeeingBrain()
+    client, _watcher, _driver = make_client(driver=IdDriver(interval=9999), brain=brain)
+    err, out = _mcp(client, "suggest_reply", {"thread_id": DM, "message_id": "m0"})
+    assert not err and out["images_shown"] == 2
+    # The image-only message is the one answered, its images numbered for the brain.
+    assert brain.calls == ["[image 1]\n[image]\n[image 2]"]
+    assert "pas au dernier du fil" in brain.summaries[0]
+
+
+def test_mcp_suggest_reply_without_target_still_answers_the_last_message(make_client):
+    brain = SeeingBrain()
+    client, _watcher, _driver = make_client(driver=IdDriver(interval=9999), brain=brain)
+    err, out = _mcp(client, "suggest_reply", {"thread_id": DM})
+    assert not err and out["images_shown"] == 2 and brain.calls == ["sinon je le fais à la main"]
+
+
+def test_mcp_suggest_reply_unknown_message(make_client):
+    client, _watcher, _driver = make_client(driver=IdDriver(interval=9999), brain=SeeingBrain())
+    err, text = _mcp(client, "suggest_reply", {"thread_id": DM, "message_id": "nope"})
+    assert err and "introuvable" in text

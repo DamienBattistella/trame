@@ -12,6 +12,7 @@ import journal as journalmod
 import presence as presencemod
 import telemetry
 import transcripts as transcriptsmod
+from models import MessageRef
 from watcher import ActionError, Watcher
 
 PROTOCOL = "2025-06-18"
@@ -114,8 +115,15 @@ TOOLS: list[dict] = [
           ["meeting_id"], LOCAL),
     # --- actions sans envoi ---
     _tool("suggest_reply", "Proposer avec Trame",
-          "Fait rédiger une réponse par le cerveau de Trame, dans la voix de l'utilisateur. save=true la dépose dans « À relire ».",
-          {**TARGET, "save": {"type": "boolean", "default": False}}, annotations=LOCAL),
+          "Fait rédiger une réponse par le cerveau de Trame, dans la voix de l'utilisateur. save=true la dépose dans « À relire ». "
+          "message_id (un id de read_conversation) : répond à ce message précis, le fil autour sert de contexte. "
+          "images_shown : nombre d'images du fil montrées au modèle.",
+          {**TARGET, "save": {"type": "boolean", "default": False},
+           "message_id": {"type": "string", "maxLength": 200,
+                          "description": "Message auquel répondre (id donné par read_conversation). Absent : le dernier message reçu."},
+           "last_n": {"type": "integer", "minimum": 5, "maximum": 100, "default": 15,
+                      "description": "Messages lus pour le contexte (au moins jusqu'au message visé)."}},
+          annotations=LOCAL),
     _tool("propose_reply", "Déposer une réponse",
           "Dépose ta réponse dans « À relire ». Rien n'est envoyé : l'utilisateur relit et envoie lui-même.",
           {**TARGET, "text": {"type": "string", "minLength": 1, "maxLength": 4000}}, ["text"], LOCAL),
@@ -338,11 +346,31 @@ def make_router(watcher: Watcher) -> APIRouter:
     # --- actions sans envoi ---
     def tool_suggest(args: dict) -> Any:
         tid = resolve(args)
-        text = watcher.suggest_reply(tid)
+        last_n = max(5, min(100, int(args.get("last_n", 15))))
+        target = None
+        if args.get("message_id"):
+            target, last_n = target_of(tid, str(args["message_id"]), last_n)
+        text = watcher.suggest_reply(tid, last_n, target)
+        out = {"text": text, "images_shown": watcher.images_shown.get(tid, 0)}
         if args.get("save"):
             d = watcher.propose_external_reply(tid, text)
-            return {"text": text, "draft_id": d.id, "note": "Déposée dans « À relire »."}
-        return {"text": text}
+            return {**out, "draft_id": d.id, "note": "Déposée dans « À relire »."}
+        return out
+
+    def target_of(tid: str, message_id: str, last_n: int) -> tuple[MessageRef, int]:
+        """The message to answer, named as the app names it (an image alone is « [image] »),
+        and enough messages read to reach it."""
+        msgs, _top = watcher.thread_history(tid, 100)
+        i = next((i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("id") == message_id), None)
+        if i is None:
+            raise ActionError(404, "Message introuvable dans les 100 derniers messages de la discussion.")
+        m = msgs[i]
+        named = [f"[fichier joint : {f['name']}]" for f in m.get("files") or []] + \
+            ["[image]" for _ in m.get("images") or []] + \
+            [f"[aperçu {c.get('source', '')} : {c.get('title', '')}]" for c in m.get("cards") or []]
+        text = (m.get("text") or "").strip() or "\n".join(named) or "[message]"
+        ref = MessageRef(id=message_id, sender=m.get("sender", ""), text=text[:8000], at=m.get("at", ""))
+        return ref, min(100, max(last_n, len(msgs) - i))
 
     def tool_propose(args: dict) -> Any:
         draft = watcher.propose_external_reply(resolve(args), str(args.get("text", "")))
