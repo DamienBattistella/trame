@@ -594,6 +594,7 @@
       react: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}/properties`, "?name=emotions"],
       unreact: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}/properties`, "?name=emotions"],
       delete: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, "?behavior=softDelete"],
+      edit: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, ""],
       send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
     };
     // { ok, status } ; { sent: false } si rien n'est parti (refus avant l'appel) ; { sent: true,
@@ -2476,7 +2477,44 @@
       if (!w.ok && !w.unknown && w.status >= 400 && w.status < 500) return notSent(`envoi refusé par le service de chat (HTTP ${w.status})`);
       return uncertain("envoi non confirmé : vérifie dans Teams avant de renvoyer");
     };
-    const run = { markread, react, delete: remove, send };
+    // Modifier un de SES messages, en texte simple seulement : réécrire en texte brut un
+    // message cité, avec mention, pièce jointe ou carte les perdrait. Ce refus est définitif
+    // (attempted : la page ne ferait pas mieux). Prouvé quand la relecture montre le nouveau
+    // texte, marqué « Modifié ».
+    const refused = (error) => ({ ok: false, attempted: true, refused: true, error });
+    const edit = async ({ thread, message, text }) => {
+      const body = String(text || "").trim();
+      if (!body) return refused("message vide : rien n'a été modifié");
+      if (body.length > 28000) return refused("message trop long : rien n'a été modifié");
+      const t = await target(thread, message);
+      if (t.error) return notSent(`${t.error} : rien n'a été modifié`);
+      const me = await chatsvc.whoami();
+      if (!me || mriOf(t.raw.from) !== me) return notSent("ce message n'est pas à toi : rien n'a été modifié");
+      if ((t.raw.properties || {}).deletetime) return refused("message supprimé : rien n'a été modifié");
+      const s = t.seen;
+      if (s.quote || s.mentions.length || s.files.length || s.images.length || s.cards.length)
+        return refused("message avec citation, mention, pièce jointe ou aperçu : modifie-le dans Teams");
+      const want = fold(body);
+      if (fold(s.text) === want) return { ok: true, already: true };
+      const w = await chatsvc.write("edit", thread, t.mid, {
+        content: toHtml(body),
+        messagetype: "RichText/Html",
+        contenttype: "text",
+        amsreferences: [],
+        imdisplayname: String(t.raw.imdisplayname || ""),
+        properties: { importance: "", subject: "" },
+      });
+      if (!w.sent) return notSent(w.error);
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `modification refusée (HTTP ${w.status})` };
+      const ok = await proven(async () => {
+        const v = await getMsg(thread, t.mid);
+        if (!v.ok) return false;
+        const after = convertOf(v.json);
+        return after.edited && fold(after.text) === want;
+      });
+      return ok ? { ok: true } : uncertain("modification non confirmée par le service de chat");
+    };
+    const run = { markread, react, delete: remove, send, edit };
     return async (args) => {
       const kind = String((args && args.kind) || "");
       if (!run[kind]) return notSent("geste inconnu");
@@ -3735,6 +3773,57 @@
       unhover();
       toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "message non affiché comme supprimé, vérifie dans Teams" };
+    },
+    // Modifie un de TES messages en texte simple : retrouvé comme pour supprimer, « Modifier »
+    // dans sa barre (message à toi), puis le texte remplacé dans l'éditeur que Teams ouvre et
+    // validé. Fait seulement quand Teams montre le nouveau texte à la place de l'ancien.
+    edit: async ({ name, message, text }) => {
+      const want = String(text || "").trim();
+      if (!want) return { ok: false, error: "message vide : rien n'a été modifié" };
+      if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+      const found = await lookup(message);
+      if (!found || !found.id) return { ok: false, error: "message introuvable ou différent de celui choisi : rien n'a été modifié" };
+      if (isDeleted(found.el)) return { ok: false, error: "message supprimé : rien n'a été modifié" };
+      const fail = (error) => {
+        escape();
+        unhover();
+        toBottom();
+        return { ok: false, error };
+      };
+      if (found.el.querySelector(QUOTE_SEL) || found.el.querySelector('[itemtype*="Mention" i], [data-tid*="mention" i]'))
+        return fail("message avec citation ou mention : modifie-le dans Teams");
+      const btn = await barAction(found.el, "message-actions-edit", isEdit);
+      if (!btn) return fail("ce message n'est pas à toi (pas de « Modifier » dans Teams) : rien n'a été modifié");
+      if (!isOpen(name)) return fail("conversation changée avant la modification");
+      if (late()) return fail("délai dépassé avant la modification");
+      const mid = found.id;
+      press(btn);
+      // L'éditeur de modification s'ouvre dans le message lui-même.
+      const box = () => {
+        const el = byId(mid);
+        return (el && Array.from(el.querySelectorAll('[contenteditable="true"]')).find(visible)) || null;
+      };
+      let ed = null;
+      if (!(await waitFor(() => (ed = box()), 3000))) return fail("éditeur de modification introuvable : rien n'a été modifié");
+      clear(ed);
+      const how = await insert(ed, want);
+      const same = (a) => norm(flat(a)).replace(/\s*(modifie|edited)$/, "") === norm(flat(want));
+      if (!how || !same(ed.innerText)) {
+        escape(); // annule la modification dans Teams : l'ancien texte reste
+        return fail("texte non saisi dans l'éditeur de Teams : rien n'a été modifié");
+      }
+      const done = Array.from(byId(mid)?.querySelectorAll(ACTIONABLE) || []).find(
+        (b) => visible(b) && /^(done|termine|enregistrer|save)\b/.test(norm(label(b) || b.getAttribute("title") || ""))
+      );
+      if (done) press(done);
+      else ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+      const shown = await waitFor(() => {
+        const el = byId(mid);
+        return Boolean(el && !box() && same(bodyOf(el)));
+      }, 6000);
+      unhover();
+      toBottom();
+      return shown ? { ok: true } : { ok: false, uncertain: true, error: "nouveau texte non affiché dans Teams, vérifie avant de recommencer" };
     },
     // Sa photo de profil, celle du bouton du profil (en haut à droite) : redessinée en
     // 96 px. Sans photo, Teams met des initiales sans <img> : rien à renvoyer.

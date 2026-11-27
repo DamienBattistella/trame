@@ -87,7 +87,7 @@ export interface TrameState {
   logs: LogItem[];
   notices: Notice[];
   /** Gestes que le pilote Teams actif sait faire : réagir, répondre à un message précis. */
-  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean; delete: boolean };
+  capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean; delete: boolean; edit: boolean };
   /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
   myPresence: Presence | null;
   /** Sa photo de profil Teams (data URL) ; null sans photo : l'icône de profil la remplace. */
@@ -289,6 +289,7 @@ function mapState(s: any): TrameState {
       mentions: Boolean(s.capabilities?.mentions),
       ownStatus: Boolean(s.capabilities?.own_status),
       delete: Boolean(s.capabilities?.delete),
+      edit: Boolean(s.capabilities?.edit),
     },
     myPresence: s.my_presence ?? null,
     myPhoto: typeof s.my_photo === "string" ? s.my_photo : null,
@@ -651,7 +652,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false, edit: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
   }
   return {
     paused: false,
@@ -663,7 +664,7 @@ function mockState(): TrameState {
     drafts: mockDrafts.map((d) => ({ ...d })),
     logs: mockLogs.map((l) => ({ ...l })),
     notices: [],
-    capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
+    capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true, edit: true },
     myPresence: "available",
     myPhoto: null,
     outbox: [],
@@ -717,6 +718,8 @@ let demoStatusMessage = "";
 const demoReactions = new Map<string, Reaction[]>();
 /** Mode démo : messages supprimés, par « conversation/id ». */
 const demoDeleted = new Set<string>();
+/** Mode démo : messages modifiés, nouveau texte par « conversation/id ». */
+const demoEdited = new Map<string, string>();
 /** Ce que Teams affiche à la place d'un message supprimé. */
 export const DELETED_TEXT = "Ce message a été supprimé.";
 
@@ -793,7 +796,7 @@ const DEMO_TEAMS_API: TeamsApiStatus = {
   driver: "WebApiDriver",
   routes: Object.fromEntries(
     ["list", "read", "watch", "unread", "presence", "my_status", "search_people", "search_messages", "meetings", "transcript",
-      "send", "start_chat", "react", "mark_read", "delete", "set_status", "set_note"].map((k) => [
+      "send", "start_chat", "react", "mark_read", "delete", "edit", "set_status", "set_note"].map((k) => [
       k,
       k === "read"
         ? { via: "api" as const, reason: null, at: "10:02:11" }
@@ -1457,7 +1460,9 @@ export function useTrame() {
         { id: "d1", sender: who, text: "Salut, tu as vu le ticket sur le mapping OBX ?", at: "09:12", mine: false, reactions: demoReactions.get(`${threadId}/d1`) ?? [] },
         demoDeleted.has(`${threadId}/d2`)
           ? { id: "d2", sender: "Toi", text: DELETED_TEXT, at: "09:14", mine: true, reactions: [], deleted: true }
-          : { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
+          : demoEdited.has(`${threadId}/d2`)
+            ? { id: "d2", sender: "Toi", text: demoEdited.get(`${threadId}/d2`)!, at: "09:14", mine: true, reactions: [], edited: true }
+            : { id: "d2", sender: "Toi", text: "Oui, je regarde ce matin.", at: "09:14", mine: true, reactions: [] },
         {
           id: "d4",
           sender: who,
@@ -1920,6 +1925,17 @@ export function useTrame() {
     }
     return request("POST", `/api/threads/${encodeURIComponent(threadId)}/delete`, { message: messageRef(target) });
   };
+  /** Remplace le texte d'un de tes messages dans Teams. Réussie seulement si Teams montre le nouveau texte. */
+  const editInThread = async (threadId: string, target: MessageRef, text: string): Promise<Result> => {
+    if (!connectedRef.current) {
+      if (!target.id) return { ok: false, error: "Message introuvable : rien n'a été modifié." };
+      if (!text.trim()) return { ok: false, error: "Le nouveau texte est vide : pour retirer le message, supprime-le." };
+      const res = await demo(700, {});
+      if (res.ok) demoEdited.set(`${threadId}/${target.id}`, text.trim());
+      return res;
+    }
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/edit`, { message: messageRef(target), text });
+  };
   /** Marque la conversation comme lue dans Teams, sans l'ouvrir. */
   const markRead = async (threadId: string): Promise<Result> => {
     if (!connectedRef.current) return demo(200, {});
@@ -2321,6 +2337,7 @@ export function useTrame() {
     openTranscript,
     reactInThread,
     deleteInThread,
+    editInThread,
     sendInThread,
     attachmentLimits,
     suggestInThread,

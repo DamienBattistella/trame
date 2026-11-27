@@ -207,6 +207,8 @@ class Capabilities(BaseModel):
     own_status: bool = False
     # Supprimer un de ses propres messages.
     delete: bool = False
+    # Modifier le texte d'un de ses propres messages.
+    edit: bool = False
 
 
 class AppState(BaseModel):
