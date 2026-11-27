@@ -149,8 +149,11 @@ export function McpSettings({
         <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" />
         <span>
           Accessible seulement depuis ce poste, avec le jeton. Le texte des messages est présenté aux assistants comme une
-          donnée, jamais comme une instruction. Un envoi n'est confirmé que si le message apparaît dans Teams. Trois prompts
-          sont fournis : trier mes messages, répondre à une discussion, diagnostiquer Trame.
+          donnée, jamais comme une instruction. Un envoi n'est confirmé que si le message apparaît dans Teams, et si ton
+          assistant sait poser une question, Trame te demande de confirmer chaque envoi. En plus des outils : des
+          ressources <code className="font-mono">trame://</code> (état, persona, discussions, réponses à relire), six
+          prompts (trier, répondre, résumer, rattraper, compte-rendu de réunion, diagnostiquer), la complétion des noms,
+          la progression et le journal en direct.
         </span>
       </p>
     </div>
