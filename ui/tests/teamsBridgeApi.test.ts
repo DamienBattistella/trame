@@ -151,6 +151,23 @@ test("webfetch resigne avec l'auth que Teams a posée — mais ne la renvoie jam
   assert.ok(!/SECRET-TOK-123|SKYPE-SECRET-456/.test(JSON.stringify(diag)), "token dans diagnose");
 });
 
+test("webfetch rejoue le jeton de l'ENDPOINT exact, pas le dernier jeton de l'hôte", async () => {
+  // Deux endpoints du même hôte ont des jetons d'audience différents (cas réel : tenantsv2
+  // vs me/settings sur teams.cloud.microsoft). Le dernier vu par hôte ne doit pas écraser.
+  const p = teamsPage();
+  await p.ctx.window.fetch("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/tenantsv2", {
+    headers: { authorization: "Bearer TOK-TENANTS" },
+  });
+  await p.ctx.window.fetch("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/me/settings/42", {
+    headers: { authorization: "Bearer TOK-SETTINGS" },
+  });
+  await new Promise((r) => setImmediate(r));
+  const before = p.fetchCalls.length;
+  await p.run("webfetch", { url: "https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/tenantsv2" });
+  // On resigne avec le jeton de tenantsv2, pas celui de me/settings (dernier vu pour l'hôte).
+  assert.equal(p.fetchCalls[before].init.headers["Authorization"], "Bearer TOK-TENANTS");
+});
+
 test("webfetch avec sign:false n'attache aucune auth, même si un credential est connu", async () => {
   const p = teamsPage();
   await p.ctx.window.fetch("https://eu-prod.asyncgw.teams.microsoft.com/v1/x", {
