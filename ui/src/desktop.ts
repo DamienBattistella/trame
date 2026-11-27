@@ -1,3 +1,5 @@
+import type { NotificationSound } from "@/types";
+
 type TauriGlobal = {
   core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
   event?: { listen: (name: string, cb: () => void) => Promise<() => void> };
@@ -181,12 +183,12 @@ export function setNotificationsEnabled(on: boolean): void {
   }
 }
 
-/** Affiche une notification Windows. Sans effet hors de l'application installée. */
-export async function notify(title: string, body: string): Promise<boolean> {
+/** Affiche une notification Windows, muette ou avec un son du système. Sans effet hors de l'application installée. */
+export async function notify(title: string, body: string, sound: NotificationSound = "off"): Promise<boolean> {
   try {
     const t = tauri();
     if (!t?.core) return false;
-    await t.core.invoke("notify", { title, body });
+    await t.core.invoke("notify", { title, body, sound: sound === "off" ? null : sound });
     return true;
   } catch {
     return false;

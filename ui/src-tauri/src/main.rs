@@ -458,10 +458,15 @@ fn teams_bridge_reply(app: AppHandle, payload: serde_json::Value) {
 }
 
 /// Windows notification for a message just received (asked by the Trame UI).
+/// `sound`: a Windows system sound (Default, IM, Mail, Reminder, SMS); none keeps the toast silent.
 #[tauri::command]
-fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+fn notify(app: AppHandle, title: String, body: String, sound: Option<String>) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
-    app.notification().builder().title(title).body(body).show().map_err(|e| e.to_string())
+    let mut toast = app.notification().builder().title(title).body(body);
+    if let Some(sound) = sound.filter(|s| !s.is_empty() && s != "off") {
+        toast = toast.sound(sound);
+    }
+    toast.show().map_err(|e| e.to_string())
 }
 
 fn quit(app: &AppHandle) {
