@@ -35,7 +35,7 @@ import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Inbox } from "@/components/Inbox";
 import { Meetings } from "@/components/Meetings";
-import { CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
+import { AutoToggle, CountBadge, GroupList, InitialsAvatar, SectionLabel, Segment, pop, shake, spring } from "@/components/kit";
 import { BranchIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { mergeSettings, Result, Trame } from "@/api";
@@ -216,9 +216,9 @@ function Watchlist({ trame, onBrief }: { trame: Trame; onBrief: OpenBrief }) {
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={spring}
                 >
-                  <Segment
-                    label={`Mode pour ${c.displayName}`}
-                    value={c.mode}
+                  <AutoToggle
+                    name={c.displayName}
+                    mode={c.mode}
                     onChange={(v) => trame.setMode(c.threadId, v).then(report(`Impossible de changer le mode de « ${c.displayName} »`))}
                   />
                 </motion.div>

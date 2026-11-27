@@ -8,7 +8,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
+import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { LinkCards } from "@/components/LinkCards";
@@ -109,9 +109,9 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
           <AnimatePresence initial={false}>
             {live.watch && (
               <motion.div key="mode" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="ml-auto">
-                <Segment
-                  label={`Mode pour ${live.displayName}`}
-                  value={live.mode}
+                <AutoToggle
+                  name={live.displayName}
+                  mode={live.mode}
                   onChange={(v) => trame.setMode(live.threadId, v).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
                 />
               </motion.div>

@@ -2,7 +2,7 @@
    pour le wizard ET le panneau. */
 import { useId } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Loader2, Timer, X } from "lucide-react";
+import { Bot, Check, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -105,27 +105,22 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-2 ml-1 text-sm font-medium text-muted-foreground">{children}</h2>;
 }
 
-type SegmentOption<T> = { value: T; label: string; tone?: "auto" };
+type SegmentOption<T> = { value: T; label: string };
 
-const MODE_OPTIONS = [
-  { value: "draft", label: "Brouillon" },
-  { value: "auto", label: "Auto", tone: "auto" },
-] as const;
-
-/** Choix segmenté (Brouillon / Auto par défaut) : le curseur glisse sous l'option choisie. */
-export function Segment<T extends string = "draft" | "auto">({
+/** Choix segmenté : le curseur glisse sous l'option choisie. */
+export function Segment<T extends string>({
   value,
   onChange,
   disabled,
-  label = "Mode",
-  options = MODE_OPTIONS as unknown as readonly SegmentOption<T>[],
+  label,
+  options,
   fill = false,
 }: {
   value: T;
   onChange: (v: T) => void;
   disabled?: boolean;
   label?: string;
-  options?: readonly SegmentOption<T>[];
+  options: readonly SegmentOption<T>[];
   /** Pleine largeur : chaque option prend une part égale, cibles plus grandes. */
   fill?: boolean;
 }) {
@@ -162,30 +157,52 @@ export function Segment<T extends string = "draft" | "auto">({
           className={cn(
             "relative rounded-full px-3 py-1 transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
             fill && "min-w-0 flex-1 truncate py-1.5 text-center",
-            value === o.value
-              ? o.tone === "auto"
-                ? "text-warning"
-                : "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
+            value === o.value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
           {value === o.value && (
             <motion.span
               layoutId={`segment-${id}`}
               transition={spring}
-              className={cn(
-                "absolute inset-0 rounded-full shadow-sm transition-colors duration-200",
-                o.tone === "auto" ? "bg-warning/15 ring-1 ring-warning/40" : "bg-background"
-              )}
+              className="absolute inset-0 rounded-full bg-background shadow-sm"
             />
           )}
-          <span className="relative flex items-center gap-1">
-            {o.tone === "auto" && <Timer className="size-3" />}
-            {o.label}
-          </span>
+          <span className="relative">{o.label}</span>
         </button>
       ))}
     </div>
+  );
+}
+
+export const AUTO_HINT = "Mode Auto : Trame répond automatiquement aux messages";
+
+/**
+ * Mode Auto d'une conversation, en un seul état actif / inactif. Inactif, Trame prépare
+ * des brouillons à relire : c'est le comportement de base de toute conversation suivie.
+ */
+export function AutoToggle({ mode, onChange, name, className }: { mode: "draft" | "auto"; onChange: (mode: "draft" | "auto") => void; name?: string; className?: string }) {
+  const on = mode === "auto";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-pressed={on}
+          aria-label={name ? `Mode Auto pour ${name}` : "Mode Auto"}
+          onClick={() => onChange(on ? "draft" : "auto")}
+          className={cn(
+            "grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            on ? "bg-warning/15 text-warning ring-1 ring-warning/40" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            className
+          )}
+        >
+          <Bot className="size-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72">
+        {on ? `${AUTO_HINT}. Clique pour revenir aux brouillons.` : "Mode Auto inactif : Trame prépare des brouillons à relire. Clique pour qu'il réponde automatiquement."}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
