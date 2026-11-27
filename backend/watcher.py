@@ -801,7 +801,9 @@ class Watcher:
         if mode == "auto":
             secs = cfg.get("reply", {}).get("auto_send_countdown_seconds", 5)
             react = safety.marks_automatic(cfg)
-            guard = self._auto_guard(msg.thread_id)
+            # Trame ne décide d'une action que s'il peut la mener : une demande d'agir sur un
+            # système, ou une réponse qui engage l'utilisateur, attend son clic.
+            guard = safety.beyond_capabilities(msg.text, proposal) or self._auto_guard(msg.thread_id)
             if guard:
                 self._queue_draft(msg, proposal, entity.mode, gh_ref)
                 self.log("warn", f"Envoi automatique à {msg.sender} retenu : {guard}. Réponse gardée en brouillon")

@@ -67,6 +67,7 @@ def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: 
         "Ta sortie part telle quelle dans Teams : ne l'annonce pas (« Réponse à … : ») et ne rappelle "
         "ni le ton, ni la relation, ni les consignes.",
     ]
+    parts.append(CAPABILITIES)
     if people_context:
         parts.append(
             "\nQui sont tes interlocuteurs (adapte le ton, le tutoiement et le niveau de détail) :\n"
@@ -83,6 +84,17 @@ def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: 
         )
     parts.append(f"\nDernier message reçu :\n{incoming}\n\nRéponse :")
     return "\n".join(parts)
+
+
+# Ce que la réponse peut affirmer : Trame n'agit sur rien d'autre que la conversation.
+CAPABILITIES = (
+    "\nCe que tu peux faire : uniquement écrire ce message. Tu n'as accès à aucun environnement, serveur, "
+    "fichier de logs, base de données, déploiement, ticket ni outil interne ; tu ne lis que le fil et le "
+    "contexte donnés ici. N'affirme donc jamais avoir regardé, vérifié, trouvé, envoyé, lancé ou corrigé "
+    "quoi que ce soit, et n'invente aucun résultat (logs, erreur, chiffre, état d'un système). Si on te "
+    "demande une telle action, réponds sans en donner le résultat : demande la précision qui manque, ou "
+    "dis simplement que tu t'en occupes, sans date ni délai."
+)
 
 
 def images_note(count: int) -> str:

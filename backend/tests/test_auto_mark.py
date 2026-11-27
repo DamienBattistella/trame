@@ -90,9 +90,9 @@ def test_cancelled_countdown_keeps_an_unmarked_draft(make_client):
 
 
 def test_marker_from_the_brain_is_not_doubled(make_client):
-    _client, watcher, driver = make_client(brain=FakeBrain(reply="Je m'en occupe 🤖"))
+    _client, watcher, driver = make_client(brain=FakeBrain(reply="Avec plaisir 🤖"))
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert _sent(driver) == ["Je m'en occupe 🤖"]
+    assert _sent(driver) == ["Avec plaisir 🤖"]
 
 
 def test_option_off_sends_unmarked(make_client):
