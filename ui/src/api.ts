@@ -80,6 +80,8 @@ export interface TrameState {
   capabilities: { react: boolean; reply: boolean; mentions: boolean; ownStatus: boolean; delete: boolean };
   /** Son propre statut Teams, tel que Teams l'affiche ; null quand il ne le dit pas. */
   myPresence: Presence | null;
+  /** Sa photo de profil Teams (data URL) ; null sans photo : l'icône de profil la remplace. */
+  myPhoto: string | null;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
   /** threadId -> compteur : change quand un message arrive ou que Trame en envoie un. */
@@ -273,6 +275,7 @@ function mapState(s: any): TrameState {
       delete: Boolean(s.capabilities?.delete),
     },
     myPresence: s.my_presence ?? null,
+    myPhoto: typeof s.my_photo === "string" ? s.my_photo : null,
     outbox: (s.outbox ?? []).map(mapQueued),
     threadUpdates: s.thread_updates ?? {},
     autoToday: (s.auto_today ?? []).map((a: any) => ({ at: a.at ?? "", threadId: a.thread_id, conversation: a.conversation ?? "", text: a.text ?? "" })),
@@ -609,7 +612,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
   }
   return {
     paused: false,
@@ -623,6 +626,7 @@ function mockState(): TrameState {
     notices: [],
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true },
     myPresence: "available",
+    myPhoto: null,
     outbox: [],
     threadUpdates: {},
     undoable: [],

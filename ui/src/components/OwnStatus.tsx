@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PRESENCE, PresenceBadge } from "@/components/kit";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { Trame } from "@/api";
 import type { StatusChoice, StatusDuration } from "@/types";
 import { cn } from "@/lib/utils";
@@ -133,9 +134,12 @@ export function OwnStatus({ trame }: { trame: Trame }) {
               aria-label={`Ton statut Teams : ${label}. Changer`}
               className="relative grid size-10 place-items-center rounded-xl outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=open]:bg-secondary"
             >
-              <span className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground">
-                <UserRound className="size-4" />
-              </span>
+              <Avatar className="size-8">
+                {trame.state.myPhoto ? <AvatarImage src={trame.state.myPhoto} alt="" className="object-cover" /> : null}
+                <AvatarFallback className="bg-secondary">
+                  <UserRound className="size-4" />
+                </AvatarFallback>
+              </Avatar>
               {presence ? (
                 <PresenceBadge presence={presence} className="absolute right-1 bottom-1 ring-sidebar" />
               ) : (

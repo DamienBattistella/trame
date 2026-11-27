@@ -378,6 +378,16 @@ class WebBridgeDriver(TeamsDriver):
             out["message"] = " ".join(str(res.get("message") or "").split())
         return out
 
+    MAX_PHOTO_CHARS = 200_000
+
+    def my_photo(self) -> Optional[str]:
+        res = self._rpc("myphoto", timeout=6) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'photo illisible'}")
+        photo = res.get("photo")
+        ok = isinstance(photo, str) and photo.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+        return photo if ok and len(photo) <= self.MAX_PHOTO_CHARS else None
+
     def set_my_status(self, choice: str, duration: Optional[str] = None,
                       until: Optional[datetime] = None) -> Optional[str]:
         if choice not in presencemod.CHOICES:

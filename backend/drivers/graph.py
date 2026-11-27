@@ -325,6 +325,18 @@ class GraphDriver:
         return self._via("my_status", lambda c: self._my_status(c, with_message),
                          lambda: self._inner.my_status(with_message))
 
+    def _my_photo(self, client: GraphClient) -> Optional[str]:
+        """96 px is enough for the 32 px rail avatar on any screen, and stays a few kB.
+        No photo in Microsoft 365 is a 404: the page avatar (initials) takes over."""
+        data = client.request("GET", "/me/photos/96x96/$value", accept="image/*")
+        kind = "png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "jpeg" if data[:3] == b"\xff\xd8\xff" else None
+        if not kind or len(data) > MAX_IMAGE_BYTES:
+            raise ValueError("photo de profil illisible")
+        return f"data:image/{kind};base64,{base64.b64encode(data).decode()}"
+
+    def my_photo(self) -> Optional[str]:
+        return self._via("my_photo", self._my_photo, lambda: self._inner.my_photo())
+
     # --- writes, step 2: read marks, reactions, deletion, status (docs/teams-graph.md) ---
     def _mark_read(self, client: GraphClient, thread_id: str) -> bool:
         chat = self._chat_id(client, thread_id)
