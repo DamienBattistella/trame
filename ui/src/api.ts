@@ -1273,6 +1273,8 @@ export function useTrame() {
     return skillsCall("POST", "/api/skills/repos", { url, branch });
   };
   const removeSkillRepo = (url: string, branch: string) => skillsCall("POST", "/api/skills/repos/remove", { url, branch });
+  const setSkillAutoUpdate = (hours: number) =>
+    skillsCall("PUT", "/api/skills/auto-update", { hours }, (s) => (s.autoUpdateHours = hours));
 
   /** Entourage (ENTOURAGE.json exporté d'Orbite) : qui est qui, pour adapter les réponses. */
   const getPeople = async (): Promise<Result<{ people: PeopleSummary }>> => {
@@ -2296,6 +2298,7 @@ export function useTrame() {
     setSkillDirs,
     syncSkillRepo,
     removeSkillRepo,
+    setSkillAutoUpdate,
     briefPrefs,
     conversationSort,
     setConversationSort,

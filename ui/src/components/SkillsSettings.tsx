@@ -5,12 +5,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { GroupList, SectionLabel } from "@/components/kit";
+import { GroupList, SectionLabel, Segment } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import type { Result, Trame } from "@/api";
 import type { SkillInfo, SkillsSummary } from "@/types";
 
 type Call = Promise<Result<{ summary: SkillsSummary }>>;
+
+const AUTO_UPDATE = [
+  { value: "0", label: "À la main" },
+  { value: "1", label: "Toutes les heures" },
+  { value: "6", label: "Toutes les 6 h" },
+  { value: "24", label: "Une fois par jour" },
+] as const;
+type AutoUpdate = (typeof AUTO_UPDATE)[number]["value"];
+
+/** « à 14:05 » aujourd'hui, sinon la date courte. */
+function syncedAt(seconds: number) {
+  const d = new Date(seconds * 1000);
+  const today = d.toDateString() === new Date().toDateString();
+  return today
+    ? `à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+    : `le ${d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`;
+}
 
 /** Réglages › Skills : les skills d'agent que Trame propose au cerveau quand il rédige. */
 export function SkillsSettings({ trame }: { trame: Trame }) {
@@ -226,8 +243,21 @@ function SourcesEditor({
           {summary.repos.map((r) => (
             <div key={r.url + r.branch} className="flex items-center gap-2 px-4 py-2.5 text-sm">
               <GitBranch className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.url}>
-                {r.url} <span className="text-muted-foreground">· {r.branch || "branche par défaut"}</span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate font-mono text-xs" title={r.url}>
+                  {r.url} <span className="text-muted-foreground">· {r.branch || "branche par défaut"}</span>
+                </span>
+                {r.error ? (
+                  <span data-testid="skill-repo-error" className="truncate text-xs text-destructive" title={r.error}>
+                    Échec {r.syncedAt ? syncedAt(r.syncedAt) : ""} : {r.error}
+                    {r.commit ? " (version précédente conservée)" : ""}
+                  </span>
+                ) : r.syncedAt ? (
+                  <span className="text-xs text-muted-foreground">
+                    À jour {syncedAt(r.syncedAt)}
+                    {r.commit && <span className="font-mono"> · {r.commit}</span>}
+                  </span>
+                ) : null}
               </span>
               <Button
                 size="sm"
@@ -251,6 +281,18 @@ function SourcesEditor({
               </Button>
             </div>
           ))}
+          {!!summary.repos.length && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <span>Mise à jour automatique</span>
+              <Segment<AutoUpdate>
+                label="Mise à jour automatique des dépôts"
+                value={String(summary.autoUpdateHours ?? 6) as AutoUpdate}
+                disabled={busy !== null}
+                options={AUTO_UPDATE}
+                onChange={(v) => run("auto", () => trame.setSkillAutoUpdate(Number(v)))}
+              />
+            </div>
+          )}
           <form
             className="flex flex-wrap items-center gap-2 px-4 py-3"
             onSubmit={async (e) => {

@@ -157,6 +157,10 @@ class SkillDirsBody(BaseModel):
     dirs: list[str] = Field(default_factory=list, max_length=10)
 
 
+class SkillAutoUpdateBody(BaseModel):
+    hours: int = Field(ge=0, le=24)
+
+
 class SkillRepoBody(BaseModel):
     url: str = Field(max_length=300)
     branch: str = Field(default="", max_length=100)
@@ -634,6 +638,10 @@ def create_app(
     @app.post("/api/skills/repos")
     def sync_skill_repo(body: SkillRepoBody):
         return {"ok": True, **watcher.sync_skill_repo(body.url, body.branch)}
+
+    @app.put("/api/skills/auto-update")
+    def put_skill_auto_update(body: SkillAutoUpdateBody):
+        return {"ok": True, **watcher.set_skill_auto_update(body.hours)}
 
     @app.post("/api/skills/repos/remove")
     def remove_skill_repo(body: SkillRepoBody):

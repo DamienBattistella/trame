@@ -325,3 +325,72 @@ def test_api_lists_toggles_and_mcp_reads(make_client, fresh_home):
                       json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_skills", "arguments": {}}})
     text = res.json()["result"]["content"][0]["text"]
     assert "ton-chaleureux" in text and "Commence par remercier" not in text
+
+
+# --- automatic update of git repositories ------------------------------------------
+
+def _repo_registry(tmp_path: Path, extra: dict | None = None) -> tuple[skills.Registry, dict]:
+    shared = tmp_path / "shared"
+    cfg = {"skills": {"dirs": [str(shared)], "repos": [{"url": "https://example.com/org/skills.git", "branch": "main"}],
+                      "state": {"ton-chaleureux": True}, **(extra or {})}}
+    return skills.Registry(tmp_path / "home", lambda: cfg), cfg
+
+
+def _fake_sync(content: str, commit: str = "abc123"):
+    def sync(target: Path, url: str, branch: str) -> str:
+        write_skill(target / "skills", "ton-chaleureux", content)
+        return commit
+    return sync
+
+
+def test_repository_is_updated_wins_over_a_shared_copy_and_keeps_its_state(tmp_path):
+    reg, _ = _repo_registry(tmp_path)
+    write_skill(tmp_path / "shared", "ton-chaleureux", TONE)  # an old copy, installed by hand
+    assert reg.update_all(_fake_sync(TONE.replace("1.0.0", "2.0.0"))) == []
+    skill = reg.find("ton-chaleureux")
+    assert skill.source == "git https://example.com/org/skills.git" and skill.version == "2.0.0"
+    assert reg.enabled(skill) is True
+    repo = reg.summary()["repos"][0]
+    assert repo["commit"] == "abc123" and repo["error"] == "" and repo["syncedAt"]
+
+
+def test_failed_update_keeps_the_previous_copy_and_says_why(tmp_path):
+    reg, _ = _repo_registry(tmp_path)
+    reg.update_all(_fake_sync(TONE))
+
+    def broken(target, url, branch):
+        raise RuntimeError("fatal: unable to access")
+    assert reg.update_all(broken) == [("https://example.com/org/skills.git", "fatal: unable to access")]
+    assert reg.find("ton-chaleureux") is not None
+    repo = reg.summary()["repos"][0]
+    assert repo["commit"] == "abc123" and repo["error"] == "fatal: unable to access"
+
+
+def test_auto_update_default_and_saved_value(tmp_path):
+    reg, cfg = _repo_registry(tmp_path)
+    assert reg.auto_update_hours() == skills.AUTO_UPDATE_HOURS and reg.summary()["autoUpdateHours"] == 6
+    cfg["skills"]["autoUpdateHours"] = 0
+    assert reg.auto_update_hours() == 0
+
+
+def test_auto_update_setting_is_saved_without_losing_other_keys(make_client):
+    client, watcher, _ = make_client()
+    watcher.cfg["skills"]["clé-inconnue"] = "garde-moi"
+    data = client.put("/api/skills/auto-update", json={"hours": 24}).json()
+    assert data["ok"] and data["autoUpdateHours"] == 24
+    assert watcher.cfg["skills"]["autoUpdateHours"] == 24 and watcher.cfg["skills"]["clé-inconnue"] == "garde-moi"
+    assert client.put("/api/skills/auto-update", json={"hours": 5}).status_code == 422
+
+
+def test_background_loop_updates_repositories_then_stops(make_client):
+    import threading
+    client, watcher, _ = make_client()
+    ran = threading.Event()
+    watcher.update_skill_repos = ran.set
+    watcher.SKILL_REPOS_FIRST = 0.0
+    t = threading.Thread(target=watcher._skill_repos_loop, daemon=True)
+    t.start()
+    assert ran.wait(5)
+    watcher.stop()
+    t.join(5)
+    assert not t.is_alive()
