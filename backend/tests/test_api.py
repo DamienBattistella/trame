@@ -204,6 +204,22 @@ def test_conversation_sort_defaults_to_watched_and_persists(make_client, fresh_h
     assert client.put("/api/settings", json={"ui": {"conversation_sort": "nope"}}).status_code == 422
 
 
+def test_settings_save_keeps_keys_it_does_not_know(make_client, fresh_home):
+    """An update must never drop an option: a save keeps every key, known or not."""
+    path = fresh_home / "config.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    for name in ("brief", "follow_ups", "archive", "telemetry", "mcp", "teams_web", "ui"):
+        cfg.setdefault(name, {})["future_option"] = name
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    client, _watcher, _driver = make_client()
+    assert client.put("/api/settings", json={"ui": {"conversation_sort": "alpha"}}).status_code == 200
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    for name in ("brief", "follow_ups", "archive", "telemetry", "mcp", "teams_web", "ui"):
+        assert saved[name]["future_option"] == name
+    assert saved["ui"]["conversation_sort"] == "alpha"
+    assert saved["ui"]["design_system"] == "shadcn"
+
+
 def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_home):
     client, _watcher, _driver = make_client()
     assert client.get("/api/settings").json()["settings"]["ui"]["update_check_minutes"] == 15
