@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import archiving
 import config as cfgmod
 from models import IncomingMessage, Surface
-from test_graph import DM as GRAPH_DM, GROUP as GRAPH_GROUP, ME, TENANT, StatefulGraph, driver as graph_driver
 from test_mcp import _call, _enable
 
 SOFIA, LUCAS, INTEROP, PROD, CHIARA, MEETING = (
@@ -146,42 +145,13 @@ def test_mcp_lists_archived_read_only(make_client, fresh_home):
     assert by_id[CHIARA]["archived"] is True and by_id[SOFIA]["archived"] is False
 
 
-# --- masquer dans Teams (Graph seulement) ---
+# --- masquer dans Teams : indisponible sans Microsoft Graph (retiré) ---
 
-class HideGraph(StatefulGraph):
-    def __call__(self, method, url, headers, body):
-        path = url.split("/v1.0", 1)[-1].split("?")[0]
-        if method == "POST" and path.endswith(("/hideForUser", "/unhideForUser")):
-            self.calls.append((method, path, json.loads(body)))
-            return 204, {}, b""
-        return super().__call__(method, url, headers, body)
-
-
-def test_graph_hides_for_me_and_the_page_cannot():
-    fake = HideGraph()
-    d, _page = graph_driver(fake)
-    assert d.hide_chat(SOFIA, True) is True
-    assert ("POST", f"/chats/{SOFIA}/hideForUser", {"user": {"id": ME, "tenantId": TENANT}}) in fake.calls
-    assert d.hide_chat(SOFIA, False) is True
-    assert ("POST", f"/chats/{SOFIA}/unhideForUser", {"user": {"id": ME, "tenantId": TENANT}}) in fake.calls
-    offline, _p = graph_driver(None)
-    assert offline.hide_chat(SOFIA, True) is False
-
-
-def test_hiding_in_teams_needs_the_option_and_graph(make_client, fresh_home):
-    fake = HideGraph()
-    gd, _page = graph_driver(fake)
-    client, watcher, _d = make_client(driver=gd)
-    assert client.get("/api/archive").json()["can_hide_in_teams"] is True
-    # Option coupée (défaut) : rien n'est demandé à Teams.
-    client.post(f"/api/archive/{GRAPH_DM}", json={"archived": True})
-    assert watcher.state.archived[GRAPH_DM].hidden is False
-    assert not any(c[1].endswith("hideForUser") for c in fake.calls)
+def test_hiding_in_teams_is_unavailable_and_archive_stays_local(make_client):
+    """Le masquage dans Teams passait par Microsoft Graph, retiré : il n'est plus proposé et
+    l'archivage reste local à Trame, même avec l'option activée."""
+    client, watcher, _d = make_client()
+    assert client.get("/api/archive").json()["can_hide_in_teams"] is False
     client.put("/api/settings", json={"archive": {"hide_in_teams": True}})
-    client.post(f"/api/archive/{GRAPH_GROUP}", json={"archived": True})
-    assert watcher.state.archived[GRAPH_GROUP].hidden is True
-    client.post(f"/api/archive/{GRAPH_GROUP}", json={"archived": False})
-    assert ("POST", f"/chats/{GRAPH_GROUP}/unhideForUser", {"user": {"id": ME, "tenantId": TENANT}}) in fake.calls
-    # Sans Graph : pas de masquage possible, l'archivage reste dans Trame.
-    plain, w2, _d2 = make_client()
-    assert plain.get("/api/archive").json()["can_hide_in_teams"] is False
+    client.post(f"/api/archive/{SOFIA}", json={"archived": True})
+    assert watcher.state.archived[SOFIA].hidden is False

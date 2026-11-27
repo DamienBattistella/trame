@@ -2,43 +2,10 @@ from __future__ import annotations
 
 import base64
 
-from drivers.graph import GraphDriver
-from drivers.mock import MockTeamsDriver
 from drivers.web_bridge import BridgeUnavailable, WebBridgeDriver
-from msgraph.client import BASE, GraphClient
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 60
 PHOTO = "data:image/jpeg;base64," + base64.b64encode(JPEG).decode()
-
-
-def graph_driver(answer):
-    """Graph answers /me/photos/96x96/$value with (status, bytes); the page says it has no photo."""
-    calls = []
-
-    def transport(method, url, headers, body):
-        calls.append(url[len(BASE):])
-        return answer[0], {}, answer[1]
-
-    page = MockTeamsDriver(interval=9999)
-    page.my_photo = lambda: "data:image/png;base64,UEFHRQ=="
-    client = GraphClient(lambda: "t0k3n", transport)
-    return GraphDriver(page, lambda: client), calls
-
-
-def test_graph_reads_the_profile_photo():
-    driver, calls = graph_driver((200, JPEG))
-    assert driver.my_photo() == PHOTO
-    assert calls == ["/me/photos/96x96/$value"]
-
-
-def test_no_photo_in_microsoft_365_falls_back_to_the_page():
-    driver, _ = graph_driver((404, b'{"error": {"code": "ImageNotFound"}}'))
-    assert driver.my_photo() == "data:image/png;base64,UEFHRQ=="
-
-
-def test_not_an_image_falls_back_to_the_page():
-    driver, _ = graph_driver((200, b"<html>"))
-    assert driver.my_photo() == "data:image/png;base64,UEFHRQ=="
 
 
 def test_bridge_returns_only_image_data_urls(monkeypatch):
