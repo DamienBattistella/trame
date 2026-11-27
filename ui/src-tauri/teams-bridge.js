@@ -165,6 +165,18 @@
   // de la page, il ne doit sortir ni vers un autre domaine ni (pour l'auth) vers le moteur.
   const API_HOSTS =
     /(^|\.)(teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|msg\.teams\.microsoft\.com|asyncgw\.teams\.microsoft\.com|presence\.teams\.microsoft\.com|substrate\.office\.com|graph\.microsoft\.com|outlook\.office365\.com|teams\.events\.data\.microsoft\.com)$/i;
+  // GIF animés choisis dans Teams : CDN public de Giphy, demandé SANS credentials ni
+  // en-tête (rien de la page ne sort vers ce tiers), comme Teams qui l'affiche par son adresse.
+  const GIF_HOSTS = /(^|\.)giphy\.com$/i;
+  const gifBlob = async (url) => {
+    try {
+      const res = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
+      const blob = res.ok ? await res.blob() : null;
+      return blob && /^image\//.test(blob.type || "") ? blob : null;
+    } catch {
+      return null;
+    }
+  };
   // Hôtes des fichiers joints (liens de partage, téléchargements pré-signés) : `filelink`.
   const FILE_HOSTS = /(^|\.)(sharepoint\.com|onedrive\.live\.com|onedrive\.com|1drv\.ms)$/i;
   // En-têtes d'authentification : on note leur PRÉSENCE, jamais leur valeur, et webfetch
@@ -676,6 +688,7 @@
       } catch {
         return null;
       }
+      if (u.protocol === "https:" && GIF_HOSTS.test(u.hostname)) return gifBlob(u.toString());
       if (u.protocol !== "https:" || !IMAGE_HOSTS.test(u.hostname)) return null;
       try {
         const headers = {};
@@ -1807,9 +1820,16 @@
         }),
       ].filter((f) => f.name);
     };
+    const isImg = (el) => String(el.tagName || "").toUpperCase() === "IMG";
+    // Images jointes ou collées : servies par Teams, avec leur source d'origine.
+    const attachedOf = (root) =>
+      all(root, isBody).flatMap((body) => all(body, (el) => isImg(el) && Boolean(attr(el, "data-gallery-src") || attr(el, "data-orig-src"))));
+    // GIF animé choisi dans Teams (Giphy) : une simple <img> vers le CDN de Giphy, sans
+    // attribut de Teams. Montré comme une image ; il ne prouve pas l'envoi d'un fichier.
+    const GIF = /^https:\/\/([a-z0-9-]+\.)*giphy\.com\//i;
     const imagesOf = (root) =>
       all(root, isBody).flatMap((body) =>
-        all(body, (el) => String(el.tagName || "").toUpperCase() === "IMG" && Boolean(attr(el, "data-gallery-src") || attr(el, "data-orig-src")))
+        all(body, (el) => isImg(el) && Boolean(attr(el, "data-gallery-src") || attr(el, "data-orig-src") || GIF.test(attr(el, "src"))))
       );
     const imageLabels = (img) => ["alt", "title", "aria-label"].map((k) => attr(img, k)).filter(Boolean);
     // Même fichier, au renommage près d'un doublon par Teams / OneDrive : « nom 1.png »,
@@ -1828,7 +1848,7 @@
     // une image voulue que rien d'autre ne montre.
     const missing = (wanted, roots) => {
       const cards = roots.flatMap(filesOf).map((f) => f.labels);
-      const imgs = roots.flatMap(imagesOf).map(imageLabels);
+      const imgs = roots.flatMap((root) => attachedOf(root)).map(imageLabels);
       const left = [];
       for (const name of wanted) {
         const take = (pool) => {
@@ -1870,6 +1890,11 @@
       try {
         u = new URL(raw, location.origin);
       } catch {
+        continue;
+      }
+      if (u.protocol === "https:" && GIF_HOSTS.test(u.hostname)) {
+        const blob = await gifBlob(u.toString());
+        if (blob) return blob;
         continue;
       }
       if (u.protocol !== "https:" || !API_HOSTS.test(u.hostname)) continue;
@@ -2056,8 +2081,13 @@
       return out;
     };
     // Images collées dans le corps : servies par le stockage de Teams (AMS).
-    const amsImages = (root) =>
-      all(root, (el) => String(el.tagName || "").toUpperCase() === "IMG" && /AMSImage/i.test(attr(el, "itemtype"))).map((el) => attr(el, "src"));
+    // Un GIF animé choisi dans Teams (Giphy) n'est qu'une <img> vers le CDN de Giphy : sans
+    // lui, un message fait d'un seul GIF n'aurait rien et disparaîtrait du fil.
+    const GIF = /^https:\/\/([a-z0-9-]+\.)*giphy\.com\//i;
+    const bodyImages = (root) =>
+      all(root, (el) => String(el.tagName || "").toUpperCase() === "IMG" && (/AMSImage/i.test(attr(el, "itemtype")) || GIF.test(attr(el, "src")))).map((el) =>
+        attr(el, "src")
+      );
     const VIDEO_FILE = /^(mp4|m4v|mov|webm|wmv|avi|mkv)$/i;
     const filesFrom = (props) =>
       (parseJson(props && props.files) || [])
@@ -2093,7 +2123,7 @@
     const isUser = (raw) => USER_TYPES.test(String((raw && raw.messagetype) || ""));
     // Analyse du corps HTML d'un message SANS le DOM de la page : Teams impose les Trusted
     // Types (DOMParser / innerHTML refusés sans TrustedHTML), et un arbre inerte ne charge ni
-    // image ni script. Donne juste ce que lisent messageParts et amsImages : nodeType, tagName,
+    // image ni script. Donne juste ce que lisent messageParts et bodyImages : nodeType, tagName,
     // childNodes, getAttribute.
     const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
     const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
@@ -2162,7 +2192,7 @@
         status: null,
         reactions: deleted ? [] : mineIn(props, me),
         files: deleted ? [] : filesFrom(props),
-        images: root ? amsImages(root) : [],
+        images: root ? bodyImages(root) : [],
         links: deleted ? [] : p.links || [],
         cards: deleted ? [] : [...(p.cards || []), ...cardsFrom(props)].slice(0, 5),
         quote: deleted ? null : p.quote || null,

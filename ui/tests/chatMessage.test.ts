@@ -62,6 +62,24 @@ test("images AMS repérées sans polluer le texte ; fichiers joints lus dans les
   assert.deepEqual(m.files, [{ name: "plan.pdf", url: "https://dedalus.sharepoint.com/sites/x/plan.pdf" }]);
 });
 
+test("GIF animé seul (Giphy) : une image, le message n'est plus vide", () => {
+  const gif = "https://media3.giphy.com/media/v1.Y2lkPWV4YW1wbGU/abcDEF123/giphy.gif";
+  const m = convert({
+    ...base,
+    content: `<p>&nbsp;</p>\n<img src="${gif}" width="140" height="250" alt="Hello GIF (image GIF)" style="height:auto">\n<p>&nbsp;</p>`,
+    properties: { files: "[]", links: "[]", cards: "[]" },
+  });
+  assert.equal(m.text, "");
+  assert.deepEqual(m.images, [gif]);
+});
+
+test("image d'un autre site dans le corps : ni AMS ni GIF de Teams, ignorée", () => {
+  const m = convert({ ...base, content: '<p>vu</p><img src="https://tracker.example.com/pixel.gif">' });
+  assert.deepEqual(m.images, []);
+  // Un hôte qui imite Giphy n'est pas Giphy.
+  assert.deepEqual(convert({ ...base, content: '<img src="https://giphy.com.example.net/x.gif">' }).images, []);
+});
+
 test("réactions : seules les MIENNES, et seulement les quatre de Trame", () => {
   const m = convert({
     ...base,
