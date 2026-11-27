@@ -137,6 +137,9 @@ class TeamsDriver(ABC):
         self.last_error = "marquer comme lu n'est pas pris en charge par ce pilote"
         return False
 
+    def react_to_last(self, thread_id: str) -> None:
+        """Best-effort: add a robot reaction to the last message in thread_id."""
+
     # --- Liste vivante : ce que montre la liste de Teams à chaque coup d'œil ---
     on_conversations: Optional[Callable[[list[WatchEntity]], None]] = None
     """Appelé à chaque coup d'œil de `watch` à la liste, avec les conversations qu'elle montre

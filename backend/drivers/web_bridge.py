@@ -631,6 +631,11 @@ class WebBridgeDriver(TeamsDriver):
     def _ref(target: MessageRef) -> dict:
         return {"id": target.id or "", "sender": target.sender, "text": target.text}
 
+    def react_to_last(self, thread_id: str) -> None:
+        with self.focused(thread_id, restore=True) as focus:
+            if focus.ok:
+                self._rpc("react", name=self._name(thread_id), timeout=10)
+
     def _type_into_active(self, thread_id: str, text: str, send: bool) -> bool:
         return self._type(thread_id, text, send)
 

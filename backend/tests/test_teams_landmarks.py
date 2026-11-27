@@ -53,6 +53,10 @@ NOT_WATCHED = {
     "chat-meeting-details": "seulement dans une conversation de réunion",
     # Transcription d'une réunion : retour à l'onglet Conversation après l'onglet Transcript.
     "tab-item-com.microsoft.chattabs.chat": "onglets d'une conversation de réunion seulement, retour sans effet sur le résultat",
+    # Réaction robot sur les envois automatiques : sélecteurs de l'emoji picker, vérifiés par l'opération react.
+    "emoji-search": "champ de recherche du picker d'emoji, vérifié par l'opération react",
+    "message-actions-reaction-more": "bouton « plus de réactions », repli dans react",
+    "reactions-add-emoji": "bouton « ajouter une réaction », vérifié par l'opération react",
 }
 
 

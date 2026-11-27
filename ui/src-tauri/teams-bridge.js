@@ -3607,6 +3607,84 @@
       toBottom();
       return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
     },
+    // Réaction 🤖 sur le dernier message de la conversation (best-effort).
+    react: async ({ name }) => {
+      if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
+      const msgs = document.querySelectorAll(MSGS);
+      const last = msgs[msgs.length - 1];
+      if (!last) return { ok: false, error: "aucun message" };
+      last.scrollIntoView({ block: "nearest" });
+      await sleep(100);
+      const rect = last.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      const hoverOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      for (const type of ["pointerenter", "pointerover", "pointermove", "mouseenter", "mouseover", "mousemove"]) {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        last.dispatchEvent(new Ctor(type, { ...hoverOpts, isPrimary: true }));
+      }
+      const moreBtn = await waitFor(() => {
+        for (const sel of [
+          'button[data-tid="reactions-add-emoji"]',
+          'button[data-tid="message-actions-reaction-more"]',
+          'button[aria-label*="Plus de" i][aria-label*="action" i]',
+          'button[aria-label*="more" i][aria-label*="reaction" i]',
+          'button[aria-label*="reaction" i]',
+          'button[aria-label*="emoji" i]:not([data-tid*="send"])',
+        ]) {
+          const btn = document.querySelector(sel);
+          if (btn && visible(btn)) return btn;
+        }
+        for (const tb of document.querySelectorAll('[role="toolbar"], [data-tid*="message-action"], [data-tid*="hover-menu"]')) {
+          if (!visible(tb)) continue;
+          const btns = Array.from(tb.querySelectorAll("button")).filter(visible);
+          const hit = btns.find((b) => /emoji|réaction|reaction|smiley/i.test(b.getAttribute("aria-label") || ""));
+          if (hit) return hit;
+        }
+        return null;
+      }, 3000);
+      if (!moreBtn) return { ok: false, error: "bouton de réaction introuvable" };
+      moreBtn.click();
+      await sleep(200);
+      const search = await waitFor(() => {
+        for (const sel of [
+          'input[data-tid="emoji-search"]',
+          'input[aria-label*="emoji" i]',
+          'input[aria-label*="Rechercher" i]',
+          'input[aria-label*="Search" i]',
+          'input[placeholder*="emoji" i]',
+          'input[type="search"]',
+          '[role="dialog"] input, [role="menu"] input',
+        ]) {
+          for (const el of document.querySelectorAll(sel)) if (visible(el)) return el;
+        }
+        return null;
+      }, 3000);
+      if (!search) return { ok: false, error: "recherche d'emoji introuvable" };
+      search.focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
+                  || Object.getOwnPropertyDescriptor(HTMLElement.prototype, "value")?.set;
+      if (setter) setter.call(search, "robot");
+      else search.value = "robot";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.dispatchEvent(new Event("change", { bubbles: true }));
+      const robot = await waitFor(() => {
+        for (const sel of [
+          '[role="gridcell"] button',
+          '[data-tid*="emoji"] button',
+          '[role="option"]',
+          '[role="listbox"] button',
+          'button[aria-label*="robot" i]',
+          'button[title*="robot" i]',
+        ]) {
+          const hit = Array.from(document.querySelectorAll(sel)).find(visible);
+          if (hit) return hit;
+        }
+        return null;
+      }, 3000);
+      if (!robot) return { ok: false, error: "emoji robot introuvable" };
+      robot.click();
+      return { ok: true };
+    },
     // Supprime un de TES messages : retrouvé par son id, son auteur, son texte et son heure,
     // « Modifier » présent dans sa barre (message à toi), puis « … » → « Supprimer » et la
     // confirmation de Teams si elle s'affiche. Fait seulement quand Teams le montre supprimé.
