@@ -15,9 +15,10 @@ est exposée pour l'écran Réglages.
 Enveloppe transparente : tout ce qui n'est pas défini ici est délégué au pilote de la page.
 """
 from __future__ import annotations
+import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable, Optional
 
 from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
@@ -42,10 +43,32 @@ def _same_message(seen: Optional[tuple], row: dict) -> bool:
     n = min(len(p), len(a), 24)
     if n >= 3 and p[:n] == a[:n]:
         return True
-    shown, at = str(when or "").strip().casefold(), str(last.get("at") or "").strip().casefold()
-    if not shown or not at:
+    return _same_when(when, last.get("ts"))
+
+
+def _same_when(shown: Optional[str], ts: Any, now: Optional[datetime] = None) -> bool:
+    """L'heure affichée par la liste de la page (« 13:44 », « Hier », « 26/11 », « 26/11/2025 »)
+    désigne-t-elle le moment `ts` (ms) du dernier message ? Comparé sur la date réelle : la liste
+    écrit « 26/11 » là où le fil écrit « Hier 18:31 »."""
+    try:
+        when = datetime.fromtimestamp(int(ts) / 1000)
+    except (TypeError, ValueError, OSError):
         return False
-    return at == shown if ":" in shown else at.startswith(shown + " ")
+    s = str(shown or "").strip().casefold()
+    now = now or datetime.now()
+    if not s or int(ts) <= 0:
+        return False
+    hm = re.fullmatch(r"(\d{1,2})[:h](\d{2})", s)
+    if hm:
+        return (when.hour, when.minute) == (int(hm.group(1)), int(hm.group(2))) and (now - when).total_seconds() < 86400
+    if s in ("hier", "yesterday"):
+        return when.date() == (now - timedelta(days=1)).date()
+    dmy = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", s)
+    if dmy:
+        year = dmy.group(3)
+        same = (when.day, when.month) == (int(dmy.group(1)), int(dmy.group(2)))
+        return same and (year is None or when.year % 100 == int(year) % 100)
+    return False
 
 
 def _shown_text(last: dict) -> str:
@@ -81,6 +104,7 @@ class _ChatState:
         self.primed_at: Optional[float] = None
         self.mapped: dict[str, str] = {}  # thread_id de Trame -> id Teams
         self.refused = 0  # reliées par le nom mais dont l'aperçu ne concorde pas
+        self.self_seen: dict = {}  # conversation avec soi-même : candidats (heures seulement)
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -188,7 +212,13 @@ class WebApiDriver:
         # affiche doit être le dernier message de cette conversation. Sinon, rien (constaté en
         # direct : un tête-à-tête relié par son nom à une autre conversation de la même personne).
         if entity.is_self:
-            cid = "48:notes" if "48:notes" in rows else None
+            # Conversation avec soi-même : « 48:notes », ou un tête-à-tête dont l'autre est soi.
+            me = self._chat.me
+            mine = [c for c, r in rows.items() if c == "48:notes" or (r.get("kind") == "dm" and me and r.get("other") == me)]
+            self._chat.self_seen = {"page_time": (preview or (None, None))[1],
+                                    "candidates": [{"kind": "notes" if c == "48:notes" else "dm", "at": (rows[c].get("last") or {}).get("at")}
+                                                   for c in mine]}
+            return next((c for c in mine if _same_message(preview, rows[c])), None)
         elif entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
             cid = dm_names.get(entity.display_name.casefold())
         if cid and not _same_message(preview, rows[cid]):
@@ -324,7 +354,7 @@ class WebApiDriver:
         return {"ok": st.ok, "conversations": len(st.rows), "by_kind": kinds,
                 "dm_named": sum(1 for r in st.rows.values() if r.get("kind") == "dm" and r.get("name")),
                 "mapped": len(st.mapped), "mapped_by_name": sum(1 for t in st.mapped if t.startswith("name:")),
-                "refused_by_preview": st.refused,
+                "refused_by_preview": st.refused, "self": st.self_seen,
                 # Non-lus selon le service de chat : ids et horizon seulement (aucun texte).
                 "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
                             "type_user": (st.rows[c].get("last") or {}).get("user")}
