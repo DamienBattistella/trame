@@ -61,6 +61,7 @@ const teamsPage = () => {
     URL,
     URLSearchParams,
     btoa, // API du navigateur (filelink encode le lien de partage pour Graph)
+    atob,
     // Comme la vraie page Teams (Trusted Types) : DOMParser refuse une chaîne HTML brute.
     DOMParser: class {
       parseFromString() {
@@ -536,4 +537,86 @@ test("filelink refuse une adresse de téléchargement hors SharePoint", async ()
   const r = await p.run("filelink", { url: SHARE });
   assert.equal(r.result.ok, false);
   assert.ok(!JSON.stringify(r).includes("evil.example.com"));
+});
+
+// --- Liste des conversations par le service de chat (op chatlist) ------------------------
+const ME_GUID = "11111111-2222-3333-4444-555555555555";
+const OTHER_GUID = "99999999-8888-7777-6666-555555555555";
+// Jeton du chat au format JWT : la page y lit seulement l'identifiant (skypeid).
+const jwt = (payload: object) => `x.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.y`;
+const AUTHZ_ME = JSON.stringify({
+  tokens: { skypeToken: jwt({ skypeid: `orgid:${ME_GUID}` }), expiresIn: 86400 },
+  region: "emea",
+  regionGtms: { chatService: "https://emea.ng.msg.teams.microsoft.com" },
+});
+const conv = (id: string, extra: any = {}) => ({ id, properties: {}, threadProperties: {}, ...extra });
+
+test("chatlist : une ligne par conversation, nom du tête-à-tête demandé au middletier, sans jeton", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const dm = `19:${ME_GUID}_${OTHER_GUID}@unq.gbl.spaces`;
+  const list = {
+    conversations: [
+      conv("19:grp@thread.v2", {
+        threadProperties: { topic: "Projet X" },
+        properties: { consumptionhorizon: "1795777000000;1795777000001;abc" },
+        lastMessage: { id: "1795777000500", messagetype: "RichText/Html", imdisplayname: "Paul Durand",
+          from: "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/contacts/8:orgid:paul",
+          originalarrivaltime: new Date(1795777000500).toISOString(), content: "<p>On décale à <b>15 h</b></p>" },
+      }),
+      conv(dm, { lastMessage: { id: "1795777000600", messagetype: "Text", imdisplayname: "Ana", content: "salut",
+        from: `8:orgid:${OTHER_GUID}`, originalarrivaltime: new Date(1795777000600).toISOString() } }),
+      conv("48:notes"),
+      conv("19:meeting_abc@thread.v2", { threadProperties: { topic: "Point hebdo", productThreadType: "Meeting" } }),
+    ],
+    _metadata: { syncState: "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations?syncState=NEXT123&view=msnp24Equivalent" },
+  };
+  const profileCalls: any[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_ME);
+    if (url.includes("fetchShortProfile")) {
+      profileCalls.push({ url, init });
+      return fakeResponse(JSON.stringify({ value: [{ mri: `8:orgid:${OTHER_GUID}`, displayName: "Ana Martin" }] }));
+    }
+    return fakeResponse(JSON.stringify(list));
+  });
+  const r = (await p.run("chatlist", {})).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.sync, "NEXT123");
+  assert.equal(r.me, `8:orgid:${ME_GUID}`);
+  const by = Object.fromEntries(r.rows.map((x: any) => [x.id, x]));
+  assert.equal(by["19:grp@thread.v2"].kind, "group");
+  assert.equal(by["19:grp@thread.v2"].name, "Projet X");
+  assert.equal(by["19:grp@thread.v2"].horizon, 1795777000000);
+  assert.equal(by["19:grp@thread.v2"].last.text, "On décale à 15 h");
+  assert.equal(by["19:grp@thread.v2"].last.from, "8:orgid:paul");
+  assert.equal(by[dm].kind, "dm");
+  assert.equal(by[dm].other, `8:orgid:${OTHER_GUID}`);
+  assert.equal(by[dm].name, "Ana Martin");
+  assert.equal(by["48:notes"].kind, "self");
+  assert.equal(by["19:meeting_abc@thread.v2"].kind, "meeting");
+  // Profils : middletier du locataire, bearer de Teams, seulement l'autre personne.
+  assert.equal(profileCalls.length, 1);
+  assert.ok(profileCalls[0].url.startsWith("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/fetchShortProfile?"));
+  assert.equal(profileCalls[0].init.headers.Authorization, "Bearer MT-SECRET");
+  assert.deepEqual(JSON.parse(profileCalls[0].init.body), [`8:orgid:${OTHER_GUID}`]);
+  assert.ok(!/MT-SECRET|skypeid|x\.ey/.test(JSON.stringify(r)), "jeton renvoyé au moteur");
+});
+
+test("chatlist incrémental : seulement le syncState, une seule page, noms déjà connus non redemandés", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const calls: string[] = [];
+  p.setResponse((url: string) => {
+    calls.push(url);
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_ME);
+    return fakeResponse(JSON.stringify({ conversations: [conv("19:grp@thread.v2")], _metadata: { syncState: "https://x.teams.microsoft.com/v1?syncState=N2" } }));
+  });
+  const r = (await p.run("chatlist", { sync: "NEXT123" })).result;
+  assert.equal(r.full, false);
+  assert.equal(r.sync, "N2");
+  const chat = calls.filter((u) => u.includes("/conversations"));
+  assert.equal(chat.length, 1);
+  assert.ok(chat[0].includes("syncState=NEXT123") && !chat[0].includes("pageSize"), chat[0]);
+  assert.equal(calls.filter((u) => u.includes("fetchShortProfile")).length, 0);
 });

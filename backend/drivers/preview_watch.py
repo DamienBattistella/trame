@@ -28,6 +28,11 @@ class PreviewWatcher:
             current[thread_id] = key
             if not self._primed or self._seen.get(thread_id) == key:
                 continue
+            # Une ligne que la liste dessine pour la première fois (liste qui défile, conversation
+            # sortie de l'écran) n'est nouvelle que si son dernier message est d'aujourd'hui (une
+            # heure, pas une date) : jamais l'aperçu d'un message du 10/11 annoncé au démarrage.
+            if thread_id not in self._seen and not clock:
+                continue
             if self._seen.get(thread_id, "").rsplit("|", 1)[0] == key.rsplit("|", 1)[0] and not clock:
                 continue
             if label.preview_sender in (None, "You") or label.is_self:

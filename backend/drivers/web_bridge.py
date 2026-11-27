@@ -43,7 +43,7 @@ CHAT_PATHS = re.compile(r"/v1/users/ME/conversations(/(?!\.{1,2}(/|$))(?![^/]*%(
                         r"(/messages(/\d{1,20})?)?)?")
 CHAT_QUERY_KEYS = frozenset({"view", "pageSize", "startTime", "targetType", "syncState"})
 # Id d'une conversation Teams (groupe, réunion, tête-à-tête) : « 19:…@thread.v2 », « 19:…@unq.gbl.spaces ».
-CHAT_ID = re.compile(r"19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)")
+CHAT_ID = re.compile(r"19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)|48:notes")
 
 
 def _files(raw: Any) -> list[FileRef]:
@@ -138,7 +138,11 @@ class WebBridgeDriver(TeamsDriver):
     GESTURE_TIMEOUT = 30.0
     POLL_SECONDS = 5.0
 
+
     def __init__(self) -> None:
+        # Conversation de Trame → id Teams, quand la liste de la page ne le montre pas (tête-à-tête
+        # repéré par son nom) : tenu à jour par le pilote « API Teams web » depuis le service de chat.
+        self.chat_aliases: dict[str, str] = {}
         self._commands: "queue.Queue[dict]" = queue.Queue()
         self._pending: dict[int, dict] = {}
         self._lock = threading.Lock()
@@ -532,7 +536,7 @@ class WebBridgeDriver(TeamsDriver):
         """Le fil lu sur le service de chat de Teams, DANS la page, sans ouvrir la conversation
         (donc sans la marquer comme lue). Même forme que read_history. Lève ApiError si la
         conversation n'a pas d'id Teams ou si le service refuse : l'appelant lit alors la page."""
-        chat = self.chat_id(thread_id)
+        chat = self.chat_aliases.get(thread_id) or self.chat_id(thread_id)
         if not chat:
             raise self.ApiError("conversation sans identifiant Teams")
         args: dict[str, Any] = {"thread": chat, "last": last_n}
@@ -544,6 +548,18 @@ class WebBridgeDriver(TeamsDriver):
         if not res.get("ok"):
             raise self.ApiError(res.get("error") or "lecture refusée par le service de chat", status=res.get("status"))
         return self._messages(thread_id, res.get("messages") or []), bool(res.get("top"))
+
+    def chat_list(self, sync: str = "", timeout: float = 30.0) -> dict:
+        """La liste des conversations sur le service de chat de Teams, lue DANS la page : complète
+        sans `sync`, sinon seulement ce qui a changé depuis. {rows, sync, full, me}. Lève ApiError
+        sur un refus : l'appelant garde alors la liste de la page."""
+        res = self._rpc("chatlist", sync=str(sync or ""), timeout=timeout)
+        if not isinstance(res, dict):
+            raise self.ApiError("réponse illisible de la page")
+        if not res.get("ok"):
+            raise self.ApiError(res.get("error") or "liste refusée par le service de chat", status=res.get("status"))
+        rows = [r for r in (res.get("rows") or []) if isinstance(r, dict) and self.chat_id(str(r.get("id") or ""))]
+        return {"rows": rows, "sync": str(res.get("sync") or ""), "full": bool(res.get("full")), "me": str(res.get("me") or "")}
 
     @staticmethod
     def chat_id(thread_id: str) -> Optional[str]:

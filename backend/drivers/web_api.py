@@ -18,13 +18,69 @@ from __future__ import annotations
 import threading
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from drivers.base import TeamsDriver
-from models import IncomingMessage
+from models import IncomingMessage, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
-_OWN = {"_inner", "_routes", "_routes_lock"}
+_OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
+
+
+def _norm(text: Optional[str]) -> str:
+    t = " ".join(str(text or "").replace("…", " ").replace("...", " ").split()).casefold()
+    return t.strip(" .,;:!?")
+
+
+def _same_message(seen: Optional[tuple], row: dict) -> bool:
+    """Le dernier message que la page affiche est-il celui de cette conversation sur le service de
+    chat ? Oui si l'aperçu (souvent tronqué) est le début de son texte, ou si l'heure affichée est
+    la même à la minute (« 13:44 ») ou le même jour (« 25/11 », « Hier »). Sinon : non (prudence)."""
+    preview, when = seen if isinstance(seen, tuple) else (seen, None)
+    last = row.get("last") or {}
+    p, a = _norm(preview), _norm(last.get("text"))
+    n = min(len(p), len(a), 24)
+    if n >= 3 and p[:n] == a[:n]:
+        return True
+    shown, at = str(when or "").strip().casefold(), str(last.get("at") or "").strip().casefold()
+    if not shown or not at:
+        return False
+    return at == shown if ":" in shown else at.startswith(shown + " ")
+
+
+def _shown_text(last: dict) -> str:
+    """Texte d'un dernier message ; une image ou un fichier seul est dit comme tel."""
+    text = str(last.get("text") or "").strip()
+    if text:
+        return text
+    if last.get("files"):
+        return "(fichier)"
+    return "(image)" if last.get("images") else ""
+
+
+def _newer(lid: str, prev: Optional[str]) -> bool:
+    """Ids de messages Teams : des horodatages en ms, croissants. Sans précédent : nouveau."""
+    if not prev:
+        return True
+    try:
+        return int(lid) > int(prev)
+    except ValueError:
+        return lid != prev
+
+
+class _ChatState:
+    """Ce que le service de chat a dit de la liste : lignes par id Teams, syncState pour la
+    prochaine lecture incrémentale, dernier message vu par conversation."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+        self.sync = ""
+        self.me = ""
+        self.ok = False
+        self.seen_last: dict[str, str] = {}
+        self.primed_at: Optional[float] = None
+        self.mapped: dict[str, str] = {}  # thread_id de Trame -> id Teams
+        self.refused = 0  # reliées par le nom mais dont l'aperçu ne concorde pas
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -34,13 +90,16 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read"})
+    API_ACTIONS = frozenset({"read", "watch", "unread"})
+    # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
+    CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
 
     def __init__(self, inner: TeamsDriver) -> None:
         object.__setattr__(self, "_inner", inner)
         object.__setattr__(self, "_routes", {})
         object.__setattr__(self, "_routes_lock", threading.Lock())
+        object.__setattr__(self, "_chat", _ChatState())
 
     @property
     def inner(self) -> TeamsDriver:
@@ -93,6 +152,184 @@ class WebApiDriver:
         self._route("read", "api")
         return out
 
+    # --- Liste, non-lus et nouveaux messages : le service de chat à côté de la page ---------
+    # La liste visible (noms, ordre, présence, favoris, ids enregistrés par Trame) reste celle de
+    # la page : aucun identifiant ne change. Le service de chat dit, pour chaque conversation qu'il
+    # sait relier, son id Teams (lecture d'un fil sans l'ouvrir), son état lu / non lu et son
+    # dernier message (texte complet, id, auteur exact).
+    def _refresh_chat(self) -> bool:
+        read = getattr(self._inner, "chat_list", None)
+        st = self._chat
+        if not callable(read):
+            return False
+        try:
+            res = read(st.sync)
+        except Exception as e:
+            st.ok, st.sync = False, ""  # la prochaine lecture repart d'une liste complète
+            self._route("watch", "page", f"repli sur la page : {e}")
+            self._route("unread", "page", f"repli sur la page : {e}")
+            return False
+        if res.get("full"):
+            st.rows = {}
+        for r in res.get("rows") or []:
+            st.rows[str(r.get("id"))] = r
+        st.sync = res.get("sync") or ""
+        st.me = res.get("me") or st.me
+        st.ok = True
+        return True
+
+    def _chat_for(self, entity: WatchEntity, dm_names: dict[str, Optional[str]], preview: Optional[tuple]) -> Optional[str]:
+        rows = self._chat.rows
+        chat_id = getattr(self._inner, "chat_id", None)
+        cid = chat_id(entity.thread_id) if callable(chat_id) else None
+        if cid:  # l'id Teams est dans l'id de la page : aucune supposition
+            return cid if cid in rows else None
+        # Sans id dans la page, on relie par le nom, puis on le prouve : l'aperçu que la page
+        # affiche doit être le dernier message de cette conversation. Sinon, rien (constaté en
+        # direct : un tête-à-tête relié par son nom à une autre conversation de la même personne).
+        if entity.is_self:
+            cid = "48:notes" if "48:notes" in rows else None
+        elif entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
+            cid = dm_names.get(entity.display_name.casefold())
+        if cid and not _same_message(preview, rows[cid]):
+            self._chat.refused += 1
+            return None
+        return cid
+
+    def _map(self, entities: list[WatchEntity], previews: Optional[dict[str, tuple]] = None) -> dict[str, str]:
+        """Conversations de la page reliées à leur id Teams. Un tête-à-tête n'est relié que par un
+        nom porté par UNE seule conversation (deux homonymes : rien) et dont le dernier message est
+        celui que la page affiche : sinon la page reste la source."""
+        previews = previews or {}
+        dm_names: dict[str, Optional[str]] = {}
+        for cid, r in self._chat.rows.items():
+            name = str(r.get("name") or "").casefold()
+            if r.get("kind") == "dm" and name:
+                dm_names[name] = None if name in dm_names else cid
+        mapped = {}
+        self._chat.refused = 0
+        for e in entities:
+            cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
+            if cid:
+                mapped[e.thread_id] = cid
+        self._chat.mapped = mapped
+        # Remplacé d'un bloc : une lecture de fil en parallèle voit l'ancienne table ou la nouvelle.
+        if isinstance(getattr(self._inner, "chat_aliases", None), dict):
+            self._inner.chat_aliases = {t: c for t, c in mapped.items() if t.startswith("name:") or c == "48:notes"}
+        return mapped
+
+    def _unread(self, row: dict) -> bool:
+        """Non lu : le dernier message, écrit par quelqu'un d'autre, est plus récent que
+        l'horizon de lecture de l'utilisateur."""
+        last = row.get("last") or {}
+        if not last.get("user") or not last.get("id") or (self._chat.me and last.get("from") == self._chat.me):
+            return False
+        try:
+            return int(last["id"]) > int(row.get("horizon") or 0)
+        except (TypeError, ValueError):
+            return False
+
+    def watch_tick(self, on_message: Callable[[IncomingMessage], None]) -> None:
+        """Un coup d'œil : la liste de la page (noms, ordre, présence), complétée par le service de
+        chat (non-lus, nouveaux messages). Sans le service, exactement comme la page seule."""
+        inner = self._inner
+        items = inner._items()
+        entities = inner._entities(items)
+        api = self._refresh_chat()
+        previews = {it["thread_id"]: (getattr(it.get("parsed"), "preview", None), getattr(it.get("parsed"), "last_time", None))
+                    for it in items}
+        mapped = self._map(entities, previews) if api else {}
+        st = self._chat
+        if api:
+            for e in entities:
+                row = st.rows.get(mapped.get(e.thread_id, ""))
+                if row is not None:
+                    e.unread = self._unread(row)
+            self._route("unread", "api")
+        hook = getattr(inner, "on_conversations", None)
+        if hook is not None and entities:
+            try:
+                hook(entities)
+            except Exception:
+                pass
+        convs = {e.thread_id: e for e in entities}
+        # Aperçus de la page : toujours suivis (pour un repli sans rafale), retenus seulement
+        # pour les conversations que le service de chat ne relie pas.
+        for msg in inner._previews.diff(((it["thread_id"], it.get("label") or "") for it in items), convs):
+            if msg.thread_id not in mapped:
+                on_message(msg)
+        if not api:
+            return
+        now = time.time()
+        for tid, cid in mapped.items():
+            last = (st.rows.get(cid) or {}).get("last") or {}
+            lid = str(last.get("id") or "")
+            if not lid:
+                continue
+            prev = st.seen_last.get(cid)
+            st.seen_last[cid] = lid
+            if st.primed_at is None or prev == lid:
+                continue
+            # Nouveau seulement s'il est arrivé depuis le début de la surveillance ET plus récent que
+            # le précédent : le dernier message d'une conversation peut redevenir un plus ancien (le
+            # dernier supprimé, une conversation reliée plus tard) — jamais un ancien message rejoué.
+            if int(last.get("ts") or 0) / 1000 < st.primed_at - self.CLOCK_SKEW or not _newer(lid, prev):
+                continue
+            if not last.get("user") or (st.me and last.get("from") == st.me):
+                continue
+            text = _shown_text(last)
+            if not text:
+                continue
+            e = convs.get(tid)
+            on_message(IncomingMessage(thread_id=tid, sender=str(last.get("sender") or ""), text=text,
+                                       received_at=str(last.get("at") or ""), id=lid,
+                                       surface=e.surface if e else Surface.dm))
+        if st.primed_at is None:
+            st.primed_at = now
+        self._route("watch", "api")
+
+    def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:
+        while not should_stop():
+            try:
+                self.watch_tick(on_message)
+            except Exception:
+                pass
+            time.sleep(getattr(self._inner, "POLL_SECONDS", 5.0))
+
+    def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:
+        """Non-lus : le service de chat pour les conversations qu'il relie, la page pour les autres."""
+        st = self._chat
+        if not st.ok or not st.mapped:
+            return self._inner.list_unread(thread_ids)
+        wanted = set(thread_ids) if thread_ids is not None else None
+        out = [m for m in self._inner.list_unread(thread_ids) if m.thread_id not in st.mapped]
+        kinds = dict(getattr(self._inner, "_kinds", {}) or {})
+        for tid, cid in st.mapped.items():
+            row = st.rows.get(cid)
+            if (wanted is not None and tid not in wanted) or row is None or not self._unread(row):
+                continue
+            last = row["last"]
+            text = _shown_text(last) or "(pièce jointe)"
+            out.append(IncomingMessage(thread_id=tid, sender=str(last.get("sender") or ""), text=text,
+                                       received_at=str(last.get("at") or ""), id=str(last.get("id")),
+                                       surface=kinds.get(tid, Surface.dm)))
+        return out
+
+    def chat_map(self) -> dict:
+        """État de la correspondance avec le service de chat (comptes seulement, aucun contenu)."""
+        st = self._chat
+        kinds: dict[str, int] = {}
+        for r in st.rows.values():
+            kinds[str(r.get("kind"))] = kinds.get(str(r.get("kind")), 0) + 1
+        return {"ok": st.ok, "conversations": len(st.rows), "by_kind": kinds,
+                "dm_named": sum(1 for r in st.rows.values() if r.get("kind") == "dm" and r.get("name")),
+                "mapped": len(st.mapped), "mapped_by_name": sum(1 for t in st.mapped if t.startswith("name:")),
+                "refused_by_preview": st.refused,
+                # Non-lus selon le service de chat : ids et horizon seulement (aucun texte).
+                "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
+                            "type_user": (st.rows[c].get("last") or {}).get("user")}
+                           for t, c in st.mapped.items() if c in st.rows and self._unread(st.rows[c])][:20]}
+
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont
         (`sign_selftest`), ou None si pas encore mesurée. Statut HTTP seulement, aucun jeton."""
@@ -119,6 +356,6 @@ class WebApiDriver:
         page = out.get("diagnose") if isinstance(out, dict) else None
         signing = page.get("sign_selftest") if isinstance(page, dict) else None
         chat = page.get("chatsvc_selftest") if isinstance(page, dict) else None
-        return {**out, "teams_web": {"routes": self.routes(),
+        return {**out, "teams_web": {"routes": self.routes(), "chat_map": self.chat_map(),
                                      "signing": signing if isinstance(signing, dict) else None,
                                      "chatsvc": chat if isinstance(chat, dict) else None}}
