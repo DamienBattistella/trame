@@ -1558,6 +1558,11 @@
     const isPreview = (el) => attr(el, "data-tid") === "url-preview";
     const isAppCard = (el) => attr(el, "data-testid") === "componentUXWrapperTestId" || attr(el, "data-tid") === "adaptive-card";
     const isCard = (el) => isAppCard(el) || isPreview(el) || (tag(el) === "A" && Boolean(first(el, isPreview)));
+    // Citation d'une réponse (« Répondre ») : dans le HTML du service de chat, un <blockquote>
+    // typé Reply (auteur, heure, extrait) ; dans la page, la carte de citation de Teams.
+    const isQuote = (el) => /schema\.skype\.com\/Reply/i.test(attr(el, "itemtype")) || /quoted-reply/i.test(attr(el, "data-tid"));
+    const isMention = (el) => /schema\.skype\.com\/Mention/i.test(attr(el, "itemtype"));
+    const QUOTE_WHEN = /^(\d{1,2}\/\d{1,2}(\/\d{2,4})?\s+)?\d{1,2}:\d{2}$|^(hier|aujourd'hui|yesterday|today|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b.*\d{1,2}:\d{2}$/i;
     // Adresse ouvrable : http(s) seulement ; un lien « Safe Links » d'Outlook donne l'adresse
     // qu'il protège ; les paramètres de suivi (atlOrigin, utm_*) sont retirés.
     const safeUrl = (href) => {
@@ -1581,8 +1586,9 @@
     };
     // Texte tel qu'affiché : blocs sur leur ligne, espaces repliés (sauf dans <pre>), sans
     // boutons, barres d'outils, images, éléments masqués ni cartes.
-    const textOf = (root) => {
+    const textOf = (root, seen = null) => {
       let out = "";
+      let last = null;
       const walk = (n, pre) => {
         if (n.nodeType === 3) {
           let t = String(n.data || "");
@@ -1598,6 +1604,22 @@
         // Pièces jointes : lues à part (messageFiles) ; leur grille porte aussi le texte
         // d'attente de Teams (« Le chargement est en cours… »), jamais celui du message.
         if (SKIP.has(t) || SKIP_ROLES.has(attr(n, "role")) || isCard(n) || attr(n, "data-tid") === "file-attachment-grid") return;
+        // La citation est rendue à part (seen.quote), jamais mêlée au texte de la réponse.
+        if (n !== root && isQuote(n)) {
+          if (seen && !seen.quote) seen.quote = quoteOf(n);
+          return;
+        }
+        if (seen && isMention(n)) {
+          // Teams découpe un nom mentionné en un élément par mot : « Ana » puis « Lopez ».
+          const from = last && !out.slice(last.end).trim() ? last.start : out.length;
+          for (const c of Array.from(n.childNodes || [])) walk(c, pre);
+          const name = one(out.slice(from));
+          if (!name) return;
+          if (last && from === last.start) seen.mentions[seen.mentions.length - 1] = name;
+          else seen.mentions.push(name);
+          last = { start: from, end: out.length };
+          return;
+        }
         if (t === "BR") {
           out += "\n";
           return;
@@ -1649,8 +1671,8 @@
     const linksOf = (root) => {
       const out = [];
       const seen = new Set();
-      for (const a of find(root, (el) => isCard(el) || (tag(el) === "A" && attr(el, "href")))) {
-        if (isCard(a)) continue;
+      for (const a of find(root, (el) => isCard(el) || isQuote(el) || (tag(el) === "A" && attr(el, "href")))) {
+        if (isCard(a) || isQuote(a)) continue;
         const url = safeUrl(attr(a, "href"));
         const text = one(textOf(a)) || url;
         if (!url || seen.has(`${text}\n${url}`)) continue;
@@ -1708,7 +1730,27 @@
         .map((el) => (isAppCard(el) ? appCard(el) : previewCard(el)))
         .filter((c) => c.title || c.url)
         .slice(0, 5);
-    return (root) => (root ? { text: textOf(root), links: linksOf(root), cards: cardsOf(root) } : { text: "", links: [], cards: [] });
+    // Auteur, heure et extrait d'une citation : par leurs propriétés (service de chat), sinon
+    // par leurs lignes (auteur, heure si elle en a l'air, puis l'extrait).
+    const quoteOf = (el) => {
+      const prop = (k) => first(el, (x) => attr(x, "itemprop") === k);
+      const lines = textOf(el).split("\n").map(one).filter(Boolean);
+      const mri = prop("mri");
+      const preview = prop("preview");
+      let sender = mri ? one(textOf(mri)) : lines.shift() || "";
+      if (mri && lines[0] === sender) lines.shift();
+      const at = QUOTE_WHEN.test(lines[0] || "") && (preview || lines.length > 1) ? lines.shift() : "";
+      const text = preview ? textOf(preview) : lines.join("\n");
+      sender = sender.slice(0, 200);
+      return text || sender ? { sender, at: at.slice(0, 40), text: text.slice(0, 2000) } : null;
+    };
+    const EMPTY = () => ({ text: "", links: [], cards: [], quote: null, mentions: [] });
+    return (root) => {
+      if (!root) return EMPTY();
+      const seen = { quote: null, mentions: [] };
+      const text = textOf(root, seen);
+      return { text, links: linksOf(root), cards: cardsOf(root), quote: seen.quote, mentions: [...new Set(seen.mentions)].slice(0, 20) };
+    };
   })();
   // <<< message-parts
   // Le corps d'un message du fil : bulle de Teams, sinon son contenu.
@@ -2109,7 +2151,7 @@
       const ts = Date.parse(raw.originalarrivaltime || raw.composetime || "");
       const deleted = Boolean(props.deletetime);
       const root = deleted ? null : quoteTimes(parse(String(raw.content || "")));
-      const p = root ? parts(root) : { text: "", links: [], cards: [] };
+      const p = root ? parts(root) : { text: "", links: [], cards: [], quote: null, mentions: [] };
       return {
         sender: String(raw.imdisplayname || "").trim(),
         text: deleted ? "Ce message a été supprimé." : String(p.text || "").replace(/\s+\n/g, "\n").trim(),
@@ -2121,6 +2163,10 @@
         images: root ? amsImages(root) : [],
         links: deleted ? [] : p.links || [],
         cards: deleted ? [] : [...(p.cards || []), ...cardsFrom(props)].slice(0, 5),
+        quote: deleted ? null : p.quote || null,
+        mentions: deleted ? [] : p.mentions || [],
+        // Modifié par son auteur : Teams affiche « Modifié » à côté de l'heure.
+        edited: !deleted && Boolean(props.edittime || raw.skypeeditedid),
         ts: Number.isFinite(ts) ? ts : null,
       };
     };
@@ -3406,7 +3452,7 @@
     read: async ({ last = 30, since = null }) => {
       const snap = () =>
         Array.from(document.querySelectorAll(MSGS)).map((el) => {
-          const { text: body, links, cards } = partsOf(el);
+          const { text: body, links, cards, quote, mentions } = partsOf(el);
           const time = el.querySelector("time");
           const at = time?.innerText?.trim() || time?.getAttribute("datetime") || "";
           const ts = Date.parse(time?.getAttribute("datetime") || "");
@@ -3433,6 +3479,9 @@
             images,
             links,
             cards,
+            quote,
+            mentions,
+            edited: Boolean(el.querySelector('[data-tid*="edited" i]')),
             ts: Number.isNaN(ts) ? null : ts,
           };
         })
@@ -3454,7 +3503,7 @@
       for (const m of acc) {
         if (m.who) sender = m.who;
         if (since != null && m.ts != null && m.ts < since) continue;
-        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images, links: m.links, cards: m.cards });
+        out.push({ sender, text: m.text, at: m.at, id: m.mid, status: m.status, reactions: m.reactions, files: m.files, key: m.key, images: m.images, links: m.links, cards: m.cards, quote: m.quote, mentions: m.mentions, edited: m.edited });
       }
       const shown = out.slice(-last);
       await thumbnails(shown);

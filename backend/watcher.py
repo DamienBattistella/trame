@@ -34,7 +34,7 @@ from github import context as gh
 from github import knowledge as ghknow
 from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
-                    FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
+                    FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, QuoteRef, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
 from drivers.base import DeleteUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
@@ -1545,7 +1545,9 @@ class Watcher:
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
                 "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
                 "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted,
-                "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards]} for m in msgs]
+                "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards],
+                "quote": m.quote.model_dump() if m.quote else None, "mentions": list(m.mentions), "edited": m.edited}
+               for m in msgs]
         self._thread_cache[thread_id] = (time.monotonic(), out, last_n, top)
         return out, top
 
@@ -2523,7 +2525,8 @@ class Watcher:
         msgs, _top = self.thread_history(thread_id, self.FACT_CHECK_MESSAGES)
         reflection.check_cancelled()
         def said(m: dict) -> str:
-            return brain_text(m["text"], [LinkRef(**x) for x in m.get("links") or []], [CardRef(**x) for x in m.get("cards") or []])
+            return brain_text(m["text"], [LinkRef(**x) for x in m.get("links") or []], [CardRef(**x) for x in m.get("cards") or []],
+                              QuoteRef(**m["quote"]) if m.get("quote") else None)
         lines = [f"[{m['at']}] {m['sender']}: {said(m)}" if m.get("at") else f"{m['sender']}: {said(m)}" for m in msgs]
         if target is not None:
             when = f" ({target.at})" if target.at else ""
@@ -2608,7 +2611,7 @@ class Watcher:
         numbers = numbers or []
         extra = [f"[fichier joint : {f.name}]" for f in m.files] + \
             [f"[image {numbers[j]}]" if j < len(numbers) and numbers[j] else "[image]" for j in range(len(m.images))]
-        if not extra and not m.links and not m.cards:
+        if not extra and not m.links and not m.cards and not m.quote:
             return m
         return m.model_copy(update={"text": "\n".join([m.brain_text(), *extra]).strip(), "images": []})
 

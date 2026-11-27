@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { CircleDot, Cloud, FileText, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
 import { openExternal } from "@/desktop";
 import { ConfluenceLogo, FigmaLogo, GithubLogo, GitlabLogo, JiraLogo, TeamsLogo } from "@/brands";
 import { APP_NAME, type App } from "@/lib/apps";
-import { blocksOf, codeSpans, type Align } from "@/lib/blocks";
+import { blocksOf, codeSpans, mentionSpans, type Align } from "@/lib/blocks";
 import { linkify, linkLabel, type GithubRef, type Segment, type TextLink } from "@/lib/linkify";
 import { cn } from "@/lib/utils";
 import type { BriefGithubItem, GithubState } from "@/types";
@@ -118,6 +118,15 @@ function Link({ seg, github, interactive }: { seg: Extract<Segment, { type: "lin
 /** Code en ligne (`main`) : chasse fixe sur un fond léger. */
 const CODE = "rounded-[0.3rem] bg-foreground/[0.07] px-1 py-px font-mono text-[0.85em]";
 
+/** Personne mentionnée : en couleur et en gras, comme dans Teams. */
+const MENTION = "font-semibold text-link";
+
+/** Texte simple avec ses mentions mises en valeur. */
+function withMentions(text: string, names: string[] | undefined): React.ReactNode {
+  if (!names?.length) return text;
+  return mentionSpans(text, names).map((s, i) => (s.mention ? <span key={i} className={MENTION}>{s.text}</span> : s.text));
+}
+
 type InlineProps = {
   text: string;
   /** Position de `text` dans le message (surlignage). */
@@ -128,10 +137,11 @@ type InlineProps = {
   interactive: boolean;
   github?: GithubLookup;
   code: boolean;
+  mentions?: string[];
 };
 
-/** Texte en ligne : liens et pastilles, code en ligne (`code`), plage surlignée. */
-function Inline({ text, offset = 0, links, jira, range = null, interactive, github, code }: InlineProps) {
+/** Texte en ligne : liens et pastilles, mentions, code en ligne (`code`), plage surlignée. */
+function Inline({ text, offset = 0, links, jira, range = null, interactive, github, code, mentions }: InlineProps) {
   const r: [number, number] | null = range ? [range[0] - offset, range[1] - offset] : null;
   const mark = (s: number, e: number, node: React.ReactNode, key: string | number) =>
     r && s < r[1] && e > r[0] ? (
@@ -146,10 +156,12 @@ function Inline({ text, offset = 0, links, jira, range = null, interactive, gith
       {linkify(text, links, jira).map((seg, i) => {
         if (seg.type === "link") return mark(seg.start, seg.end, <Link key={i} seg={seg} github={github} interactive={interactive} />, i);
         if (!r || r[1] <= seg.start || r[0] >= seg.end) {
-          if (!code) return <span key={i}>{seg.text}</span>;
+          if (!code) return <span key={i}>{withMentions(seg.text, mentions)}</span>;
           return (
             <span key={i}>
-              {codeSpans(seg.text).map((c, j) => (c.code ? <code key={j} className={CODE}>{c.text}</code> : c.text))}
+              {codeSpans(seg.text).map((c, j) =>
+                c.code ? <code key={j} className={CODE}>{c.text}</code> : <Fragment key={j}>{withMentions(c.text, mentions)}</Fragment>
+              )}
             </span>
           );
         }
@@ -212,8 +224,11 @@ export function MessageText({
   links,
   jira,
   rich = false,
+  mentions,
 }: {
   text: string;
+  /** Personnes mentionnées (lues dans Teams) : mises en valeur dans le texte. */
+  mentions?: string[];
   /** Liens lus dans Teams dont le texte n'est pas l'adresse : ce texte devient cliquable. */
   links?: TextLink[];
   /** Bases Jira connues par projet : une clé seule (« ALL-94 ») devient une pastille. */
@@ -228,7 +243,7 @@ export function MessageText({
   rich?: boolean;
 }) {
   if (!text) return null;
-  const inline = { links, jira, range, interactive, github, code: rich };
+  const inline = { links, jira, range, interactive, github, code: rich, mentions };
   const blocks = rich ? blocksOf(text) : null;
   // Un seul élément : dans une bulle en colonne flex, chaque morceau deviendrait sinon une ligne.
   if (!blocks || !blocks.some((b) => b.type === "table")) {
