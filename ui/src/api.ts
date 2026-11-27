@@ -1895,18 +1895,20 @@ export function useTrame() {
     }
     return request<{ text: string; changed: boolean }>("POST", "/api/correct", { text, thread_id: threadId });
   };
-  /** Réaction en un clic sur un message précis. Réussie seulement si Teams l'affiche. */
-  const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction): Promise<Result> => {
+  /** Réaction en un clic sur un message précis, ou retrait de la sienne (`remove`).
+   *  Réussie seulement si Teams l'affiche (ou ne l'affiche plus). */
+  const reactInThread = async (threadId: string, target: MessageRef, reaction: Reaction, remove = false): Promise<Result> => {
     if (!connectedRef.current) {
       const res = await demo(500, {});
       if (res.ok && target.id) {
         const key = `${threadId}/${target.id}`;
         const mine = demoReactions.get(key) ?? [];
-        if (!mine.includes(reaction)) demoReactions.set(key, [...mine, reaction]);
+        if (remove) demoReactions.set(key, mine.filter((r) => r !== reaction));
+        else if (!mine.includes(reaction)) demoReactions.set(key, [...mine, reaction]);
       }
       return res;
     }
-    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/react`, { message: messageRef(target), reaction });
+    return request("POST", `/api/threads/${encodeURIComponent(threadId)}/react`, { message: messageRef(target), reaction, remove });
   };
   /** Supprime un de tes messages dans Teams. Réussie seulement si Teams le montre supprimé. */
   const deleteInThread = async (threadId: string, target: MessageRef): Promise<Result> => {

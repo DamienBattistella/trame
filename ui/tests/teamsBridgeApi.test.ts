@@ -655,6 +655,11 @@ const chatServer = (p: any, messages: Record<string, any>, conv: any = {}) => {
       raw.properties.emotions = [{ key: body.emotions.key, users: [{ mri: MY_MRI, time: body.emotions.value }] }];
       return fakeResponse("", { status: 200 });
     }
+    if (method === "DELETE" && url.includes("name=emotions") && m) {
+      const raw = messages[m[1]];
+      raw.properties.emotions = (raw.properties.emotions || []).filter((e: any) => e.key !== body.emotions.key);
+      return fakeResponse("", { status: 200 });
+    }
     if (method === "DELETE" && m) {
       messages[m[1]].properties.deletetime = String(Date.now());
       return fakeResponse("", { status: 200 });
@@ -691,6 +696,30 @@ test("chatgesture react : vérifie le message vu, pose la réaction, la prouve e
   const again = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like" })).result;
   assert.equal(again.already, true);
   assert.equal(writes.length, 1);
+});
+
+test("chatgesture react remove : retire MA réaction, prouvé à la relecture, jamais une bascule", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const messages: any = { "1795777000001": msgRaw("1795777000001") };
+  const writes = chatServer(p, messages);
+  const ref = { id: "1795777000001", sender: "Ana Martin", text: "Bonjour à tous" };
+  // Pas encore posée : rien à retirer, aucun appel.
+  const none = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like", remove: true })).result;
+  assert.equal(none.already, true);
+  assert.equal(writes.length, 0);
+  await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like" });
+  const r = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like", remove: true })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].method, "DELETE");
+  assert.ok(writes[1].url.endsWith(`/v1/users/ME/conversations/${encodeURIComponent(GROUP_ID)}/messages/1795777000001/properties?name=emotions`));
+  assert.deepEqual(writes[1].body, { emotions: { key: "like" } });
+  assert.equal(messages["1795777000001"].properties.deletetime, undefined); // le message, lui, reste
+  // Retirer à nouveau : déjà fait, rien n'est réécrit (et surtout pas reposé).
+  const again = (await p.run("chatgesture", { kind: "react", thread: GROUP_ID, message: ref, reaction: "like", remove: true })).result;
+  assert.equal(again.already, true);
+  assert.equal(writes.length, 2);
 });
 
 test("chatgesture : un message différent de celui affiché n'est jamais touché", async () => {

@@ -218,6 +218,8 @@ def _files(body: Optional[SendBody]) -> list[attachmod.Attachment]:
 class ReactBody(BaseModel):
     message: MessageRef
     reaction: Reaction = "like"
+    # True : retirer cette réaction (jamais une bascule : l'état voulu est dit explicitement).
+    remove: bool = False
 
 
 class DeleteBody(BaseModel):
@@ -578,7 +580,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/react")
     def thread_react(thread_id: str, body: ReactBody):
-        watcher.react(thread_id, body.message, body.reaction)
+        watcher.react(thread_id, body.message, body.reaction, remove=body.remove)
         return {"ok": True}
 
     @app.post("/api/undo/{undo_id}")

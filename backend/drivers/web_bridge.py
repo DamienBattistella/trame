@@ -644,10 +644,10 @@ class WebBridgeDriver(TeamsDriver):
         # compose box before typing: on any doubt it clears the box and refuses.
         return self._type(thread_id, text, send, quote=self._ref(target))
 
-    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str, remove: bool = False) -> bool:
         try:
             res = self._rpc("react", name=self._name(thread_id), message=self._ref(target), reaction=reaction,
-                            timeout=self.GESTURE_TIMEOUT)
+                            remove=remove, timeout=self.GESTURE_TIMEOUT)
         except BridgeUnavailable as e:
             # No answer: the click may have happened. Say so rather than « rien n'a été fait ».
             if "pas de réponse" in str(e):
