@@ -59,19 +59,24 @@ l'exécute avec sa session et ne renvoie que le corps parsé.
 
 ### 2. Capture réseau en lecture seule (découverte)
 
-Pour apprendre les **vrais** endpoints, le pont pose un hook **passif** sur `fetch` et
-`XMLHttpRequest` et n'enregistre que la **structure** des requêtes que Teams émet lui-même :
+Pour apprendre les **vrais** endpoints, le pont pose un hook **passif** sur `fetch`,
+`XMLHttpRequest` **et `WebSocket`**, et n'enregistre que la **structure** des échanges que Teams
+émet lui-même :
 
-- méthode, hôte, **gabarit de chemin** (les segments opaques — GUID, id de conversation
-  `19:…@thread.v2`, jetons longs — sont **masqués** : `{guid}`, `{thread}`, `{id}`, `{n}`),
-- type de réponse (`Content-Type`) et statut HTTP,
-- la **présence** (jamais la valeur) d'en-têtes d'auth, par leur **nom** seulement.
+- requêtes REST (`fetch`/XHR) : méthode, hôte, **gabarit de chemin** (les segments opaques —
+  GUID, id de conversation `19:…@thread.v2`, jetons longs — sont **masqués** : `{guid}`,
+  `{thread}`, `{id}`, `{n}`), type de réponse (`Content-Type`), statut HTTP, et la **présence**
+  (jamais la valeur) d'en-têtes d'auth, par leur **nom** seulement ;
+- connexions `WebSocket` : **uniquement l'URL de connexion** (schéma, hôte, chemin masqué) —
+  **jamais une frame ni son contenu**. En Teams v2, les messages passent par ce canal (trouter),
+  invisible au hook fetch/XHR.
 
-Jamais : valeur d'en-tête, paramètre de requête, corps de requête ou de réponse, contenu de
-message. Le buffer est borné (150 entrées).
+Jamais : valeur d'en-tête, paramètre de requête, corps de requête ou de réponse, frame WebSocket,
+contenu de message. Les buffers sont bornés (150 requêtes, 40 sockets).
 
 Le résumé (structure uniquement) sort par l'op existante `diagnose`, donc via l'outil MCP
-`diagnose_teams` → `diagnose.api_capture`, ou `WebBridgeDriver.api_capture()`.
+`diagnose_teams` → `diagnose.page.api_capture` (`endpoints` + `sockets`), ou
+`WebBridgeDriver.api_capture()`.
 
 ## Découvrir les endpoints en direct
 
@@ -79,34 +84,71 @@ Sur le Trame de l'utilisateur (port 8731, « Teams intégré » connecté), pend
 dans Teams (ouvrir des conversations, lire un fil, changer de présence…) :
 
 1. appeler l'outil MCP `diagnose_teams` ;
-2. lire `diagnose.api_capture.endpoints` : chaque entrée donne `method`, `service`, `host`,
-   `path` (masqué), `type`, `status`, `count`, `auth` (noms d'en-têtes) ;
-3. reporter les endpoints utiles dans le tableau ci-dessous.
+2. lire `diagnose.page.api_capture` :
+   - `endpoints` : requêtes REST (fetch/XHR) — `method`, `service`, `host`, `path` (masqué),
+     `type`, `status`, `count`, `auth` (noms d'en-têtes) ;
+   - `sockets` : connexions WebSocket — `scheme`, `host`, `path` (masqué), `count` (URL de
+     connexion seulement, jamais de frame ni de contenu).
 
-### Endpoints repérés
+### Endpoints REST observés (Teams v2, `teams.cloud.microsoft`, EMEA)
 
-> À compléter à partir d'une capture réelle. Tant que la colonne « Endpoint » n'est pas
-> renseignée par une capture, l'action reste sur le DOM.
+Capture réelle (lecture seule : liste, lecture de fils, scroll d'historique). Tous en `GET`
+sauf mention, la plupart avec `authorization` (bearer), parfois `x-skypetoken`.
 
-| Action Trame | Service | Endpoint (gabarit) | Méthode | Auth constatée | Statut |
-|---|---|---|---|---|---|
-| Lister les conversations | chatsvc / middletier | _(à capturer)_ | GET | _(à capturer)_ | — |
-| Lire un fil + historique | chatsvc | _(à capturer)_ | GET | _(à capturer)_ | — |
-| Nouveaux messages | chatsvc | _(à capturer)_ | GET/long-poll | _(à capturer)_ | — |
-| Présence des autres | presence | _(à capturer)_ | POST | _(à capturer)_ | — |
-| Ma présence / statut | presence | _(à capturer)_ | GET/PUT | _(à capturer)_ | — |
-| Marquer comme lu | chatsvc | _(à capturer)_ | POST/PUT | _(à capturer)_ | — |
-| Réaction | chatsvc | _(à capturer)_ | PUT/POST | _(à capturer)_ | — |
-| Envoi / réponse citée | chatsvc | _(à capturer)_ | POST | _(à capturer)_ | — |
-| Suppression | chatsvc | _(à capturer)_ | DELETE/PUT | _(à capturer)_ | — |
+| Service | Hôte | Endpoint (gabarit) | Auth | Rôle |
+|---|---|---|---|---|
+| teams | `teams.microsoft.com` | `/trap/tokens` | authorization | jetons |
+| config | `config.teams.microsoft.com` | `/config/v1/Skype/…`, `/config/v1/MicrosoftTeams/…` | — | configuration |
+| middletier | `teams.cloud.microsoft` | `/api/mt/part/emea-03/beta/me/settings/{id}` | authorization | réglages |
+| middletier | `teams.cloud.microsoft` | `/api/mt/part/emea-03/beta/usersettings/{id}` | authorization | réglages |
+| middletier | `teams.cloud.microsoft` | `/api/mt/part/emea-03/beta/users/tenantsv2` | authorization | tenants |
+| middletier | `teams.cloud.microsoft` | `/api/mt/part/emea-03/beta/sharepoint/sites/validSites` | authorization + x-skypetoken | SharePoint |
+| middletier | `teams.cloud.microsoft` | `POST /api/mt/part/emea-03/beta/users/{guid}/cookiev2` | authorization | cookie |
+| asyncgw | `eu-prod.asyncgw.teams.microsoft.com` | `/v1/{guid}/objects/{id}/views/imgo`, `/views/thumbnail_small`, `/urlp/v1/url/content` | authorization | images / aperçus de liens |
+| asyncgw | `eu-prod.asyncgw.teams.microsoft.com` | `POST /v1/skypetokenauth`, `POST /v1/{guid}/aadtokenauth` | authorization | échange de jetons |
+| graph | `graph.microsoft.com` | `/v1.0/me/events*`, `/v1.0/domains/` | authorization | calendrier, domaines |
+
+### Canal temps réel (WebSocket)
+
+| Hôte | Rôle |
+|---|---|
+| `go-eu.trouter.teams.microsoft.com` | canal push « trouter » (mise en place vue en REST : `GET /`) |
+
+### ⚠️ Les messages ne sont PAS servis en REST (v2)
+
+Après avoir ouvert et fait défiler des conversations (y compris l'historique profond et une
+conversation « froide »), **aucun** endpoint de messages, de fil ou de conversation n'apparaît
+dans `endpoints` : rien sur `msg.teams`/chatsvc, ni `/messages`, ni `/conversations`, ni la
+présence. Seuls des fetch d'**images**, de **calendrier** et de **réglages** sont émis.
+
+Conclusion : en **Teams v2 web**, la **liste des messages, l'historique et la présence passent
+par le canal trouter (WebSocket/long-poll)**, pas par fetch/XHR. Un `webfetch` REST ne peut donc
+pas les lire. La capture `sockets` (ajoutée ici) sert à repérer ce canal et, plus tard, le
+service de chat ; lire/écrire des messages « par l'API » demanderait de capter ce WebSocket
+(bien plus fragile que le DOM) — à arbitrer avant d'implémenter les lectures.
+
+| Action Trame | Voie observée | Faisable en `webfetch` REST ? |
+|---|---|---|
+| Lister les conversations | trouter (WS) / store client | non (pas de REST observé) |
+| Lire un fil + historique | trouter (WS) / store client | non |
+| Nouveaux messages | trouter (WS, push) | non |
+| Présence (autres / soi) | trouter (WS) probable | non observé en REST |
+| Images / pièces jointes | asyncgw (REST) | **oui** |
+| Marquer comme lu / réaction / envoi / suppression | trouter (WS) / store client | à confirmer (probablement non REST) |
 
 ## Étapes suivantes (PR séparées)
 
-1. **(cette PR) Découverte** : mécanisme `webfetch` + capture en lecture seule + ce document.
-2. **Lectures** par l'API de la page (conversations, messages + historique, présence, nouveaux
-   messages), converties vers les modèles existants (`backend/models.py`). Repli DOM par action.
-3. **Écritures** (marquer comme lu, réactions, envoi, réponse citée, suppression), uniquement si
+1. **Découverte** : mécanisme `webfetch` + capture `fetch`/XHR (PR initiale), puis capture
+   `WebSocket` + endpoints réels documentés (cette PR).
+2. **Arbitrage lectures** : la découverte montre que messages/historique/présence passent par le
+   WebSocket trouter, pas par REST. Avant d'implémenter des « lectures par l'API », décider :
+   - soit capter le canal trouter dans la page (fragile, à évaluer avec la capture `sockets`),
+   - soit garder les messages sur le DOM et ne passer par l'API que ce qui est réellement REST
+     (images/pièces jointes via asyncgw ; éventuellement réglages/roster via middletier).
+3. **Lectures** retenues par l'API de la page, converties vers `backend/models.py`, repli DOM par
+   action.
+4. **Écritures** (marquer comme lu, réactions, envoi, réponse citée, suppression), uniquement si
    l'envoi peut être **prouvé par une relecture**, en gardant tous les garde-fous de
    `backend/safety.py` (jamais de faux « Envoyé », anti-doublon, titre de conversation).
-4. Carte **Réglages › Général › « API Teams web »** (remplace « Microsoft Graph ») : montre, action
+5. Carte **Réglages › Général › « API Teams web »** (remplace « Microsoft Graph ») : montre, action
    par action, la voie suivie (API page / DOM), via un `routes()` comme le `GraphDriver`.
