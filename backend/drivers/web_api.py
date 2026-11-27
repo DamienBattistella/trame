@@ -18,9 +18,10 @@ from __future__ import annotations
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
+import presence as presencemod
 from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
@@ -118,6 +119,7 @@ class _ChatState:
         # Reliées par le nom avec une preuve forte (texte, minute, ou soi-même) : seules celles-ci
         # (et celles dont l'id Teams est dans l'id de la page) reçoivent des gestes par le service.
         self.strong: set[str] = set()
+        self.presence_at = 0.0  # dernière lecture de la présence des tête-à-tête
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -127,7 +129,12 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send"})
+    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send",
+                             "presence", "my_status", "set_note", "search_people"})
+    # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
+    PRESENCE_EVERY = 60.0
+    # Note de statut sans échéance : « jamais », comme le choix par défaut de Teams.
+    NOTE_NEVER = "9999-12-31T23:59:59.999Z"
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
@@ -298,6 +305,8 @@ class WebApiDriver:
                 if row is not None:
                     e.unread = self._unread(row)
             self._route("unread", "api")
+        if api:
+            self._refresh_presence(entities, mapped)
         hook = getattr(inner, "on_conversations", None)
         if hook is not None and entities:
             try:
@@ -448,10 +457,82 @@ class WebApiDriver:
             kwargs["files"] = files
         return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
 
+    # --- Présence, statut, note et recherche de personnes ------------------------------
+    def _people(self, action: str, kind: str, **args: Any) -> Optional[dict]:
+        call = getattr(self._inner, "teams_people", None)
+        if not callable(call):
+            return None
+        try:
+            res = call(kind, **args)
+        except Exception as e:
+            self._route(action, "page", f"repli sur la page : {e}")
+            return None
+        self._route(action, "api", res.get("error") if not res.get("ok") else None)
+        return res
+
+    def _refresh_presence(self, entities: list[WatchEntity], mapped: dict[str, str]) -> None:
+        """Présence des tête-à-tête reliés, lue sur le service (toute la liste, pas seulement les
+        lignes que la page dessine), au plus toutes les PRESENCE_EVERY secondes ; la page garde la
+        main pour les autres."""
+        st = self._chat
+        others = {e.thread_id: (st.rows.get(mapped.get(e.thread_id, "")) or {}).get("other")
+                  for e in entities if e.surface == Surface.dm and not e.is_self}
+        others = {t: m for t, m in others.items() if m}
+        if not others or time.time() - st.presence_at < self.PRESENCE_EVERY:
+            return
+        st.presence_at = time.time()
+        res = self._people("presence", "of", mris=sorted(set(others.values())))
+        people = (res or {}).get("people") or {}
+        note = getattr(self._inner, "_note_presence", None)
+        for e in entities:
+            p = people.get(others.get(e.thread_id, ""))
+            if p is None:
+                continue
+            e.presence = presencemod.from_service(p.get("availability"), p.get("activity"), bool(p.get("ooo")))
+            if callable(note):
+                note(e.thread_id, e.presence)
+
+    def my_status(self, with_message: bool = False) -> dict:
+        res = self._people("my_status", "me")
+        if res is None or not res.get("ok"):
+            return self._inner.my_status(with_message)
+        out: dict = {"presence": presencemod.from_service(res.get("availability"), res.get("activity"), bool(res.get("ooo")))}
+        if with_message:
+            out["message"] = " ".join(str((res.get("note") or {}).get("message") or "").split())
+        return out
+
+    def set_status_message(self, text: str) -> str:
+        """Note de statut écrite sur le service puis relue. Son échéance est gardée (sinon :
+        jamais, comme Teams). Rien n'est parti : la page écrit la note, comme avant."""
+        current = self._people("set_note", "me")
+        if current is None or not current.get("ok"):
+            return self._inner.set_status_message(text)
+        expiry = str((current.get("note") or {}).get("expiry") or "")
+        if not expiry or expiry < datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"):
+            expiry = self.NOTE_NEVER
+        res = self._people("set_note", "note", message=" ".join((text or "").split()), expiry=expiry)
+        if res is None:
+            return self._inner.set_status_message(text)
+        if not res.get("ok"):
+            # Partie sans preuve : jamais réécrite par la page (le moteur dit de vérifier).
+            raise RuntimeError(res.get("error") or "message de statut non confirmé : vérifie dans Teams")
+        return " ".join(str(res.get("message") or "").split())
+
+    @property
+    def can_search_people(self) -> bool:
+        return callable(getattr(self._inner, "teams_people", None)) or bool(getattr(self._inner, "can_search_people", False))
+
+    def search_people(self, query: str, limit: int = 8) -> list[str]:
+        res = self._people("search_people", "search", query=query, limit=limit)
+        if res is None or not res.get("ok"):
+            return self._inner.search_people(query, limit)
+        return [str(p.get("name")) for p in res.get("people") or [] if p.get("name")][:limit]
+
     # Actions de Trame → fonctions du contrôle de la page (teams_check.FEATURES) qu'elles
     # remplacent entièrement. L'envoi n'y est pas : brouillon, réponse citée, mentions et pièces
     # jointes passent toujours par la zone de saisie de la page.
-    CHECK_FEATURES = {"read": "read", "react": "react", "delete": "delete", "mark_read": "mark_read"}
+    CHECK_FEATURES = {"read": "read", "react": "react", "delete": "delete", "mark_read": "mark_read",
+                      "my_status": "own_status", "set_note": "status_note"}
 
     def api_features(self) -> set[str]:
         """Fonctions faites aujourd'hui par le service de chat (voie « api » au dernier essai) :
