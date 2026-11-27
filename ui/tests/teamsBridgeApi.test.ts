@@ -26,6 +26,8 @@ const teamsPage = () => {
   let nextResponse = fakeResponse('{"ok":true}');
   class FakeWS {
     url: string;
+    sent: any[] = [];
+    listeners: Record<string, Function[]> = {};
     static CONNECTING = 0;
     static OPEN = 1;
     static CLOSING = 2;
@@ -33,6 +35,15 @@ const teamsPage = () => {
     constructor(url: string) {
       this.url = url;
       wsCreated.push(url);
+    }
+    send(data: any) {
+      this.sent.push(data);
+    }
+    addEventListener(type: string, fn: Function) {
+      (this.listeners[type] ||= []).push(fn);
+    }
+    emit(type: string, ev: any) {
+      (this.listeners[type] || []).forEach((fn) => fn(ev));
     }
   }
   const doc: any = {
@@ -230,6 +241,34 @@ test("la capture WebSocket ne retient que l'URL de connexion (hôte + chemin mas
   assert.equal(s.hasQuery, true);
   // Aucune valeur sensible nulle part dans la capture.
   assert.ok(!/F9c2aLongSessionToken/.test(JSON.stringify(cap)));
+});
+
+test("les frames WebSocket sont capturées en STRUCTURE seule (noms de clés, jamais le contenu)", async () => {
+  const p = teamsPage();
+  const ws: any = new p.ctx.window.WebSocket("wss://go-eu.trouter.teams.microsoft.com/v4/c?sr=abc");
+  // Frame entrante avec du contenu de message réel (ne doit jamais être retenu).
+  ws.emit("message", {
+    data: JSON.stringify({
+      type: "message",
+      from: "19:abc0123@thread.v2",
+      id: "1795600000001",
+      body: "TEXTE SECRET DU MESSAGE",
+      props: { importance: "high" },
+    }),
+  });
+  // Frame sortante.
+  ws.send(JSON.stringify({ sub: "presence", id: "222222222" }));
+  const cap = (await p.run("diagnose")).result.api_capture;
+  assert.ok(Array.isArray(cap.frames) && cap.frames.length >= 2, JSON.stringify(cap.frames));
+  const dirs = cap.frames.map((f: any) => f.dir).sort();
+  assert.deepEqual([...new Set(dirs)].sort(), ["in", "out"]);
+  const inFrame = cap.frames.find((f: any) => f.dir === "in");
+  // La forme garde les NOMS de clés (type, from, body, props.importance)…
+  assert.ok(/type/.test(inFrame.shape) && /body/.test(inFrame.shape) && /props\.importance/.test(inFrame.shape), inFrame.shape);
+  // …mais AUCUNE valeur : ni le texte du message, ni l'id, ni l'expéditeur.
+  const dump = JSON.stringify(cap);
+  assert.ok(!/TEXTE SECRET DU MESSAGE/.test(dump), "contenu de message capturé");
+  assert.ok(!/19:abc0123@thread\.v2/.test(dump) && !/1795600000001|222222222/.test(dump), "valeur/id capturé");
 });
 
 test("la capture ne retient que la structure : chemin masqué, NOMS d'auth, aucune valeur", async () => {

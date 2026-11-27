@@ -67,15 +67,18 @@ Pour apprendre les **vrais** endpoints, le pont pose un hook **passif** sur `fet
   GUID, id de conversation `19:…@thread.v2`, jetons longs — sont **masqués** : `{guid}`,
   `{thread}`, `{id}`, `{n}`), type de réponse (`Content-Type`), statut HTTP, et la **présence**
   (jamais la valeur) d'en-têtes d'auth, par leur **nom** seulement ;
-- connexions `WebSocket` : **uniquement l'URL de connexion** (schéma, hôte, chemin masqué) —
-  **jamais une frame ni son contenu**. En Teams v2, les messages passent par ce canal (trouter),
-  invisible au hook fetch/XHR.
+- connexions `WebSocket` : l'URL de connexion (schéma, hôte, chemin masqué) ; **et la STRUCTURE
+  des frames** (sens entrant/sortant, taille, et pour une frame JSON les **noms de clés** — chemins,
+  clés dynamiques masquées `{guid}`/`{id}`/`{n}`/`{k}`). **Jamais une valeur, jamais le contenu d'un
+  message.** En Teams v2, les messages passent par ce canal (trouter), invisible au hook fetch/XHR ;
+  la structure des frames sert à comprendre le protocole (découverte de l'option B).
 
-Jamais : valeur d'en-tête, paramètre de requête, corps de requête ou de réponse, frame WebSocket,
-contenu de message. Les buffers sont bornés (150 requêtes, 40 sockets).
+Jamais : valeur d'en-tête, paramètre de requête, corps de requête ou de réponse, **valeur** d'une
+frame WebSocket, contenu de message. Les buffers sont bornés (150 requêtes, 40 sockets, 80 formes de
+frames).
 
 Le résumé (structure uniquement) sort par l'op existante `diagnose`, donc via l'outil MCP
-`diagnose_teams` → `diagnose.page.api_capture` (`endpoints` + `sockets`), ou
+`diagnose_teams` → `diagnose.page.api_capture` (`endpoints` + `sockets` + `frames`), ou
 `WebBridgeDriver.api_capture()`.
 
 ## Découvrir les endpoints en direct
@@ -87,8 +90,9 @@ dans Teams (ouvrir des conversations, lire un fil, changer de présence…) :
 2. lire `diagnose.page.api_capture` :
    - `endpoints` : requêtes REST (fetch/XHR) — `method`, `service`, `host`, `path` (masqué),
      `type`, `status`, `count`, `auth` (noms d'en-têtes) ;
-   - `sockets` : connexions WebSocket — `scheme`, `host`, `path` (masqué), `count` (URL de
-     connexion seulement, jamais de frame ni de contenu).
+   - `sockets` : connexions WebSocket — `scheme`, `host`, `path` (masqué), `count` ;
+   - `frames` : structure des frames WebSocket — `host`, `dir` (`in`/`out`), `shape` (noms de
+     clés masqués), `count`, `minLen`/`maxLen`. Jamais de valeur ni de contenu de message.
 
 ### Endpoints REST observés (Teams v2, `teams.cloud.microsoft`, EMEA)
 
