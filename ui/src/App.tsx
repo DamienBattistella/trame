@@ -9,7 +9,7 @@ import { useTrame } from "@/api";
 import { TeamsWebRelay } from "@/components/TeamsWebRelay";
 import { WhatsNew } from "@/components/Changelog";
 import { UpdateLed } from "@/components/UpdateLed";
-import { AppRail, ThemeButton } from "@/components/AppRail";
+import { AppRail } from "@/components/AppRail";
 import { ShortcutsHelp } from "@/components/ShortcutsHelp";
 import { isSwitcherKey, overlayOpen, requestSwitcher, sectionFromKey } from "@/lib/shortcuts";
 import type { PanelTab } from "@/panel/Panel";
@@ -51,7 +51,6 @@ function WindowControls() {
 }
 
 export default function App() {
-  const [dark, setDark] = useState(true);
   const [view, setView] = useState<"wizard" | "panel" | null>(null);
   const trame = useTrame();
   const [panelTab, setPanelTab] = useState<PanelTab>("inbox");
@@ -112,10 +111,6 @@ export default function App() {
     return () => clearTimeout(t);
   }, [trame.connected]);
 
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
-
   // Ctrl+K depuis Journal ou Réglages : retour aux Discussions, où la palette s'ouvre
   // (dans l'onglet Discussions, c'est la liste elle-même qui l'écoute).
   const switchToInbox = useRef<() => boolean>(() => false);
@@ -133,11 +128,14 @@ export default function App() {
     return true;
   };
 
+  // Alt+D bascule le thème de n'importe où, wizard compris ; le choix se règle aussi dans Réglages › Général.
+  const toggleTheme = useRef(trame.toggleTheme);
+  toggleTheme.current = trame.toggleTheme;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && !e.shiftKey && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
-        setDark((v) => !v);
+        toggleTheme.current();
       } else if (isSwitcherKey(e) && !e.defaultPrevented && switchToInbox.current()) {
         e.preventDefault();
       } else {
@@ -157,7 +155,7 @@ export default function App() {
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen flex-col gap-0 overflow-hidden rounded-xl border bg-background text-foreground">
         {/* Barre de titre : la marque, un problème de connexion s'il y en a un, les boutons de la fenêtre.
-            Tout le reste vit dans le rail, à gauche ; tant qu'il n'est pas là (wizard), mise à jour et thème restent ici. */}
+            Tout le reste vit dans le rail, à gauche ; tant qu'il n'est pas là (wizard), la mise à jour reste ici. */}
         <header
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -172,17 +170,7 @@ export default function App() {
 
           <div className="flex items-center gap-1.5 pr-2" style={noDrag}>
             <ConnectionBadge connected={trame.connected} demo={trame.demoMode} lost={trame.everConnected} />
-            {!railShown && (
-              <>
-                <UpdateLed />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ThemeButton dark={dark} onToggle={() => setDark((v) => !v)} className="size-9 rounded-full" />
-                  </TooltipTrigger>
-                  <TooltipContent>Thème clair ou sombre (Alt + D)</TooltipContent>
-                </Tooltip>
-              </>
-            )}
+            {!railShown && <UpdateLed />}
           </div>
 
           <WindowControls />
@@ -201,8 +189,6 @@ export default function App() {
                     trame={trame}
                     tab={panelTab}
                     onTab={setPanelTab}
-                    dark={dark}
-                    onToggleDark={() => setDark((v) => !v)}
                     onTogglePause={togglePause}
                   />
                 )}
