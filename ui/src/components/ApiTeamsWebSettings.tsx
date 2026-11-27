@@ -1,28 +1,64 @@
 import { useEffect, useState } from "react";
 import { Network } from "lucide-react";
 import { GroupList } from "@/components/kit";
-import { TeamsApiStatus, Trame } from "@/api";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ApiRoute, TeamsApiStatus, Trame } from "@/api";
+import { cn } from "@/lib/utils";
 
-/** Libellés des actions suivies, dans l'ordre d'affichage. */
-const ACTIONS: Record<string, string> = {
-  list: "Liste des conversations",
-  read: "Lecture d'une conversation",
-  watch: "Nouveaux messages",
-  unread: "Rattrapage des non-lus",
-  presence: "Présence des autres",
-  my_status: "Mon statut",
-  search_people: "Recherche de personnes",
-  search_messages: "Recherche dans les messages",
-  mark_read: "Marquer comme lu",
-  react: "Réactions",
-  delete: "Supprimer mon message",
-  set_status: "Changer mon statut",
-  set_note: "Message de statut",
-  send: "Envoi de messages",
-  start_chat: "Nouvelle conversation",
-  meetings: "Réunions",
-  transcript: "Transcriptions",
-};
+/** Actions suivies, regroupées par nature et dans l'ordre d'affichage. */
+const GROUPS: { label: string; actions: Record<string, string> }[] = [
+  {
+    label: "Lecture",
+    actions: {
+      list: "Conversations",
+      read: "Lecture",
+      watch: "Nouveaux messages",
+      unread: "Non-lus",
+      presence: "Présence",
+      my_status: "Mon statut",
+      search_people: "Personnes",
+      search_messages: "Recherche",
+      meetings: "Réunions",
+      transcript: "Transcriptions",
+    },
+  },
+  {
+    label: "Écriture",
+    actions: {
+      send: "Envoi",
+      start_chat: "Nouvelle conversation",
+      react: "Réactions",
+      mark_read: "Marquer comme lu",
+      delete: "Suppression",
+      set_status: "Changer mon statut",
+      set_note: "Message de statut",
+    },
+  },
+];
+
+function RouteChip({ label, route }: { label: string; route: ApiRoute }) {
+  const api = route.via === "api";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs",
+            api ? "border-success/40 bg-success/10 text-foreground" : "text-muted-foreground",
+          )}
+        >
+          <span className={cn("size-1.5 rounded-full", api ? "bg-success" : "bg-muted-foreground/40")} aria-hidden />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {route.reason || (api ? "Appel API signé dans la page" : "Via l'interface de la page Teams")}
+        {route.at ? ` · ${route.at}` : ""}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /** Réglages › Général › API Teams web : la session Teams déjà authentifiée, utilisée pour
  *  signer des appels API DANS la page (le jeton ne la quitte jamais). Remplace Microsoft Graph. */
@@ -47,14 +83,21 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
   const line = !api
     ? "Vérification…"
     : sign == null
-      ? "Signature non encore mesurée (ouvre une conversation dans Teams)."
+      ? "Signature non mesurée : ouvre une conversation dans Teams."
       : sign.ok
-        ? "Signature des appels API vérifiée · le jeton reste dans la page."
+        ? "Signature vérifiée · le jeton reste dans la page"
         : sign.error
           ? `Signature indisponible : ${sign.error}`
-          : `Signature refusée (HTTP ${sign.status ?? "?"}) : repli sur la page Teams.`;
-  const tone = sign?.ok ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground";
-  const routes = Object.entries(api?.routes ?? {}).filter(([k]) => ACTIONS[k]);
+          : `Signature refusée (HTTP ${sign.status ?? "?"}) : repli sur la page`;
+  const dot = !api || sign == null ? "bg-muted-foreground/40" : sign.ok ? "bg-success" : "bg-amber-500";
+
+  const routes = api?.routes ?? {};
+  const groups = GROUPS.map((g) => ({
+    label: g.label,
+    items: Object.entries(g.actions).flatMap(([key, label]) => (routes[key] ? [{ key, label, route: routes[key] }] : [])),
+  })).filter((g) => g.items.length > 0);
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const viaApi = groups.reduce((n, g) => n + g.items.filter((i) => i.route.via === "api").length, 0);
 
   return (
     <GroupList>
@@ -64,25 +107,43 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <span>API Teams web</span>
-          <span className={`truncate text-xs ${tone}`}>{line}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span className={cn("size-1.5 shrink-0 rounded-full", dot)} aria-hidden />
+            <span className="truncate">{line}</span>
+          </span>
         </div>
+        {total > 0 && (
+          <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+            <span className={cn("text-sm font-medium", viaApi > 0 ? "text-foreground" : "text-muted-foreground")}>{viaApi}</span>
+            /{total} via l'API
+          </span>
+        )}
       </div>
-      {routes.length > 0 && (
-        <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 border-t px-4 py-3 text-xs">
-          {routes.map(([key, r]) => (
-            <div key={key} className="contents" title={r.reason ?? undefined}>
-              <dt className="text-muted-foreground">{ACTIONS[key]}</dt>
-              <dd className={r.via === "api" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
-                {r.via === "api" ? "API page" : "Page Teams"}
-              </dd>
+      {total > 0 && (
+        <div className="flex flex-col gap-3 border-t px-4 py-3">
+          {groups.map((g) => (
+            <div key={g.label} className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{g.label}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {g.items.map((i) => (
+                  <RouteChip key={i.key} label={i.label} route={i.route} />
+                ))}
+              </div>
             </div>
           ))}
-        </dl>
+          <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full bg-success" aria-hidden /> API signée dans la page
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full bg-muted-foreground/40" aria-hidden /> Interface de la page
+            </span>
+          </div>
+        </div>
       )}
       <div className="border-t px-4 py-2.5 text-xs text-muted-foreground">
-        Trame utilise ta session Teams web déjà connectée : les appels API se font dans la page, signés
-        avec son auth (le jeton ne sort jamais de la page). Aujourd'hui, lectures et écritures passent par
-        la page ; les messages arrivent par le canal temps réel de Teams.
+        Trame s'appuie sur ta session Teams web déjà connectée : les appels sont signés dans la page et le jeton
+        n'en sort jamais. Les nouveaux messages arrivent par le canal temps réel de Teams.
       </div>
     </GroupList>
   );
