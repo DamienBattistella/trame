@@ -821,9 +821,9 @@ const presenceServer = (p: any, state: any) => {
 test("teamspeople : présence et note lues avec le bearer de Teams, rien d'autre ne sort", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);
-  const calls = presenceServer(p, { me: { availability: "Busy", activity: "InAMeeting", note: { message: "Atelier", expiry: "2099-01-01T10:00:00.000Z" } } });
+  const calls = presenceServer(p, { me: { availability: "Busy", activity: "InAMeeting", note: { message: "<p>Atelier &amp; démo</p><p>&nbsp;</p>", expiry: "2099-01-01T10:00:00.000Z" } } });
   const r = (await p.run("teamspeople", { kind: "me" })).result;
-  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, availability: "Busy", activity: "InAMeeting", ooo: false, note: { message: "Atelier", expiry: "2099-01-01T10:00:00.000Z" } });
+  assert.deepEqual(JSON.parse(JSON.stringify(r)), { ok: true, availability: "Busy", activity: "InAMeeting", ooo: false, note: { message: "Atelier & démo", expiry: "2099-01-01T10:00:00.000Z" } });
   assert.equal(calls[0].url, "https://presence.teams.microsoft.com/v1/me/presence");
   assert.equal(calls[0].auth, "Bearer MT-SECRET");
   assert.ok(!/MT-SECRET/.test(JSON.stringify(r)));
@@ -842,7 +842,8 @@ test("teamspeople note : écrite avec l'échéance donnée, prouvée en relisant
   assert.equal(r.message, "Retour lundi");
   const put = calls.find((c) => c.method === "PUT")!;
   assert.equal(put.url, "https://presence.teams.microsoft.com/v1/me/publishnote");
-  assert.deepEqual(put.body, { message: "Retour lundi", expiry: "2099-01-01T10:00:00.000Z" });
+  // Écrite comme Teams : un paragraphe HTML, texte échappé.
+  assert.deepEqual(put.body, { message: "<p>Retour lundi</p>", expiry: "2099-01-01T10:00:00.000Z" });
   // Échéance invalide : rien ne part.
   const before = calls.length;
   const bad = (await p.run("teamspeople", { kind: "note", message: "x", expiry: "demain" })).result;

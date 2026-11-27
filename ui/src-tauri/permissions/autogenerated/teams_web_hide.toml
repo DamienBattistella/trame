@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-teams-web-hide"
+description = "Enables the teams_web_hide command without any pre-configured scope."
+commands.allow = ["teams_web_hide"]
+
+[[permission]]
+identifier = "deny-teams-web-hide"
+description = "Denies the teams_web_hide command without any pre-configured scope."
+commands.deny = ["teams_web_hide"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-teams-web-close"
+description = "Enables the teams_web_close command without any pre-configured scope."
+commands.allow = ["teams_web_close"]
+
+[[permission]]
+identifier = "deny-teams-web-close"
+description = "Denies the teams_web_close command without any pre-configured scope."
+commands.deny = ["teams_web_close"]

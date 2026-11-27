@@ -2466,6 +2466,16 @@
         return { ok: false, sent: method === "GET" ? false : true, unknown: method !== "GET", error: String((err && err.message) || err) };
       }
     };
+    // La note est stockée en HTML (« <p>…</p><p>&nbsp;</p> ») : lue en texte, comme la page
+    // l'affiche, avec le même extracteur que les messages ; écrite en un paragraphe, comme Teams.
+    const noteText = (html) => {
+      try {
+        return String(messageParts(chatMessage.parseHtml(String(html || ""))).text || "").replace(/\s+/g, " ").trim();
+      } catch {
+        return "";
+      }
+    };
+    const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     // Valeurs du service de présence, telles quelles (le moteur les traduit).
     const fields = (p) => {
       p = p || {};
@@ -2474,7 +2484,7 @@
         availability: String(p.availability || ""),
         activity: String(p.activity || ""),
         ooo: Boolean(p.calendarData && p.calendarData.isOutOfOffice),
-        note: { message: String(note.message || ""), expiry: String(note.expiry || "") },
+        note: { message: noteText(note.message), expiry: String(note.expiry || "") },
       };
     };
     const me = async () => {
@@ -2494,7 +2504,7 @@
     const note = async ({ message, expiry } = {}) => {
       const text = String(message || "").replace(/\s+/g, " ").trim().slice(0, 280);
       if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(String(expiry || ""))) return { ok: false, attempted: false, error: "échéance de la note invalide" };
-      const w = await call("PUT", `${PRESENCE}/me/publishnote`, { message: text, expiry: String(expiry) });
+      const w = await call("PUT", `${PRESENCE}/me/publishnote`, { message: text ? `<p>${esc(text)}</p>` : "", expiry: String(expiry) });
       if (!w.sent) return { ok: false, attempted: false, error: w.error };
       if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `note refusée (HTTP ${w.status})` };
       for (const wait of [0, 700, 1500]) {
