@@ -31,10 +31,12 @@ class FakeBrain(Brain):
         self.calls: list[str] = []
         self.prompts: list[str] = []
         self.people: list[str] = []
+        self.github: list[str] = []
 
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
         self.calls.append(incoming)
         self.people.append(people_context)
+        self.github.append(github_context)
         return self.reply
 
     def complete(self, prompt: str, timeout: float | None = None) -> str:
@@ -93,6 +95,7 @@ def fresh_home(monkeypatch):
     monkeypatch.setattr(gh, "_run", _no_process)
     gh._sso_blocked.clear()
     monkeypatch.setattr(gh, "_repos_cache", None)
+    monkeypatch.setattr(gh, "_owners_cache", None)
     # Le contrôle de la page Teams en arrière-plan ne tourne que dans ses propres tests.
     from watcher import Watcher
     monkeypatch.setattr(Watcher, "CHECK_SETTLE", 3600.0)
