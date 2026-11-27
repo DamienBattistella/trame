@@ -102,7 +102,7 @@ Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que t
 
 ## Installer
 
-1. Télécharge l'installeur Windows depuis la [dernière version](https://github.com/DamienBattistella/trame/releases/latest) : `Trame_x.y.z_x64-setup.exe` (recommandé) ou `Trame_x.y.z_x64_en-US.msi`.
+1. Télécharge l'installeur Windows depuis la [dernière version](https://github.com/DamienBattistella/trame/releases/latest) : `Trame_x.y.z_x64-setup.exe`.
 2. Vérifie que la commande `claude` (Claude Code) est installée et connectée sur le poste — ou `gh` avec Copilot si tu choisis ce cerveau.
 3. Ouvre Teams, lance Trame et laisse-toi guider.
 

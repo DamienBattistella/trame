@@ -25,5 +25,7 @@ windows = "0.62"
 
 [profile.release]
 opt-level = "s"
-lto = true
+# LTO « thin » : compilation finale deux fois plus rapide que le LTO complet
+# (~45 s contre ~90 s sur 4 cœurs) pour ~1 Mo de plus sur l'exe.
+lto = "thin"
 strip = true
