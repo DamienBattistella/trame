@@ -233,6 +233,7 @@ def test_webapi_features_follow_the_routes():
         last_error = None
 
     d = WebApiDriver(Page())
-    assert d.api_features() == {"read", "react", "delete", "mark_read", "own_status", "status_note"}
+    status = {"set_status", "status_duration", "status_until"}
+    assert d.api_features() == {"read", "react", "delete", "mark_read", "own_status", "status_note"} | status
     d._route("react", "page", "repli sur la page : service indisponible")
-    assert d.api_features() == {"read", "delete", "mark_read", "own_status", "status_note"}
+    assert d.api_features() == {"read", "delete", "mark_read", "own_status", "status_note"} | status

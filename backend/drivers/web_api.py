@@ -137,7 +137,7 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
-                             "presence", "my_status", "set_note", "search_people"})
+                             "presence", "my_status", "set_status", "set_note", "search_people"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -521,6 +521,58 @@ class WebApiDriver:
             out["message_expiry"] = str((res.get("note") or {}).get("expiry") or "") or None
         return out
 
+    # Choix de Trame -> disponibilité du service de présence (comme le menu de Teams).
+    AVAILABILITY = {"available": "Available", "busy": "Busy", "dnd": "DoNotDisturb", "brb": "BeRightBack",
+                    "away": "Away", "offline": "Offline"}
+
+    @staticmethod
+    def status_expiry(duration: Optional[str], until: Optional[datetime], now: Optional[datetime] = None) -> str:
+        """Échéance du statut, en ISO UTC (« … Z ») ; "" : jusqu'à ce qu'on le change. Les durées
+        sont comptées en heure locale : « aujourd'hui » finit ce soir à 23:59:59, « cette semaine »
+        dimanche soir. Une heure de fin (« Personnalisé ») est une heure locale."""
+        now = now or datetime.now().astimezone()
+        if until is not None:
+            end = until if until.tzinfo else until.astimezone()
+        elif duration is None:
+            return ""
+        elif duration in ("30m", "1h", "2h"):
+            end = now + {"30m": timedelta(minutes=30), "1h": timedelta(hours=1), "2h": timedelta(hours=2)}[duration]
+        elif duration == "today":
+            end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        elif duration == "week":
+            end = (now + timedelta(days=6 - now.weekday())).replace(hour=23, minute=59, second=59, microsecond=0)
+        else:
+            raise ValueError(f"durée impossible : {duration}")
+        return end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def set_my_status(self, choice: str, duration: Optional[str] = None,
+                      until: Optional[datetime] = None) -> Optional[str]:
+        """Statut choisi sur le service de présence, puis relu : le service doit garder CE choix
+        (et son échéance). Rien n'est parti : le menu de la page, comme avant. Parti sans preuve :
+        jamais refait par la page (le moteur dit de vérifier dans Teams)."""
+        if choice not in presencemod.CHOICES:
+            raise ValueError(f"statut inconnu : {choice}")
+        if choice == "reset":
+            if duration is not None or until is not None:
+                raise ValueError("durée impossible pour « Réinitialiser »")
+            res = self._people("set_status", "reset")
+        else:
+            res = self._people("set_status", "force", availability=self.AVAILABILITY[choice],
+                               expiry=self.status_expiry(duration, until))
+        if res is not None and not res.get("ok") and not res.get("uncertain"):
+            # Refus net du service (rien n'a changé) : le menu de la page, comme avant.
+            self._route("set_status", "page", f"repli sur la page : {res.get('error') or 'refusé'}")
+            res = None
+        if res is None:
+            return self._inner.set_my_status(choice, duration, until)
+        if not res.get("ok"):
+            raise RuntimeError(res.get("error") or "statut non confirmé : vérifie dans Teams")
+        if choice == "reset":
+            return presencemod.from_service(res.get("availability"), res.get("activity"), bool(res.get("ooo")))
+        # Prouvé : le service garde ce choix. L'activité du moment (une réunion) peut s'afficher
+        # par-dessus dans Teams, mais le statut choisi est bien celui-ci.
+        return choice
+
     def set_status_message(self, text: str) -> str:
         """Note de statut écrite sur le service puis relue. Son échéance est gardée (sinon :
         jamais, comme Teams). Rien n'est parti : la page écrit la note, comme avant."""
@@ -551,14 +603,16 @@ class WebApiDriver:
     # Actions de Trame → fonctions du contrôle de la page (teams_check.FEATURES) qu'elles
     # remplacent entièrement. L'envoi n'y est pas : brouillon, réponse citée, mentions et pièces
     # jointes passent toujours par la zone de saisie de la page.
-    CHECK_FEATURES = {"read": "read", "react": "react", "delete": "delete", "mark_read": "mark_read",
-                      "my_status": "own_status", "set_note": "status_note"}
+    CHECK_FEATURES: dict[str, tuple[str, ...]] = {
+        "read": ("read",), "react": ("react",), "delete": ("delete",), "mark_read": ("mark_read",),
+        "my_status": ("own_status",), "set_note": ("status_note",),
+        "set_status": ("set_status", "status_duration", "status_until")}
 
     def api_features(self) -> set[str]:
         """Fonctions faites aujourd'hui par le service de chat (voie « api » au dernier essai) :
         leurs repères de page ne servent plus qu'en repli. Un repli sur la page les en retire."""
         routes = self.routes()
-        return {f for a, f in self.CHECK_FEATURES.items() if routes.get(a, {}).get("via") == "api"}
+        return {f for a, fs in self.CHECK_FEATURES.items() if routes.get(a, {}).get("via") == "api" for f in fs}
 
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont
