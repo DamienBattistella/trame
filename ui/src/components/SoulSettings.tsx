@@ -14,9 +14,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { GroupList, SectionLabel, Segment } from "@/components/kit";
 import { SoulInsight } from "@/components/SoulInsight";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { analyzeSoul, Quality } from "@/lib/soulInsight";
 import {
   diffLines,
@@ -506,16 +506,19 @@ function Editor({
             {text.split("\n").length} lignes
           </span>
         </div>
-        <Textarea
-          aria-label="Contenu du SOUL.md"
+        <MarkdownEditor
+          label="Contenu du SOUL.md"
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          spellCheck
-          className="h-[clamp(14rem,calc(100dvh-24rem),40rem)] resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+          onChange={setText}
+          onSave={() => {
+            if (!busy && dirty && text.trim()) save();
+          }}
+          className="h-[clamp(16rem,calc(100dvh-22rem),48rem)]"
         />
         <div className="flex items-center gap-2 px-4 py-2.5">
           <span className="text-xs text-muted-foreground">
-            Chaque enregistrement garde la version précédente dans l'historique.
+            Ctrl+S enregistre. Chaque enregistrement garde la version
+            précédente dans l'historique.
           </span>
           <div className="ml-auto flex gap-2">
             <Button
