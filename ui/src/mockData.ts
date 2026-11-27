@@ -1,4 +1,4 @@
-import { Brief, BriefGithubItem, WatchEntity, DraftItem, LogItem, Presence } from "./types";
+import { Brief, BriefGithubItem, BriefRange, WatchEntity, DraftItem, LogItem, Presence } from "./types";
 
 const TIMES = ["04:49", "04:12", "Hier", "25/11", "25/11", "24/11", "24/11", "22/11", "21/11", "20/11"];
 
@@ -213,7 +213,7 @@ const BRIEF_SEEDS: Record<string, BriefSeed> = {
 export function mockBrief(
   threadId: string,
   displayName: string,
-  opts: { lastMessages: number; github: boolean }
+  opts: { lastMessages: number; range: BriefRange; github: boolean }
 ): Brief {
   const seed: BriefSeed = BRIEF_SEEDS[threadId] ?? {
     length: 18,
@@ -233,7 +233,11 @@ export function mockBrief(
     topics: seed.topics,
     githubEnabled: opts.github,
     github: opts.github ? seed.github : [],
-    sources: { messages: Math.min(opts.lastMessages, seed.length), reposSearched: opts.github ? seed.repos : 0 },
+    sources: {
+      messages: opts.range === "messages" ? Math.min(opts.lastMessages, seed.length) : seed.length,
+      reposSearched: opts.github ? seed.repos : 0,
+      range: opts.range,
+    },
   };
 }
 

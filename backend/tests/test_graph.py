@@ -112,6 +112,14 @@ def test_read_converts_messages_oldest_first_and_drops_system_events():
     assert d.routes()["read"]["via"] == "graph"
 
 
+
+def test_read_since_keeps_only_newer_messages():
+    from datetime import datetime, timezone
+    d, _page = driver(routes())
+    since = datetime(2026, 11, 26, 8, 59, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+    msgs, _top = d.read_history(DM, 300, since)
+    assert [m.id for m in msgs] == ["3"]
+
 def test_a_conversation_known_by_name_is_found_in_graph():
     d, _page = driver(routes())
     msgs = d.read_context("name:Alice Martin", 10)

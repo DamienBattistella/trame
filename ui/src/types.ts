@@ -102,7 +102,7 @@ export interface Settings {
     autoQuietTo: string;
     autoWeekends: boolean;
   };
-  brief: { enabled: boolean; lastMessages: number };
+  brief: { enabled: boolean; lastMessages: number; range: BriefRange };
   /** Relances : proposer de relancer une question restée sans réponse depuis delayHours heures ouvrées. */
   followUps: { enabled: boolean; delayHours: number };
   /** Archivage : sans activité depuis afterDays jours (0 : jamais), et masquer aussi dans Teams (Graph). */
@@ -175,6 +175,9 @@ export interface PublishPlan {
   blocked: string;
 }
 
+/** Période lue pour un résumé : les N derniers messages, ou une plage de temps. */
+export type BriefRange = "messages" | "today" | "24h" | "7d" | "30d";
+
 export interface SettingsPatch {
   onboarded?: boolean;
   brain?: Brain;
@@ -212,7 +215,7 @@ export interface Brief {
   topics: string[];
   githubEnabled: boolean;
   github: BriefGithubItem[];
-  sources: { messages: number; reposSearched: number };
+  sources: { messages: number; reposSearched: number; range: BriefRange };
 }
 
 /** Le petit jeu de réactions de Teams. */

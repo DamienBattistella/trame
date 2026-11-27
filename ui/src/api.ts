@@ -6,6 +6,7 @@ import {
   BriefGithubItem,
   GithubState,
   FactCheck,
+  BriefRange,
   DraftItem,
   Effort,
   ConversationSort,
@@ -59,6 +60,8 @@ import { demoCorrect } from "@/lib/demoCorrect";
 import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
 import { demoSkills } from "@/lib/demoSkills";
 import { demoPrompt, demoSession, demoTurn } from "@/lib/demoReport";
+
+const BRIEF_RANGES: readonly unknown[] = ["messages", "today", "24h", "7d", "30d"] satisfies BriefRange[];
 
 /** Moteur Trame local. VITE_TRAME_PORT ne sert qu'au dev, pour un moteur de test. */
 export const ENGINE = `127.0.0.1:${import.meta.env.VITE_TRAME_PORT || "8731"}`;
@@ -341,6 +344,7 @@ function mapSettings(s: any): Settings {
     brief: {
       enabled: b.enabled === undefined ? true : Boolean(b.enabled),
       lastMessages: Number(b.last_messages ?? 30),
+      range: BRIEF_RANGES.includes(b.range) ? b.range : "messages",
     },
     followUps: {
       enabled: s?.follow_ups?.enabled === undefined ? true : Boolean(s.follow_ups.enabled),
@@ -401,7 +405,11 @@ function mapBrief(b: any): Brief {
     topics: b.topics ?? [],
     githubEnabled: Boolean(b.github_enabled),
     github: (b.github ?? []).map(mapGithub),
-    sources: { messages: Number(b.sources?.messages ?? 0), reposSearched: Number(b.sources?.repos_searched ?? 0) },
+    sources: {
+      messages: Number(b.sources?.messages ?? 0),
+      reposSearched: Number(b.sources?.repos_searched ?? 0),
+      range: BRIEF_RANGES.includes(b.sources?.range) ? b.sources.range : "messages",
+    },
   };
 }
 function mapGithub(g: any): BriefGithubItem {
@@ -559,6 +567,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     const b: Record<string, unknown> = {};
     if (p.brief.enabled !== undefined) b.enabled = p.brief.enabled;
     if (p.brief.lastMessages !== undefined) b.last_messages = p.brief.lastMessages;
+    if (p.brief.range !== undefined) b.range = p.brief.range;
     out.brief = b;
   }
   if (p.followUps) {
@@ -670,7 +679,7 @@ let localSettings: Settings = {
     autoQuietTo: "08:00",
     autoWeekends: true,
   },
-  brief: { enabled: true, lastMessages: 30 },
+  brief: { enabled: true, lastMessages: 30, range: "messages" },
   followUps: { enabled: true, delayHours: 24 },
   archive: { afterDays: 0, hideInTeams: false },
   telemetry: { enabled: false, endpoint: "", includeContent: false },
@@ -1965,13 +1974,18 @@ export function useTrame() {
     if (!res.ok) return res;
     return { ok: true, brief: res.brief ? mapBrief(res.brief) : null };
   };
-  const generateBrief = async (threadId: string, lastMessages?: number): Promise<Result<{ brief: Brief }>> => {
+  const generateBrief = async (
+    threadId: string,
+    opts: { lastMessages?: number; range?: BriefRange } = {}
+  ): Promise<Result<{ brief: Brief }>> => {
+    const { lastMessages, range } = opts;
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
       await wait(3600);
       const conv = stateRef.current.watchlist.find((w) => w.threadId === threadId);
       const brief = mockBrief(threadId, conv?.displayName ?? "Conversation", {
         lastMessages: lastMessages ?? localSettings.brief.lastMessages,
+        range: range ?? localSettings.brief.range,
         github: localSettings.github.enabled,
       });
       if (!demoGithubStatus().loggedIn) {
@@ -1984,7 +1998,10 @@ export function useTrame() {
     const res = await request<{ brief: unknown }>(
       "POST",
       `/api/threads/${encodeURIComponent(threadId)}/brief`,
-      lastMessages !== undefined ? { last_messages: lastMessages } : {}
+      {
+        ...(lastMessages !== undefined && { last_messages: lastMessages }),
+        ...(range !== undefined && { range }),
+      }
     );
     return res.ok ? { ok: true, brief: mapBrief(res.brief) } : res;
   };

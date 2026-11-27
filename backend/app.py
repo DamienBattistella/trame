@@ -22,7 +22,7 @@ import journal as journalmod
 import soul_template as soultpl
 from mcp_server import make_router as make_mcp_router
 import settings as settingsmod
-from settings import SettingsPatch
+from settings import BriefRange, SettingsPatch
 from watcher import ActionError, Watcher
 from models import MessageRef, Reaction
 from brain.base import Brain
@@ -268,6 +268,7 @@ class StatusMessageBody(BaseModel):
 
 class BriefBody(BaseModel):
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
+    range: Optional[BriefRange] = None
 
 
 SOUL_SAMPLE = "Salut, tu peux jeter un œil à la PR #214 avant demain ? Je bloque sur le mapping OBX."
@@ -479,7 +480,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/brief")
     def post_brief(thread_id: str, body: Optional[BriefBody] = None):
-        brief = watcher.generate_brief(thread_id, body.last_messages if body else None)
+        brief = watcher.generate_brief(thread_id, body.last_messages if body else None, body.range if body else None)
         return {"ok": True, "brief": brief.model_dump()}
 
     @app.get("/api/threads/{thread_id:path}/messages")

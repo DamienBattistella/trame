@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 BrainName = Literal["claude", "copilot"]
 Effort = Literal["", "low", "medium", "high", "xhigh", "max"]
+# Période lue pour un résumé : les N derniers messages, ou une plage de temps.
+BriefRange = Literal["messages", "today", "24h", "7d", "30d"]
+BRIEF_RANGES: tuple[str, ...] = ("messages", "today", "24h", "7d", "30d")
 # A model is passed as a command-line value: alias or full name only, never an option.
 _MODEL = re.compile(r"^(|[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79})$")
 
@@ -101,6 +104,7 @@ class SafetySettings(BaseModel):
 class BriefSettings(BaseModel):
     enabled: bool
     last_messages: int = Field(ge=10, le=100)
+    range: BriefRange = "messages"
 
 
 class FollowUpSettings(BaseModel):
@@ -223,6 +227,7 @@ class SafetyPatch(_Patch):
 class BriefPatch(_Patch):
     enabled: Optional[bool] = None
     last_messages: Optional[int] = Field(default=None, ge=10, le=100)
+    range: Optional[BriefRange] = None
 
 
 class FollowUpPatch(_Patch):
@@ -324,6 +329,7 @@ def from_config(cfg: dict) -> Settings:
         brief=BriefSettings(
             enabled=bool(brief.get("enabled", True)),
             last_messages=_int(brief.get("last_messages", 30), 30, 10, 100),
+            range=brief.get("range") if brief.get("range") in BRIEF_RANGES else "messages",
         ),
         follow_ups=FollowUpSettings(enabled=bool((cfg.get("follow_ups") or {}).get("enabled", True)),
                                     delay_hours=follow_up_delay(cfg.get("follow_ups") or {})),

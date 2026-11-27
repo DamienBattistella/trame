@@ -432,10 +432,15 @@ class WebBridgeDriver(TeamsDriver):
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         return self.read_history(thread_id, last_n)[0]
 
-    def read_history(self, thread_id: str, last_n: int) -> tuple[list[IncomingMessage], bool]:
+    def read_history(self, thread_id: str, last_n: int,
+                     since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
         surface = self._kinds.get(thread_id, Surface.dm)
-        # Going back in the history scrolls Teams up until enough messages were seen.
-        res = self._rpc("read", last=last_n, timeout=30) or {}
+        # Going back in the history scrolls Teams up until enough messages were seen, or
+        # until a message older than `since` (epoch ms, read from each message's date).
+        args: dict[str, Any] = {"last": last_n}
+        if since is not None:
+            args["since"] = int(since.timestamp() * 1000)
+        res = self._rpc("read", timeout=30, **args) or {}
         raw, top = res.get("messages") or [], bool(res.get("top"))
         # A meeting chat: the page gives the meeting's join link, checked before keeping it.
         self._note_meeting(thread_id, res.get("meeting"))
