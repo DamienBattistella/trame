@@ -12,7 +12,7 @@ import presence as presencemod
 from drivers import rail_label
 from drivers.base import DeleteUncertain, NeedsView, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
-from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, Surface,
+from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, QuoteRef, Surface,
                     WatchEntity)
 
 
@@ -105,6 +105,25 @@ def _cards(raw: Any) -> list[CardRef]:
                       url=_web_url(card.get("url")), fields=[f for f in (_one_line(x, 120) for x in fields[:3]) if f])
         if ref.title or ref.url:
             out.append(ref)
+    return out
+
+
+def _quote(raw: Any) -> Optional[QuoteRef]:
+    """Le message cité par une réponse, lu par la page : auteur, heure, extrait (borné)."""
+    if not isinstance(raw, dict):
+        return None
+    text = raw.get("text") if isinstance(raw.get("text"), str) else ""
+    ref = QuoteRef(sender=_one_line(raw.get("sender"), 200), at=_one_line(raw.get("at"), 40), text=text.strip()[:2000])
+    return ref if ref.sender or ref.text else None
+
+
+def _mentions(raw: Any) -> list[str]:
+    """Personnes mentionnées dans le message (@nom), sans doublon."""
+    out: list[str] = []
+    for name in (raw if isinstance(raw, list) else [])[:20]:
+        name = _one_line(name, 200)
+        if name and name not in out:
+            out.append(name)
     return out
 
 
@@ -602,7 +621,10 @@ class WebBridgeDriver(TeamsDriver):
                                         received_at=m.get("at") or "", surface=surface, id=(m.get("id") or None),
                                         reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
                                         files=files, images=images, seen=_seen(m.get("status")), deleted=deleted,
-                                        links=[] if deleted else links, cards=[] if deleted else cards))
+                                        links=[] if deleted else links, cards=[] if deleted else cards,
+                                        quote=None if deleted else _quote(m.get("quote")),
+                                        mentions=[] if deleted else _mentions(m.get("mentions")),
+                                        edited=not deleted and m.get("edited") is True))
         return msgs
 
     @staticmethod

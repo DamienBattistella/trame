@@ -70,9 +70,21 @@ class IncomingMessage(BaseModel):
     # n'est pas l'adresse) et cartes d'aperçu (Jira, site…) résumées, jamais dans `text`.
     links: list["LinkRef"] = Field(default_factory=list)
     cards: list["CardRef"] = Field(default_factory=list)
+    # Message cité (« Répondre » dans Teams) : son auteur, son heure, son extrait. Jamais
+    # dans `text`, qui ne garde que la réponse.
+    quote: Optional["QuoteRef"] = None
+    # Modifié par son auteur après l'envoi (« Modifié » dans Teams).
+    edited: bool = False
 
     def brain_text(self) -> str:
-        return brain_text(self.text, self.links, self.cards)
+        return brain_text(self.text, self.links, self.cards, self.quote)
+
+
+class QuoteRef(BaseModel):
+    """Le message cité par une réponse, tel que Teams le montre au-dessus d'elle."""
+    sender: str = ""
+    at: str = ""
+    text: str = ""
 
 
 class LinkRef(BaseModel):
@@ -95,10 +107,13 @@ class CardRef(BaseModel):
         return f"[aperçu {head}{f' ({tail})' if tail else ''}{f' {self.url}' if self.url else ''}]"
 
 
-def brain_text(text: str, links: list[LinkRef], cards: list[CardRef]) -> str:
-    """Le texte d'un message pour le cerveau : chaque lien « texte (adresse) », puis une
-    ligne par carte d'aperçu, sans ses libellés ni boutons. Les adresses y restent visibles
-    pour le contexte GitHub et la vérification des faits."""
+def brain_text(text: str, links: list[LinkRef], cards: list[CardRef], quote: Optional[QuoteRef] = None) -> str:
+    """Le texte d'un message pour le cerveau : la citation à laquelle il répond, chaque lien
+    « texte (adresse) », puis une ligne par carte d'aperçu, sans ses libellés ni boutons. Les
+    adresses y restent visibles pour le contexte GitHub et la vérification des faits."""
+    if quote is not None and (quote.text or quote.sender):
+        when = f" ({quote.at})" if quote.at else ""
+        text = f"(en réponse à {quote.sender or 'un message'}{when} : « {' '.join(quote.text.split())} »)\n{text}"
     for link in links:
         if link.url in text or link.text == link.url:
             continue

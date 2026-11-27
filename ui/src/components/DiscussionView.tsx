@@ -92,6 +92,8 @@ const proposalRef = (m: ThreadMessage): MessageRef => {
   ];
   return { ...refOf(m), text: m.text.trim() || named.join("\n") };
 };
+/** « Modifié », comme Teams à côté de l'heure d'un message modifié après l'envoi. */
+const Edited = () => <span title="Message modifié après l'envoi">Modifié</span>;
 const excerpt = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 /** Citation d'un message, dans le fil ou au-dessus de la zone de saisie (comme une réponse Teams). */
 function Quote({ target, className, children }: { target: MessageRef; className?: string; children?: React.ReactNode }) {
@@ -931,6 +933,7 @@ export function DiscussionView({
                 const targeted = sameRef(replyTo, m);
                 const isFound = i === foundIndex;
                 const pending = reacting?.index === i ? reacting.reaction : null;
+                const edited = Boolean(m.edited && !m.deleted);
                 const body = m.deleted ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground italic">
                     <Ban className="size-3.5 shrink-0" />
@@ -938,10 +941,11 @@ export function DiscussionView({
                   </span>
                 ) : (
                   <>
-                    {m.replyTo && <Quote target={m.replyTo} />}
+                    {(m.replyTo || m.quote) && <Quote target={(m.replyTo || m.quote)!} />}
                     <MessageText
                       text={m.text}
                       links={m.links}
+                      mentions={m.mentions}
                       jira={jira}
                       rich
                       range={isFound ? findFolded(m.text, foundQuery) : null}
@@ -1009,7 +1013,7 @@ export function DiscussionView({
                           <div
                             title={row.tail ? undefined : m.at}
                             className={cn(
-                              "flex max-w-full flex-col gap-1.5 rounded-2xl bg-muted px-3.5 py-2 text-[0.9375rem] leading-relaxed whitespace-pre-wrap",
+                              "flex max-w-full flex-col gap-1.5 rounded-2xl bg-muted px-3.5 py-2 text-sm leading-5 whitespace-pre-wrap",
                               isFound && "ring-2 ring-warning/70",
                               targeted && "ring-2 ring-link/50"
                             )}
@@ -1018,7 +1022,13 @@ export function DiscussionView({
                             <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} onFileLink={fileLink} />
                           </div>
                           {reactions}
-                          {row.tail && m.at && <span className="mr-1 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                          {((row.tail && m.at) || edited) && (
+                            <span className="mr-1 text-xs text-muted-foreground tabular-nums">
+                              {row.tail && m.at}
+                              {row.tail && m.at && edited && " · "}
+                              {edited && <Edited />}
+                            </span>
+                          )}
                         </>
                       ) : (
                         <>
@@ -1035,12 +1045,14 @@ export function DiscussionView({
                               <div className="flex items-baseline gap-2 leading-tight">
                                 <span className="truncate text-sm font-semibold">{m.sender}</span>
                                 {m.at && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{m.at}</span>}
+                                {edited && <span className="shrink-0 text-xs text-muted-foreground"><Edited /></span>}
                               </div>
                             )}
-                            <div className="flex flex-col gap-1.5 text-[0.9375rem] leading-relaxed whitespace-pre-wrap">
+                            <div className="flex flex-col gap-1.5 text-sm leading-5 whitespace-pre-wrap">
                               {body}
                               <MessageAttachments files={m.files} images={m.images} sender={m.sender} onOpenTeams={openInTeams} onFileLink={fileLink} />
                             </div>
+                            {edited && !row.head && <span className="text-xs text-muted-foreground"><Edited /></span>}
                             {reactions}
                           </div>
                         </>
