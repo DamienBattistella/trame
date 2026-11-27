@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
+from typing import Optional, Sequence
 
 # A model sometimes announces its answer (« Réponse à Sébastien (pair, tutoiement) : »)
 # before writing it, at times after a few lines of reasoning (« Hugo demande… Je ne peux
@@ -31,6 +32,8 @@ class Brain(ABC):
     label = ""
     # Longest prompt this brain takes (None: no limit of its own).
     max_prompt_chars: int | None = None
+    # Whether `draft` and `complete` can look at images (data URLs, JPEG or PNG).
+    supports_images = False
 
     @abstractmethod
     def draft(self, soul: str, thread_summary: str, incoming: str, github_context: str = "", people_context: str = "") -> str:
@@ -40,10 +43,13 @@ class Brain(ABC):
         """Run a free-form prompt and return the raw text answer."""
         raise RuntimeError("Ce cerveau ne sait pas traiter une demande libre.")
 
-    def ask(self, prompt: str, timeout: float | None = None) -> str:
+    def ask(self, prompt: str, timeout: float | None = None, images: Sequence[str] = ()) -> str:
         """`complete`, with the active skills offered to the model: it may ask for the
-        text of one before answering (skills.run). Without active skill, the same call."""
+        text of one before answering (skills.run). Without active skill, the same call.
+        images: shown to the model with the prompt, on a brain that supports them."""
         import skills
+        if images and self.supports_images:
+            return skills.run(lambda p: self.complete(p, timeout, images=images), prompt, budget=self.max_prompt_chars)
         return skills.run(lambda p: self.complete(p, timeout), prompt, budget=self.max_prompt_chars)
 
     def correct(self, text: str) -> str:
@@ -52,7 +58,8 @@ class Brain(ABC):
         return parse_correction(self.ask(build_correct_prompt(text)), text)
 
 
-def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "") -> str:
+def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: str, people_context: str = "",
+                 images: int = 0) -> str:
     parts = [
         soul.strip(),
         "\nTu rédiges UNIQUEMENT la réponse à envoyer, dans la voix définie ci-dessus.",
@@ -67,6 +74,8 @@ def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: 
         )
     if thread_summary:
         parts.append(f"\nContexte du fil (derniers messages) :\n{thread_summary}")
+    if images:
+        parts.append(f"\n{images_note(images)}")
     if github_context:
         parts.append(
             "\nContexte GitHub pertinent (lu à l'instant, fait foi) : si la question y trouve sa réponse, "
@@ -74,3 +83,23 @@ def build_prompt(soul: str, thread_summary: str, incoming: str, github_context: 
         )
     parts.append(f"\nDernier message reçu :\n{incoming}\n\nRéponse :")
     return "\n".join(parts)
+
+
+def images_note(count: int) -> str:
+    """Tells the model which images come with the prompt: those marked [image n] in the thread."""
+    which = "L'image marquée [image 1] dans le fil est jointe" if count == 1 else \
+        f"Les {count} images marquées [image 1] à [image {count}] dans le fil sont jointes"
+    return (f"{which} à cette demande, dans cet ordre. Regarde-les : elles font partie des messages "
+            "(capture d'écran, message d'erreur, document). Appuie ta réponse sur ce qu'elles montrent "
+            "au lieu de redemander ce qui y figure déjà.")
+
+
+_DATA_URL = re.compile(r"^data:image/(jpeg|png);base64,([A-Za-z0-9+/]+=*)$")
+
+
+def image_block(data_url: str) -> Optional[dict]:
+    """A JPEG or PNG data URL as a Messages API image block; None for anything else."""
+    m = _DATA_URL.match(data_url or "")
+    if not m:
+        return None
+    return {"type": "image", "source": {"type": "base64", "media_type": f"image/{m.group(1)}", "data": m.group(2)}}
