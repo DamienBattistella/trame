@@ -169,12 +169,33 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
 - Effet : lire un fil ne change plus la conversation affichée dans la fenêtre Teams et ne la
   marque plus comme lue.
 
+### 5. Liste, non-lus et nouveaux messages — op `chatlist`
+
+- La page lit `…/conversations` : liste complète au premier passage (3 pages de 100), ensuite
+  **seulement ce qui a changé** (`syncState` rendu au tour précédent), à chaque coup d'œil (5 s).
+  Une ligne compacte par conversation : id Teams, sorte (`dm`, `group`, `meeting`, `self`), sujet,
+  horizon de lecture (`consumptionhorizon`), dernier message converti comme un message du fil.
+- Le nom de l'autre personne d'un tête-à-tête est demandé au middletier du locataire
+  (`beta/users/fetchShortProfile`, bearer de Teams, gardé en mémoire de la page).
+- **La liste visible reste celle de la page** (noms, ordre, présence, favoris) et **aucun
+  identifiant de Trame ne change** (`title-19:…` pour les groupes, `name:…` pour les tête-à-tête :
+  rien à migrer). `WebApiDriver` relie chaque conversation de la page à son id Teams : directement
+  pour les groupes, par le nom pour les tête-à-tête (jamais deux homonymes). Il en tire :
+  - l'id Teams des tête-à-tête (`chat_aliases`) : leur fil se lit aussi sans les ouvrir ;
+  - les **non-lus** : dernier message d'un autre plus récent que l'horizon de lecture ;
+  - les **nouveaux messages** : changement du dernier message, avec texte complet, id et auteur
+    exact ; jamais les miens ni les événements, jamais de rafale au démarrage.
+- Les conversations non reliées gardent la détection par aperçu de la page. Si le service refuse,
+  tout repasse par la page (aperçus suivis en continu : pas de rafale), puis la synchro repart
+  d'une liste complète.
+- Diagnostic (`teams_web.chat_map`) : comptes par sorte, conversations reliées, non-lus (ids et
+  horizon seulement).
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
 2. ~~Session chatsvc dans la page~~ (#121).
-3. **Lectures** : lecture d'un fil (cette PR) ; puis liste et non-lus, surveillance des nouveaux
-   messages (sondage `syncState`), repli DOM par action.
+3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (cette PR).
 4. **Écritures prouvées par relecture** : marquer comme lu (`consumptionhorizon`), réactions
    (`properties?name=emotions`), envoi (relu par `clientmessageid`), réponse citée, suppression,
    avec tous les garde-fous de `backend/safety.py`.

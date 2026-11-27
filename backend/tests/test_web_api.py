@@ -35,8 +35,9 @@ def test_webapi_routes_lists_every_action_read_on_the_chat_service():
     d = WebApiDriver(FakeInner())
     routes = d.routes()
     assert set(routes) == set(ACTIONS)
-    assert routes["read"]["via"] == "api"
-    assert all(r["via"] == "page" for a, r in routes.items() if a != "read")
+    on_api = {"read", "watch", "unread"}
+    assert all(routes[a]["via"] == "api" for a in on_api)
+    assert all(r["via"] == "page" for a, r in routes.items() if a not in on_api)
 
 
 class ApiReader(FakeInner):

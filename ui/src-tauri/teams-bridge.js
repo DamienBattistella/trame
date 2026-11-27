@@ -302,6 +302,18 @@
       }
       return best ? best.authorization : "";
     };
+    // Base des API middletier de CE locataire (« https://teams.cloud.microsoft/api/mt/part/emea-03/ »),
+    // relevée sur les appels que Teams fait lui-même. Pas un secret : un chemin.
+    const mtBase = () => {
+      let best = null;
+      for (const [k, v] of credsByPath) {
+        const [host, pathname] = k.split("\n");
+        const m = /^(\/api\/mt\/part\/[a-z0-9-]+\/)/i.exec(pathname);
+        if (!m || !/(^|\.)teams\.(microsoft\.com|cloud\.microsoft)$/i.test(host)) continue;
+        if (!best || (v.at || 0) > best.at) best = { base: `https://${host}${m[1]}`, at: v.at || 0 };
+      }
+      return best ? best.base : "";
+    };
     // Source du credential retenu pour une URL (pour l'auto-test) : "path" | "host" | "none".
     const credsSource = (rawUrl) => {
       try {
@@ -476,7 +488,7 @@
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, summary, safeProbe: () => probeUrl };
+    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, mtBase, summary, safeProbe: () => probeUrl };
   })();
 
   // --- Service de chat de Teams (chatsvc), appelé DANS la page --------------------------
@@ -638,7 +650,32 @@
         return null;
       }
     };
-    return { get, selftest, image, me: () => (session ? session.me : ""), last: () => lastTest };
+    // Noms affichés de personnes (mri « 8:orgid:… »), demandés au middletier comme le fait Teams
+    // (fetchShortProfile), gardés en mémoire de la page. Sert à nommer les tête-à-tête.
+    const names = new Map(); // mri -> displayName
+    const people = async (mris) => {
+      const want = Array.from(new Set((mris || []).filter((m) => /^8:[A-Za-z0-9:._-]{3,120}$/.test(m) && !names.has(m)))).slice(0, 100);
+      const base = apiCapture.mtBase();
+      const bearer = apiCapture.mtBearer();
+      if (want.length && base && bearer) {
+        try {
+          const url = `${base}beta/users/fetchShortProfile?isMailAddress=false&enableGuest=true&skypeTeamsInfo=true&canBeSmtpAddress=false&includeIBBarredUsers=true&includeDisabledAccounts=true`;
+          const res = await fetch(url, {
+            method: "POST",
+            credentials: "omit",
+            headers: { Authorization: bearer, "Content-Type": "application/json" },
+            body: JSON.stringify(want),
+          });
+          const body = res.ok ? JSON.parse(await res.text()) : null;
+          for (const p of (body && body.value) || []) {
+            const name = String((p && p.displayName) || "").trim();
+            if (p && p.mri && name) names.set(String(p.mri), name);
+          }
+        } catch {}
+      }
+      return Object.fromEntries((mris || []).filter((m) => names.has(m)).map((m) => [m, names.get(m)]));
+    };
+    return { get, selftest, image, people, me: () => (session ? session.me : ""), last: () => lastTest };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -2022,6 +2059,93 @@
     };
   })();
 
+  // --- Liste des conversations par le service de chat ---
+  // Une ligne compacte par conversation : id Teams, sorte, sujet, dernier message (converti
+  // comme un message du fil), horizon de lecture. Première lecture complète (quelques pages),
+  // ensuite seulement ce qui a changé (`sync`, le syncState rendu au tour précédent).
+  const chatList = (() => {
+    const FULL_PAGES = 3;
+    const mriOf = (from) => {
+      const m = /\/contacts\/([^/?#]+)$/.exec(String(from || ""));
+      return m ? decodeURIComponent(m[1]) : String(from || "").startsWith("8:") ? String(from) : "";
+    };
+    const kindOf = (id, tp) =>
+      id === "48:notes" ? "self"
+      : /@unq\.gbl\.spaces$/.test(id) ? "dm"
+      : /@thread\.(v2|skype)$/.test(id) ? (/meeting/i.test(String((tp && tp.productThreadType) || "")) || (tp && tp.meeting) ? "meeting" : "group")
+      : "other";
+    // L'autre personne d'un tête-à-tête : « 19:<guid A>_<guid B>@unq.gbl.spaces ».
+    const otherOf = (id, me) => {
+      const m = /^19:([0-9a-f-]{36})_([0-9a-f-]{36})@unq\.gbl\.spaces$/i.exec(id);
+      if (!m) return "";
+      const mine = String(me || "").split(":").pop().toLowerCase();
+      const g = m[1].toLowerCase() === mine ? m[2] : m[1];
+      return `8:orgid:${g}`;
+    };
+    const syncOf = (meta) => {
+      try {
+        return (meta && meta.syncState && new URL(meta.syncState).searchParams.get("syncState")) || "";
+      } catch {
+        return "";
+      }
+    };
+    const row = (c, me) => {
+      const tp = c.threadProperties || {};
+      const props = c.properties || {};
+      const last = c.lastMessage || {};
+      const lastTs = Date.parse(last.originalarrivaltime || last.composetime || "");
+      const conv = last.id ? chatMessage.convert(last, me, chatMessage.parseHtml, messageParts) : null;
+      return {
+        id: String(c.id || ""),
+        kind: kindOf(String(c.id || ""), tp),
+        topic: String(tp.topic || "").trim(),
+        hidden: String(tp.hidden || props.hidden || "") === "true",
+        empty: String(props.isemptyconversation || "").toLowerCase() === "true",
+        other: otherOf(String(c.id || ""), me),
+        horizon: Number(String(props.consumptionhorizon || "").split(";")[0]) || 0,
+        last: last.id
+          ? {
+              id: String(last.id),
+              ts: Number.isFinite(lastTs) ? lastTs : 0,
+              from: mriOf(last.from),
+              sender: String(last.imdisplayname || "").trim(),
+              user: chatMessage.isUser(last),
+              text: conv ? conv.text : "",
+              files: conv ? conv.files.length : 0,
+              images: conv ? conv.images.length : 0,
+              at: conv ? conv.at : "",
+            }
+          : null,
+      };
+    };
+    return async ({ sync = "" } = {}) => {
+      const path = "/v1/users/ME/conversations";
+      let query = sync ? { view: "msnp24Equivalent", syncState: sync } : { view: "msnp24Equivalent", pageSize: 100 };
+      const rows = [];
+      let next = "";
+      for (let page = 0; page < (sync ? 1 : FULL_PAGES); page++) {
+        const r = await chatsvc.get({ path, query });
+        if (!r.ok) return { ok: false, stage: r.stage, status: r.status || 0, error: r.error || "liste refusée par le service de chat" };
+        const me = chatsvc.me();
+        for (const c of (r.json && r.json.conversations) || []) if (c && c.id) rows.push(row(c, me));
+        const meta = (r.json && r.json._metadata) || {};
+        if (page === 0) next = syncOf(meta);
+        const back = meta.backwardLink;
+        if (sync || !back) break;
+        try {
+          const q = new URL(back).searchParams;
+          query = { view: "msnp24Equivalent" };
+          for (const k of ["pageSize", "startTime", "syncState"]) if (q.get(k)) query[k] = q.get(k);
+        } catch {
+          break;
+        }
+      }
+      const people = await chatsvc.people(rows.filter((r) => r.kind === "dm" && r.other).map((r) => r.other));
+      for (const r of rows) r.name = r.kind === "dm" ? people[r.other] || "" : r.topic;
+      return { ok: true, me: chatsvc.me(), rows, sync: next, full: !sync };
+    };
+  })();
+
   // --- Mentions (@quelqu'un) ---
   // Teams n'ouvre ses suggestions de mention que sur une vraie frappe : les événements
   // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
@@ -2616,6 +2740,8 @@
     chatsvc: ({ path, query }) => chatsvc.get({ path, query }),
     // Un fil lu sur le service de chat, sans ouvrir la conversation : même forme que `read`.
     chatread: (args) => chatThread(args || {}),
+    // La liste des conversations sur le service de chat (complète, puis ce qui a changé).
+    chatlist: (args) => chatList(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.
