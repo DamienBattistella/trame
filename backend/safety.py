@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re
 import unicodedata
+from typing import Optional
 
 AUTO_MARK = "🤖"
 
@@ -85,3 +86,56 @@ def should_react(
             return True
         return any(p in mentions for p in named_people)
     return False
+
+
+# --- Ce que Trame peut faire, et ce qu'il laisse à l'utilisateur ---
+# Trame n'écrit que des messages dans Teams. Il n'a accès à aucun environnement, serveur,
+# fichier de logs, base de données, déploiement ou outil interne, et ne lit GitHub que pour
+# le contexte qu'il ajoute lui-même au prompt. Une demande d'action que seul l'utilisateur peut
+# mener, ou une réponse qui l'engage à agir, ne part donc jamais toute seule en mode Auto :
+# elle reste en brouillon, pour que l'utilisateur décide.
+
+# Une demande d'agir sur un système : « tu peux regarder les logs de la recette ? »,
+# « relance le service sur ws004 », « can you check the prod DB ».
+_ASK = (r"(?:peux|pourrais|pourriez|pouvez|peut|merci de|stp|svp|tu|vous|can you|could you|please|pls)\b.{0,60}?"
+        r"\b(?:regarde\w*|v[eé]rifi\w*|check\w*|cherch\w*|r[eéè]cup[eéè]r\w*|extrai\w*|envoi\w*|envoy\w*|transf[eéè]r\w*|"
+        r"d[eé]ploi\w*|d[eé]ploy\w*|livr\w*|lanc\w*|relanc\w*|red[eé]marr\w*|restart\w*|rebo\w*|install\w*|"
+        r"migr\w*|purg\w*|supprim\w*|cr[eé]\w*|ouvr\w*|donn\w*|ajout\w*|corrig\w*|fix\w*|run\w*|ex[eé]cut\w*|"
+        r"look|pull|fetch|send|deploy|grab|get)\b")
+_SYSTEM = (r"\b(?:logs?|journaux|traces?|stack ?trace|serveurs?|server|vm|machines?|environnements?|envs?|prod|"
+           r"production|pr[eé]prod|recette|staging|qa|int[eé]gration|dev|base(?:s)? de donn[eé]es|bdd|db|database|"
+           r"sql|requ[eê]tes?|tables?|dump|backup|sauvegarde|pipeline|ci|job|cluster|pods?|conteneurs?|containers?|"
+           r"docker|kubernetes|k8s|ssh|acc[eè]s|droits?|comptes?|mot de passe|password|fichiers?|files?|dossiers?|"
+           r"partage|r[eé]pertoire|ticket|jira)\b")
+_ASK_RE = re.compile(_ASK, re.IGNORECASE | re.DOTALL)
+_SYSTEM_RE = re.compile(_SYSTEM, re.IGNORECASE)
+
+# Une réponse qui engage l'utilisateur à agir (« je regarde », « je te l'envoie », « je relance »).
+_COMMIT_RE = re.compile(
+    r"\b(?:je|j'|on)\s*(?:vais\s+|te\s+|vous\s+|t'|v'|le\s+|la\s+|les\s+|l')*"
+    r"(?:regarde|v[eé]rifie|check|cherche|r[eéè]cup[eéè]re|envoie|transf[eéè]re|d[eé]ploie|livre|lance|relance|"
+    r"red[eé]marre|installe|corrige|m'en occupe|m'occupe|reviens|fais|ferai|regarderai|enverrai|relancerai|"
+    r"m'en charge)\b",
+    re.IGNORECASE)
+
+
+def asks_for_action(text: str) -> bool:
+    """Le message demande d'agir sur un système (logs, serveur, environnement, base, accès…) :
+    une action que Trame ne peut pas mener, seul l'utilisateur le peut."""
+    plain = (text or "").replace("’", "'")
+    return bool(_ASK_RE.search(plain) and _SYSTEM_RE.search(plain))
+
+
+def commits_to_action(reply: str) -> bool:
+    """La réponse engage l'utilisateur à faire quelque chose (« je regarde », « je te l'envoie »)."""
+    return bool(_COMMIT_RE.search((reply or "").replace("’", "'")))
+
+
+def beyond_capabilities(incoming: str, reply: str) -> Optional[str]:
+    """Pourquoi une réponse automatique doit attendre l'utilisateur parce qu'elle touche à une
+    action que Trame ne peut pas mener ; None quand elle peut partir."""
+    if asks_for_action(incoming):
+        return "le message demande une action sur un système (logs, serveur, environnement…) que Trame ne peut pas faire"
+    if commits_to_action(reply):
+        return "la réponse t'engage à agir"
+    return None
