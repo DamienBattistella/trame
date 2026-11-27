@@ -137,7 +137,8 @@ def same_file(wanted: str, label: str) -> bool:
 def shows(message: dict, text: str, names: Iterable[str]) -> bool:
     """Ce message du fil (tel que la lecture le donne) montre-t-il ce texte et ces fichiers ?
     Une image affichée sans son nom vaut pour une image voulue."""
-    if text and _fold(text)[:40] not in _fold(message.get("text") or ""):
+    # Une mention s'affiche sans son « @ » une fois envoyée : comparés sans « @ » des deux côtés.
+    if text and _fold(text).replace("@", "")[:40] not in _fold(message.get("text") or "").replace("@", ""):
         return False
     shown = [f.get("name", "") for f in message.get("files") or []]
     images = len(message.get("images") or [])

@@ -285,3 +285,75 @@ def test_recent_conversations_beyond_the_page_stay_in_the_list_tick_after_tick_a
     page.rows = [row(far, "group", "Équipe lointaine", now + 5000, text="Nouveau message")]
     got = tick(d)
     assert [(m.thread_id, m.text) for m in got] == [("title-" + far, "Nouveau message")]
+
+
+# --- revue de la réception (nov. 2026) : jamais deux fois le même message, liens prouvés ---
+
+def _now_ms():
+    import time as _t
+    return int(_t.time() * 1000)
+
+
+def test_a_message_seen_by_the_page_while_the_service_was_down_is_not_signalled_again():
+    now = _now_ms()
+    page = FakePage([row(GROUP, "group", "Projet X", now - 600000, sender="Paul", frm="8:orgid:paul", text="bonjour")])
+    d = WebApiDriver(page)
+    tick(d)
+    page.fail = "HTTP 401"
+    page.labels["title-" + GROUP] = "Chat Projet X Last message Paul: tu es dispo ? 10:06"
+    down = tick(d)
+    assert [m.text for m in down] == ["tu es dispo ?"]
+    page.fail = None
+    page.rows = [row(GROUP, "group", "Projet X", now, sender="Paul", frm="8:orgid:paul", text="tu es dispo ?")]
+    assert tick(d) == []  # le service le relit : déjà signalé par la page
+
+
+def test_one_to_one_whose_proof_fails_once_keeps_its_link_one_tick_and_is_signalled_once():
+    now = _now_ms()
+    page = FakePage([row(DM, "dm", "Ana Martin", now - 600000, text="Salut")])
+    d = WebApiDriver(page)
+    tick(d)
+    assert d._chat.mapped.get("name:Ana Martin") == DM
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message Nouveau 10:05"
+    first = tick(d)  # la page voit le message une seconde avant le service
+    page.rows = [row(DM, "dm", "Ana Martin", now, text="Nouveau")]
+    second = tick(d)
+    assert len(first) + len(second) == 1
+    assert "name:Ana Martin" not in d._chat.strong or second  # jamais écrit sur une preuve manquée
+
+
+def test_a_conversation_added_from_the_service_does_not_bypass_the_proof_once_the_page_shows_it():
+    now = _now_ms()
+    page = FakePage([row(DM, "dm", "Ana Martin", now - 600000, text="Salut")])
+    del page.labels["name:Ana Martin"]
+    d = WebApiDriver(page)
+    tick(d)
+    assert d._chat.extra.get("name:Ana Martin") == DM and d._chat.started == {}
+    # La page montre maintenant « Ana Martin », mais une autre conversation (aperçu sans rapport).
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message Une tout autre conversation 08:12"
+    tick(d)
+    assert "name:Ana Martin" not in d._chat.strong
+
+
+def test_full_list_read_keeps_the_conversations_added_from_the_service():
+    now = _now_ms()
+    far = "19:far@thread.v2"
+    page = FakePage([row(GROUP, "group", "Projet X", 1), row(far, "group", "Équipe lointaine", now)])
+    page.list_all_conversations = lambda: page._entities(page._items())
+    d = WebApiDriver(page)
+    assert "title-" + far in [e.thread_id for e in d.list_all_conversations()]
+
+
+def test_added_conversations_get_a_list_label_the_archiving_can_read():
+    from datetime import datetime, timedelta
+    from drivers.web_api import _list_label
+    import archiving
+    now = datetime(2026, 11, 27, 18, 0)
+    ms = lambda dt: int(dt.timestamp() * 1000)
+    assert _list_label(ms(now.replace(hour=9, minute=5)), now) == "09:05"
+    assert _list_label(ms(now - timedelta(days=1)), now) == "Hier"
+    assert _list_label(ms(datetime(2026, 11, 20, 10, 0)), now) == "20/11"
+    assert _list_label(ms(datetime(2025, 3, 2, 10, 0)), now) == "02/03/25"
+    for label, day in [("09:05", now.date()), ("Hier", (now - timedelta(days=1)).date()),
+                       ("20/11", datetime(2026, 11, 20).date())]:
+        assert archiving.label_date(label, now.date()) == day

@@ -95,6 +95,23 @@ def _shown_text(last: dict) -> str:
     return "(image)" if last.get("images") else ""
 
 
+def _list_label(ts: Any, now: Optional[datetime] = None) -> Optional[str]:
+    """L'heure d'un dernier message comme la liste de Teams l'écrit, recalculée à chaque tour :
+    « 14:32 » aujourd'hui, « Hier », sinon « 25/11 » (« 25/11/25 » une autre année)."""
+    try:
+        when = datetime.fromtimestamp(int(ts) / 1000)
+    except (TypeError, ValueError, OSError):
+        return None
+    if int(ts) <= 0:
+        return None
+    now = now or datetime.now()
+    if when.date() == now.date():
+        return f"{when:%H:%M}"
+    if when.date() == (now - timedelta(days=1)).date():
+        return "Hier"
+    return f"{when:%d/%m}" if when.year == now.year else f"{when:%d/%m/%y}"
+
+
 def _note_never() -> str:
     try:
         return datetime(9999, 12, 31).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -134,6 +151,15 @@ class _ChatState:
         # Trame -> id Teams. Gardés à chaque relecture de la liste, même absents de la page ; l'id
         # Teams contient l'identifiant de la personne choisie : la preuve est forte.
         self.started: dict[str, str] = {}
+        # Conversations ajoutées à la liste depuis le service (la page ne les dessinait pas) : thread_id
+        # -> id Teams. Reliées seulement tant que la page ne les montre pas elle-même.
+        self.extra: dict[str, str] = {}
+        # Dernier message signalé par l'aperçu de la page, par conversation : (texte replié, heure).
+        # Le service ne le signale pas une seconde fois quand il relie la conversation ensuite.
+        self.previewed: dict[str, tuple[str, float]] = {}
+        # Conversations reliées au tour précédent dont la preuve vient d'échouer une fois : gardées un
+        # tour (la page voit souvent un message une seconde avant le service).
+        self.grace: set[str] = set()
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -277,25 +303,42 @@ class WebApiDriver:
         celui que la page affiche : sinon la page reste la source."""
         previews = previews or {}
         dm_names: dict[str, Optional[str]] = {}
-        for cid, r in self._chat.rows.items():
+        for cid, r in list(self._chat.rows.items()):
             name = str(r.get("name") or "").casefold()
             if r.get("kind") == "dm" and name:
                 dm_names[name] = None if name in dm_names else cid
         mapped = {}
-        self._chat.refused = 0
-        self._chat.strong = set()
+        st = self._chat
+        before = dict(st.mapped)
+        st.refused = 0
+        st.strong = set()
+        shown = {e.thread_id for e in entities}
         for e in entities:
             cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
             if cid:
                 mapped[e.thread_id] = cid
-        for tid, cid in self._chat.started.items():
+            elif e.thread_id in before and e.thread_id not in st.grace and before[e.thread_id] in st.rows:
+                # Une seule preuve manquée : gardé un tour pour la détection des messages (pas de
+                # second signalement par l'aperçu), jamais pour lire par alias ni pour écrire.
+                mapped[e.thread_id] = before[e.thread_id]
+                st.grace.add(e.thread_id)
+                continue
+            st.grace.discard(e.thread_id)
+        for tid, cid in list(st.started.items()):
             if tid not in mapped and cid not in mapped.values():
                 mapped[tid] = cid
-                self._chat.strong.add(tid)
-        self._chat.mapped = mapped
+                st.strong.add(tid)
+        for tid, cid in list(st.extra.items()):
+            # Ajoutée depuis le service : seulement tant que la page ne montre pas ce thread_id.
+            if tid not in shown and tid not in mapped and cid not in mapped.values():
+                mapped[tid] = cid
+                st.strong.add(tid)
+        st.mapped = mapped
         # Remplacé d'un bloc : une lecture de fil en parallèle voit l'ancienne table ou la nouvelle.
         if isinstance(getattr(self._inner, "chat_aliases", None), dict):
-            self._inner.chat_aliases = {t: c for t, c in mapped.items() if t.startswith("name:") or c == "48:notes"}
+            # Une conversation en grâce (preuve manquée une fois) n'est jamais lue par son alias.
+            self._inner.chat_aliases = {t: c for t, c in mapped.items()
+                                        if (t.startswith("name:") or c == "48:notes") and t not in st.grace}
         return mapped
 
     def _unread(self, row: dict) -> bool:
@@ -326,12 +369,12 @@ class WebApiDriver:
         seen_cids = {c for t, c in st.mapped.items() if t in seen_ids}
         seen_names = {e.display_name.casefold() for e in known if e.surface == Surface.dm}
         dm_count: dict[str, int] = {}
-        for r in st.rows.values():
+        for r in list(st.rows.values()):
             if r.get("kind") == "dm" and r.get("name"):
                 k = str(r["name"]).casefold()
                 dm_count[k] = dm_count.get(k, 0) + 1
         horizon = (time.time() - self.RECENT_DAYS * 86400) * 1000
-        rows = sorted((r for r in st.rows.values() if (r.get("last") or {}).get("ts", 0) >= horizon),
+        rows = sorted((r for r in list(st.rows.values()) if (r.get("last") or {}).get("ts", 0) >= horizon),
                       key=lambda r: -(r.get("last") or {}).get("ts", 0))
         out: list[WatchEntity] = []
         kinds = getattr(self._inner, "_kinds", None)
@@ -351,18 +394,26 @@ class WebApiDriver:
                 continue
             if tid in seen_ids:
                 continue
-            # Relié par construction (id Teams lu sur le service) : lecture et écriture par le service.
-            st.started[tid] = cid
+            # Relié par construction (id Teams lu sur le service), tant que la page ne le montre pas.
+            st.extra[tid] = cid
             if isinstance(names, dict):
                 names.setdefault(tid, name)
             if isinstance(kinds, dict):
                 kinds.setdefault(tid, surface)
             last = r.get("last") or {}
             out.append(WatchEntity(thread_id=tid, display_name=name, surface=surface, rank=start_rank + len(out),
-                                   last_activity=str(last.get("at") or "") or None, unread=self._unread(r)))
+                                   last_activity=_list_label(last.get("ts")), unread=self._unread(r)))
             if len(out) >= self.MAX_EXTRA:
                 break
         return out
+
+    def list_all_conversations(self) -> list[WatchEntity]:
+        """La lecture complète de la page (défilement de la liste), complétée par le service :
+        sans cela, une lecture complète retirait les conversations ajoutées depuis le service."""
+        page = self._inner.list_all_conversations()
+        if not self._chat.ok:
+            self._refresh_chat()
+        return page + self._service_entities(page, len(page))
 
     def list_conversations(self, deep: bool = False) -> list[WatchEntity]:
         page = self._inner.list_conversations(deep)
@@ -391,14 +442,14 @@ class WebApiDriver:
                     e.unread = self._unread(row)
             self._route("unread", "api")
         if api:
-            self._refresh_presence(entities, mapped)
-        if api:
             extra = self._service_entities(entities, len(entities))
             if extra:
                 self._map(entities, previews)  # les conversations ajoutées rejoignent la correspondance
                 mapped = self._chat.mapped
                 entities = entities + extra
                 self._route("list", "api", f"{len(extra)} conversation(s) ajoutée(s) depuis le service de chat")
+            # Après les ajouts : leurs tête-à-tête ont aussi leur présence.
+            self._refresh_presence(entities, mapped)
         hook = getattr(inner, "on_conversations", None)
         if hook is not None and entities:
             try:
@@ -410,6 +461,7 @@ class WebApiDriver:
         # pour les conversations que le service de chat ne relie pas.
         for msg in inner._previews.diff(((it["thread_id"], it.get("label") or "") for it in items), convs):
             if msg.thread_id not in mapped:
+                st.previewed[msg.thread_id] = (_norm(msg.text), time.time())
                 on_message(msg)
         if not api:
             return
@@ -432,6 +484,11 @@ class WebApiDriver:
                 continue
             text = _shown_text(last)
             if not text:
+                continue
+            # Déjà signalé par l'aperçu de la page (service indisponible ou relié un tour plus tard) :
+            # le même message, son début tronqué. Jamais deux fois.
+            seen = st.previewed.pop(tid, None)
+            if seen and now - seen[1] < 600 and seen[0] and _norm(text).startswith(seen[0][:40]):
                 continue
             e = convs.get(tid)
             on_message(IncomingMessage(thread_id=tid, sender=str(last.get("sender") or ""), text=text,

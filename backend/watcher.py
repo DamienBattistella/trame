@@ -820,7 +820,11 @@ class Watcher:
                 self._record_auto(msg.thread_id, entity.display_name, proposal)
                 return "sent"
             self._queue_draft(msg, proposal, entity.mode, gh_ref)
-            self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
+            if getattr(self._why, "uncertain", False):
+                self.log("warn", f"Envoi à {msg.sender} non confirmé : peut-être parti. Réponse gardée en brouillon, "
+                                 "vérifie dans Teams avant de l'envoyer")
+            else:
+                self.log("warn", f"Envoi à {msg.sender} non effectué : réponse gardée en brouillon")
             return "draft"
         self._queue_draft(msg, proposal, entity.mode, gh_ref)
         self.log("draft", f"Réponse à relire pour {msg.sender}")
@@ -1028,6 +1032,7 @@ class Watcher:
         if files and (auto or not send):
             raise ValueError("pièces jointes : envoi manuel uniquement")
         self._why.reason = None
+        self._why.uncertain = False
         with self._ui_lock:
             if auto and (self.state.paused or self._stop.is_set()):
                 self.log("warn", "Envoi auto annulé : Trame a été mis en pause.")
@@ -1054,9 +1059,13 @@ class Watcher:
                 if text.strip():
                     self._remember_sent(thread_id, text)
                 self.log("warn", f"Envoi non confirmé, à vérifier dans Teams : {e}")
-                if auto:
-                    return False
+                # Noté aussi pour un envoi automatique : le brouillon qu'il laisse ne doit jamais
+                # repartir sans que le fil ait été relu (jamais de doublon).
                 self._unconfirmed[thread_id] = (time.monotonic(), self._same_text(text), tuple(f.name for f in files))
+                if auto:
+                    self._why.reason = f"non confirmé ({e})"
+                    self._why.uncertain = True
+                    return False
                 what = "le message et ses pièces jointes sont peut-être partis" if files else "le message est peut-être parti"
                 raise ActionError(409, f"Envoi non confirmé : {what}. Vérifie dans Teams avant de renvoyer.")
             except Exception as e:
@@ -1378,6 +1387,13 @@ class Watcher:
         if self._outbox_payload.get(item_id, {}).get("lost_files"):
             raise ActionError(409, "Pièce jointe perdue au redémarrage : renvoie ce message toi-même, puis "
                                    "retire-le de la file.")
+        if item.status == "uncertain":
+            # Peut-être parti : relire le fil avant de renvoyer (aussi après un redémarrage, où la
+            # trace de l'envoi incertain n'est plus en mémoire). Déjà là : on le dit, sans renvoyer.
+            files = self._outbox_payload.get(item_id, {}).get("files", ())
+            self._unconfirmed.setdefault(item.thread_id, (time.monotonic(), self._same_text(item.text),
+                                                          tuple(f.name for f in files)))
+            self._not_sent_already(item.thread_id, item.text, files)
         with self._lock:
             self._outbox_payload.setdefault(item_id, {})["since"] = time.monotonic()
         self._outbox_update(item, status="waiting", reason="nouvel essai demandé")
