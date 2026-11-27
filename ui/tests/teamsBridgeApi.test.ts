@@ -1408,3 +1408,43 @@ test("chatmeetings : une occurrence déplacée garde le créneau porté par son 
   const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
   assert.equal(r.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:00 - 11:45");
 });
+
+test("chatmeetings : l'agenda (Graph) donne le créneau d'une occurrence déplacée, seulement sans ambiguïté", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  // Teams a déjà appelé Graph : son jeton est connu de la page.
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/me/events", { headers: { authorization: "Bearer GRAPH-SECRET" } });
+  await new Promise((r) => setImmediate(r));
+  const MEET = "19:meeting_deplacee2@thread.v2";
+  const start = new Date("2026-11-24T11:01:05").getTime();
+  const end = new Date("2026-11-24T12:11:22").getTime();
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: "<partlist></partlist>" },
+    { id: String(end), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  const utc = (local: string) => new Date(local).toISOString().replace(/Z$/, "0000");
+  let events: any[] = [
+    { subject: "Point hebdo", start: { dateTime: utc("2026-11-24T11:00:00") }, end: { dateTime: utc("2026-11-24T11:45:00") } },
+    { subject: "Autre réunion", start: { dateTime: utc("2026-11-24T11:00:00") }, end: { dateTime: utc("2026-11-24T12:00:00") } },
+  ];
+  const graphAuth: string[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.startsWith("https://graph.microsoft.com/v1.0/me/calendarView")) {
+      graphAuth.push((init && init.headers && init.headers.Authorization) || "");
+      return fakeResponse(JSON.stringify({ value: events }));
+    }
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET], topics: { [MEET]: "Point hebdo" } })).result;
+  assert.equal(r.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:00 - 11:45");
+  assert.equal(r.chats[0].recaps[0].calendar, true);
+  assert.equal(graphAuth[0], "Bearer GRAPH-SECRET");
+  assert.ok(!/GRAPH-SECRET/.test(JSON.stringify(r)));
+  // Deux événements du même sujet : ambigu, le créneau de l'appel reste.
+  events = [events[0], { ...events[0] }];
+  const twice = (await p.run("chatmeetings", { threads: [MEET], topics: { [MEET]: "Point hebdo" } })).result;
+  assert.equal(twice.chats[0].recaps[0].calendar, false);
+  assert.equal(twice.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:01 - 12:11");
+});

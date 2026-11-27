@@ -628,11 +628,11 @@ class WebBridgeDriver(TeamsDriver):
             return {"ok": False, "attempted": False, "error": "identifiant de tête-à-tête inattendu"}
         return res
 
-    def meetings_api(self, threads: list[str], timeout: float = 60.0) -> list[dict]:
+    def meetings_api(self, threads: list[str], topics: Optional[dict] = None, timeout: float = 60.0) -> list[dict]:
         """Réunions terminées des conversations de réunion `threads` (ids Teams), lues DANS la page
         sur le service de chat : {thread, recaps: [{mid, when, transcript}]} par conversation. Lève
         ApiError si le service refuse."""
-        res = self._rpc("chatmeetings", threads=list(threads), timeout=timeout)
+        res = self._rpc("chatmeetings", threads=list(threads), topics=dict(topics or {}), timeout=timeout)
         if not isinstance(res, dict) or not res.get("ok"):
             raise self.ApiError((res or {}).get("error") if isinstance(res, dict) else "réponse illisible de la page")
         out = []
