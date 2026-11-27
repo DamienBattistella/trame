@@ -1772,6 +1772,78 @@
       return null;
     }
   };
+  // >>> thread-climb
+  // Lit le fil affiché de la fin vers le début. Teams ne dessine qu'une fenêtre du fil et
+  // rouvre une conversation là où on l'avait laissée : on descend d'abord tout en bas
+  // (jusqu'à ce que Teams ne charge plus rien), puis on remonte par pas qui se recouvrent.
+  // Une vue ne s'ajoute que si elle recoupe ce qui est déjà lu : sans message commun, Teams
+  // a sauté plus loin que l'écran lu (des messages manqueraient au milieu), alors on
+  // redescend d'un demi-pas pour retrouver le raccord, et sinon on s'arrête là plutôt que
+  // de laisser un trou. `snap()` : messages affichés, dans l'ordre, chacun avec sa `key`.
+  // `enough(acc)` : assez lu. top : le début de la conversation est atteint.
+  const climb = async (box, snap, enough, late = () => false, budget = 20000) => {
+    if (!box) {
+      const acc = snap();
+      return { acc, top: !enough(acc), gap: false };
+    }
+    const end = Date.now() + budget;
+    // En bas : stable quand ni la hauteur ni le dernier message dessiné ne bougent plus
+    // (Teams dessine après le défilement, et charge parfois des messages plus récents).
+    for (let seen = "", tries = 0; tries < 12; tries++) {
+      box.scrollTop = box.scrollHeight;
+      await sleep(250);
+      const view = snap();
+      const now = `${box.scrollHeight}|${view.length ? view[view.length - 1].key : ""}`;
+      if (now === seen) break;
+      seen = now;
+    }
+    let acc = snap();
+    // "more" : des messages plus anciens ajoutés ; "gap" : vue sans message commun.
+    const merge = () => {
+      const known = new Set(acc.map((m) => m.key));
+      const view = snap();
+      const cut = view.findIndex((m) => known.has(m.key));
+      if (cut < 0) return view.length ? "gap" : "";
+      const older = view.slice(0, cut).filter((m) => !known.has(m.key));
+      if (older.length) acc = [...older, ...acc];
+      return older.length ? "more" : "";
+    };
+    const step = () => Math.max(120, Math.floor(box.clientHeight * 0.6));
+    let top = false;
+    let gap = false;
+    for (let stalls = 0; !enough(acc) && Date.now() < end && !late(); ) {
+      const height = box.scrollHeight;
+      const atTop = box.scrollTop <= 0;
+      if (atTop) {
+        // Teams charge la suite quand on arrive en haut : un petit aller-retour pour qu'il
+        // voie un défilement même si l'on y est déjà.
+        box.scrollTop = Math.min(200, height);
+        await sleep(50);
+        box.scrollTop = 0;
+      } else box.scrollTop = Math.max(0, box.scrollTop - step());
+      let res = "";
+      await waitFor(() => (res = merge()) === "more" || box.scrollHeight !== height, atTop ? 1500 : 400);
+      res = merge() || res;
+      if (res === "gap") {
+        box.scrollTop = Math.min(box.scrollHeight, box.scrollTop + Math.floor(step() / 2));
+        await sleep(200);
+        if (merge() === "gap") {
+          gap = true;
+          break;
+        }
+      }
+      if (res === "more" || box.scrollHeight !== height) stalls = 0;
+      else if (atTop && ++stalls >= 3) {
+        // Trois essais en haut sans rien de nouveau : c'est le début de la conversation.
+        // Une limite de temps atteinte, elle, ne dit rien du début (top reste faux).
+        top = true;
+        break;
+      }
+    }
+    box.scrollTop = box.scrollHeight;
+    return { acc, top, gap };
+  };
+  // <<< thread-climb
   // Après la lecture, seuls les messages encore affichés ont leurs images dans la page :
   // les plus récents d'abord, dans la limite du nombre et du poids. Les autres restent
   // « image » sans aperçu (à voir dans Teams).
@@ -3046,17 +3118,6 @@
         // Teams intercale des éléments vides (avatar seul) : sans texte, fichier ni image,
         // ils se ressembleraient tous et fausseraient la fusion.
         .filter((m) => m.text || m.files.length || m.images || m.cards.length);
-      // Fusion d'une vue plus haute dans ce qui est déjà lu : ce qui précède le premier
-      // message connu est plus ancien. Vrai quand des messages ont été ajoutés.
-      let acc = snap();
-      const merge = () => {
-        const known = new Set(acc.map((m) => m.key));
-        const view = snap();
-        const cut = view.findIndex((m) => known.has(m.key));
-        const older = (cut < 0 ? view : view.slice(0, cut)).filter((m) => !known.has(m.key));
-        if (older.length) acc = [...older, ...acc];
-        return older.length > 0;
-      };
       const box = (() => {
         for (let el = document.querySelector(MSGS); el && el !== document.body; el = el.parentElement) {
           if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
@@ -3064,28 +3125,8 @@
         return null;
       })();
       // Plus ancien message daté déjà lu : au-delà de `since`, inutile de remonter.
-      const pastSince = () => since != null && acc.some((m) => m.ts != null && m.ts < since);
-      const more = () => acc.length < last && !pastSince();
-      let top = !box && more();
-      if (box && more()) {
-        // Teams charge la suite quand on arrive en haut : on redescend un peu avant d'y
-        // remonter, pour qu'il voie un défilement même si l'on y est déjà. Trois essais
-        // sans rien de nouveau : c'est le début de la conversation. Une limite de temps
-        // atteinte, elle, ne dit rien du début (top reste faux).
-        const end = Date.now() + 20000;
-        for (let stalls = 0; more() && Date.now() < end && !late(); ) {
-          const height = box.scrollHeight;
-          box.scrollTop = Math.min(200, height);
-          await sleep(50);
-          box.scrollTop = 0;
-          if (await waitFor(() => merge() || box.scrollHeight !== height, 1500)) stalls = 0;
-          else if (++stalls >= 3) {
-            top = true;
-            break;
-          }
-        }
-        box.scrollTop = box.scrollHeight;
-      }
+      const pastSince = (acc) => since != null && acc.some((m) => m.ts != null && m.ts < since);
+      const { acc, top } = await climb(box, snap, (acc) => acc.length >= last || pastSince(acc), late);
       // L'auteur n'est affiché qu'en tête d'une suite de messages : on le reporte.
       let sender = "";
       const out = [];
