@@ -779,7 +779,9 @@ const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.ena
 // signature des appels API (le jeton reste dans la page, docs/teams-web-api.md).
 export type ApiRoute = { via: "api" | "page"; reason: string | null; at: string };
 export type ApiSigning = { ok?: boolean; status?: number; source?: string; error?: string } | null;
-export type TeamsApiStatus = { driver: string; routes: Record<string, ApiRoute>; signing: ApiSigning };
+// Session du service de chat ouverte dans la page : étape atteinte (bearer → authz → chatsvc → ok).
+export type ApiChatSession = { ok?: boolean; status?: number; stage?: string; region?: string; error?: string } | null;
+export type TeamsApiStatus = { driver: string; routes: Record<string, ApiRoute>; signing: ApiSigning; chatsvc?: ApiChatSession };
 const DEMO_TEAMS_API: TeamsApiStatus = {
   driver: "WebApiDriver",
   routes: Object.fromEntries(
@@ -792,6 +794,7 @@ const DEMO_TEAMS_API: TeamsApiStatus = {
     ]),
   ),
   signing: { ok: true, status: 200, source: "path" },
+  chatsvc: { ok: true, status: 200, stage: "ok", region: "emea" },
 };
 
 async function request<T = {}>(method: string, path: string, body?: unknown): Promise<Result<T>> {

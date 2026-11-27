@@ -290,6 +290,18 @@
         return creds.get(String(rawUrl)) || null;
       }
     };
+    // Bearer d'audience api.spaces.skype.com : celui que Teams pose sur ses appels middletier
+    // (`/api/mt/…`). C'est le jeton que `authsvc/v1.0/authz` échange contre le jeton du service
+    // de chat. Rendu à `chatsvc` UNIQUEMENT (dans la page), jamais sérialisé vers le moteur.
+    const mtBearer = () => {
+      let best = null;
+      for (const [k, v] of credsByPath) {
+        const [host, pathname] = k.split("\n");
+        if (!v.authorization || !/(^|\.)teams\.(microsoft\.com|cloud\.microsoft)$/i.test(host) || !/^\/api\/mt\//.test(pathname)) continue;
+        if (!best || (v.at || 0) > (best.at || 0)) best = v;
+      }
+      return best ? best.authorization : "";
+    };
     // Source du credential retenu pour une URL (pour l'auto-test) : "path" | "host" | "none".
     const credsSource = (rawUrl) => {
       try {
@@ -347,8 +359,8 @@
         });
       }
     };
-    // Connexion WebSocket ouverte par la page (ex. trouter) : en Teams v2, messages et
-    // présence passent par ce canal, invisible au hook fetch/XHR. On ne retient que l'URL
+    // Connexion WebSocket ouverte par la page (ex. trouter, le canal de push : il prévient,
+    // les messages sont relus en REST depuis un Web Worker). On ne retient que l'URL
     // de connexion (hôte + gabarit de chemin masqué) et un compte — jamais une frame, jamais
     // de contenu. Sert à repérer le service de chat/présence.
     const noteSocket = (rawUrl) => {
@@ -464,7 +476,129 @@
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, summary, safeProbe: () => probeUrl };
+    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, summary, safeProbe: () => probeUrl };
+  })();
+
+  // --- Service de chat de Teams (chatsvc), appelé DANS la page --------------------------
+  // Teams v2 lit et écrit les messages par l'API REST du service de chat
+  // (`/v1/users/ME/conversations…`), depuis un Web Worker : le hook fetch/XHR de la fenêtre ne
+  // voit pas ces appels. On ouvre notre propre session, comme le client : le bearer middletier
+  // (audience api.spaces.skype.com) est échangé par `authsvc/v1.0/authz` contre un jeton du
+  // service de chat et l'adresse régionale du service.
+  // PRIVÉ À LA PAGE : `session` (jeton du chat, adresse) n'est jamais renvoyé au moteur, jamais
+  // journalisé, jamais persisté. Seuls sortent le statut HTTP, la région et le corps métier.
+  const chatsvc = (() => {
+    const AUTHZ = "https://teams.microsoft.com/api/authsvc/v1.0/authz";
+    const RENEW_MS = 5 * 60 * 1000;
+    let session = null; // { token, exp, bases: [url…], region } — jamais exposé
+    let pending = null;
+    // Chemins permis (lecture) : la liste, une conversation, ses messages, un message. Ids
+    // encodés par le moteur (encodeURIComponent) ; rien d'autre ne passe.
+    // Un id ne peut être ni « . » ni « .. », ni contenir un « / » ou « \ » encodé.
+    const PATHS = /^\/v1\/users\/ME\/conversations(\/(?!\.{1,2}(\/|$))(?![^/]*%(2[fF]|5[cC]))[A-Za-z0-9%._~-]+(\/messages(\/\d{1,20})?)?)?$/;
+    const QUERY_KEYS = new Set(["view", "pageSize", "startTime", "targetType", "syncState"]);
+    const baseOk = (raw) => {
+      try {
+        const u = new URL(String(raw || ""));
+        return u.protocol === "https:" && API_HOSTS.test(u.hostname) ? u.origin + u.pathname.replace(/\/+$/, "") : "";
+      } catch {
+        return "";
+      }
+    };
+    const open = async () => {
+      const bearer = apiCapture.mtBearer();
+      if (!bearer) {
+        const e = new Error("aucun jeton Teams observé pour l'instant (ouvre une conversation)");
+        e.stage = "bearer";
+        throw e;
+      }
+      let res;
+      try {
+        res = await fetch(AUTHZ, { method: "POST", credentials: "omit", headers: { Authorization: bearer } });
+      } catch (err) {
+        const e = new Error(`échec réseau vers authsvc : ${String((err && err.message) || err)}`);
+        e.stage = "authz";
+        throw e;
+      }
+      let body = null;
+      try {
+        body = JSON.parse(await res.text());
+      } catch {}
+      const token = body && body.tokens && body.tokens.skypeToken;
+      const gtms = (body && body.regionGtms) || {};
+      const bases = [baseOk(gtms.chatService), baseOk(gtms.chatServiceAfd)].filter(Boolean);
+      if (!res.ok || !token || !bases.length) {
+        const e = new Error(res.ok ? "réponse authsvc incomplète" : `authsvc refusé (HTTP ${res.status})`);
+        e.stage = "authz";
+        e.status = res.status;
+        throw e;
+      }
+      const ttl = Number(body.tokens.expiresIn) > 0 ? Number(body.tokens.expiresIn) * 1000 : 60 * 60 * 1000;
+      session = { token, exp: Date.now() + ttl, bases, region: String(body.region || "") };
+      return session;
+    };
+    const ensure = async (force) => {
+      if (!force && session && session.exp - Date.now() > RENEW_MS) return session;
+      if (!pending) pending = open().finally(() => (pending = null));
+      return pending;
+    };
+    const send = async (s, method, path, search) => {
+      let lastErr = null;
+      for (const base of s.bases) {
+        try {
+          return await fetch(base + path + search, {
+            method,
+            credentials: "omit",
+            headers: { Authentication: `skypetoken=${s.token}`, Accept: "application/json" },
+          });
+        } catch (err) {
+          lastErr = err; // réseau : on essaie l'autre adresse du service
+        }
+      }
+      const e = new Error(`échec réseau vers le service de chat : ${String((lastErr && lastErr.message) || lastErr)}`);
+      e.stage = "chatsvc";
+      throw e;
+    };
+    // GET sur un chemin permis. Renvoie { ok, status, json } : corps métier seulement.
+    const get = async ({ path, query } = {}) => {
+      const p = String(path || "");
+      if (!PATHS.test(p)) return { ok: false, stage: "chatsvc", error: "chemin du service de chat non autorisé" };
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(query || {})) if (QUERY_KEYS.has(k) && v != null) qs.set(k, String(v));
+      const search = qs.toString() ? "?" + qs.toString() : "";
+      try {
+        let s = await ensure(false);
+        let res = await send(s, "GET", p, search);
+        // Jeton expiré ou révoqué : une seule nouvelle session, puis on rend la main.
+        if (res.status === 401) {
+          s = await ensure(true);
+          res = await send(s, "GET", p, search);
+        }
+        const out = { ok: res.ok, status: res.status, region: s.region };
+        const text = await res.text().catch(() => "");
+        if (text.length > 4_000_000) return { ...out, ok: false, error: "réponse trop volumineuse" };
+        try {
+          out.json = text ? JSON.parse(text) : null;
+        } catch {
+          out.ok = false;
+          out.error = "réponse non JSON";
+        }
+        if (!res.ok && !out.error) out.error = `service de chat refusé (HTTP ${res.status})`;
+        return out;
+      } catch (err) {
+        return { ok: false, stage: err.stage || "chatsvc", status: err.status || 0, error: String((err && err.message) || err) };
+      }
+    };
+    // Auto-test : une conversation, statut seulement (jamais de corps). Au plus toutes les 5 min.
+    let lastTest = null;
+    const selftest = async () => {
+      if (lastTest && Date.now() - lastTest.at < 5 * 60 * 1000) return lastTest;
+      const r = await get({ path: "/v1/users/ME/conversations", query: { view: "msnp24Equivalent", pageSize: 1 } });
+      lastTest = { ok: Boolean(r.ok), status: r.status || 0, stage: r.ok ? "ok" : r.stage || "chatsvc", region: r.region || "", at: Date.now() };
+      if (!r.ok && r.error) lastTest.error = r.error;
+      return lastTest;
+    };
+    return { get, selftest, last: () => lastTest };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -2200,6 +2334,9 @@
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     probe,
     title: () => document.title,
+    // Lecture sur le service de chat de Teams, dans la page (voir `chatsvc`). Le moteur ne
+    // donne qu'un chemin permis et des paramètres permis ; il ne reçoit que le corps métier.
+    chatsvc: ({ path, query }) => chatsvc.get({ path, query }),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.
@@ -3071,6 +3208,12 @@
       } catch (e) {
         lastSignTest = { error: String((e && e.message) || e), at: Date.now() };
       }
+      // Auto-test du service de chat (statut, étape et région seulement ; jamais de corps).
+      let chatTest = chatsvc.last();
+      try {
+        // Borné : diagnose répond en moins de 6 s même si le service de chat traîne.
+        chatTest = (await Promise.race([chatsvc.selftest(), sleep(3500).then(() => null)])) || chatsvc.last();
+      } catch {}
       return {
       url: location.href,
       title: document.title,
@@ -3113,6 +3256,8 @@
       bridge: (typeof globalThis !== "undefined" && globalThis.__trameBridge) || null,
       // Auto-test de signature (statut seulement, jamais de corps) : 200 ⇒ la page signe bien.
       sign_selftest: lastSignTest,
+      // Auto-test du service de chat : { ok, status, stage, region, at } ; ni jeton ni contenu.
+      chatsvc_selftest: chatTest,
       };
     },
   };

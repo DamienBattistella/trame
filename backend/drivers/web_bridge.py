@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import quote
 
 import presence as presencemod
 from drivers import rail_label
@@ -36,6 +37,11 @@ API_HOSTS = re.compile(r"^([a-z0-9-]+\.)*(teams\.microsoft\.com|teams\.cloud\.mi
 # dans la page). On les retire des en-têtes métier avant l'envoi, en plus du filtre de la page.
 AUTH_HEADER = re.compile(r"^(authorization|authentication|cookie|x-skypetoken|x-ms-\S*token|.*[-_]?token|.*bearer.*)$",
                          re.IGNORECASE)
+# Service de chat (chatsvc) : chemins et paramètres permis, même liste que la page.
+# Un id ne peut être ni « . » ni « .. », ni contenir un « / » ou « \ » encodé.
+CHAT_PATHS = re.compile(r"/v1/users/ME/conversations(/(?!\.{1,2}(/|$))(?![^/]*%(2[fF]|5[cC]))[A-Za-z0-9%._~-]+"
+                        r"(/messages(/\d{1,20})?)?)?")
+CHAT_QUERY_KEYS = frozenset({"view", "pageSize", "startTime", "targetType", "syncState"})
 
 
 def _files(raw: Any) -> list[FileRef]:
@@ -650,6 +656,30 @@ class WebBridgeDriver(TeamsDriver):
         # Jamais d'en-tête de réponse : seul le corps métier et son type remontent.
         return {"status": status, "contentType": res.get("contentType"),
                 "json": res.get("json"), "text": res.get("text")}
+
+    # Service de chat de Teams (chatsvc), appelé dans la page avec sa propre session : le moteur
+    # ne donne qu'un chemin et des paramètres permis, et ne reçoit que le corps métier.
+    def chat_get(self, path: str, query: Optional[dict] = None, timeout: float = 20.0) -> Any:
+        """GET sur le service de chat de Teams, exécuté dans la page. Renvoie le JSON du corps.
+        Lève ApiError si le chemin est refusé, si la session n'a pas pu s'ouvrir ou sur une
+        réponse non 2xx : l'appelant retombe alors sur la page (DOM)."""
+        p = str(path or "")
+        if not CHAT_PATHS.fullmatch(p):
+            raise self.ApiError("chemin du service de chat non autorisé")
+        q = {k: v for k, v in (query or {}).items() if k in CHAT_QUERY_KEYS and v is not None} or None
+        res = self._rpc("chatsvc", path=p, query=q, timeout=timeout)
+        if not isinstance(res, dict):
+            raise self.ApiError("réponse illisible de la page")
+        if not res.get("ok"):
+            raise self.ApiError(res.get("error") or f"service de chat refusé (HTTP {res.get('status')})",
+                                status=res.get("status"))
+        return res.get("json")
+
+    @staticmethod
+    def chat_conversation_path(thread_id: str, messages: bool = False) -> str:
+        """Chemin chatsvc d'une conversation (id encodé comme le fait le client Teams)."""
+        path = "/v1/users/ME/conversations/" + quote(str(thread_id), safe="")
+        return path + "/messages" if messages else path
 
     def api_capture(self) -> dict:
         """Résumé en lecture seule des API internes repérées (structure uniquement : ni

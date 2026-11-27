@@ -70,8 +70,8 @@ Pour apprendre les **vrais** endpoints, le pont pose un hook **passif** sur `fet
 - connexions `WebSocket` : l'URL de connexion (schéma, hôte, chemin masqué) ; **et la STRUCTURE
   des frames** (sens entrant/sortant, taille, et pour une frame JSON les **noms de clés** — chemins,
   clés dynamiques masquées `{guid}`/`{id}`/`{n}`/`{k}`). **Jamais une valeur, jamais le contenu d'un
-  message.** En Teams v2, les messages passent par ce canal (trouter), invisible au hook fetch/XHR ;
-  la structure des frames sert à comprendre le protocole (découverte de l'option B).
+  message.** Trouter ne fait que prévenir (push) ; les messages eux-mêmes sont relus en REST
+  depuis un Web Worker (voir plus bas).
 
 Jamais : valeur d'en-tête, paramètre de requête, corps de requête ou de réponse, **valeur** d'une
 frame WebSocket, contenu de message. Les buffers sont bornés (150 requêtes, 40 sockets, 80 formes de
@@ -118,41 +118,50 @@ sauf mention, la plupart avec `authorization` (bearer), parfois `x-skypetoken`.
 |---|---|
 | `go-eu.trouter.teams.microsoft.com` | canal push « trouter » (mise en place vue en REST : `GET /`) |
 
-### ⚠️ Les messages ne sont PAS servis en REST (v2)
+### Les messages passent par le REST du service de chat, depuis un Web Worker
 
-Après avoir ouvert et fait défiler des conversations (y compris l'historique profond et une
-conversation « froide »), **aucun** endpoint de messages, de fil ou de conversation n'apparaît
-dans `endpoints` : rien sur `msg.teams`/chatsvc, ni `/messages`, ni `/conversations`, ni la
-présence. Seuls des fetch d'**images**, de **calendrier** et de **réglages** sont émis.
+La première capture n'avait vu **aucun** endpoint de messages, et on en avait conclu à tort que
+messages, historique et présence passaient par le WebSocket trouter. En réalité, Teams v2 fait
+ces appels depuis un **Web Worker** (scripts `precompiled-web-worker-inner~*.js`, visibles dans
+le cache de la WebView) : le hook `fetch`/XHR de la fenêtre ne les voit pas. Ces scripts
+contiennent l'API REST classique du service de chat :
 
-Conclusion : en **Teams v2 web**, la **liste des messages, l'historique et la présence passent
-par le canal trouter (WebSocket/long-poll)**, pas par fetch/XHR. Un `webfetch` REST ne peut donc
-pas les lire. La capture `sockets` (ajoutée ici) sert à repérer ce canal et, plus tard, le
-service de chat ; lire/écrire des messages « par l'API » demanderait de capter ce WebSocket
-(bien plus fragile que le DOM) — à arbitrer avant d'implémenter les lectures.
+| Rôle | Endpoint (gabarit) |
+|---|---|
+| jeton du chat | `POST https://teams.microsoft.com/api/authsvc/v1.0/authz` (bearer `api.spaces.skype.com`) → `tokens.skypeToken`, `regionGtms.chatService` / `chatServiceAfd` |
+| liste des conversations | `GET {chatService}/v1/users/ME/conversations?view=msnp24Equivalent&pageSize=…` |
+| une conversation | `GET {chatService}/v1/users/ME/conversations/{id}` |
+| messages d'un fil | `GET {chatService}/v1/users/ME/conversations/{id}/messages?pageSize=…` |
+| lu / non lu | `properties?name=consumptionhorizon` |
 
-| Action Trame | Voie observée | Faisable en `webfetch` REST ? |
-|---|---|---|
-| Lister les conversations | trouter (WS) / store client | non (pas de REST observé) |
-| Lire un fil + historique | trouter (WS) / store client | non |
-| Nouveaux messages | trouter (WS, push) | non |
-| Présence (autres / soi) | trouter (WS) probable | non observé en REST |
-| Images / pièces jointes | asyncgw (REST) | **oui** |
-| Marquer comme lu / réaction / envoi / suppression | trouter (WS) / store client | à confirmer (probablement non REST) |
+Les appels au service de chat portent l'en-tête `Authentication: skypetoken=<jeton>`. Trouter
+ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit en REST.
+
+### 3. Session du service de chat dans la page — op `chatsvc`
+
+- La page ouvre **sa propre session**, comme le client : elle reprend le bearer middletier que
+  Teams vient de poser (`/api/mt/…`, audience `api.spaces.skype.com`), l'échange via `authz`,
+  et garde **en mémoire de la page** le jeton du chat et l'adresse régionale. Renouvelée
+  5 minutes avant l'expiration, et une fois sur un 401.
+- Côté moteur : `WebBridgeDriver.chat_get(path, query)` ; `chat_conversation_path(thread_id)`
+  encode l'id comme le client.
+- **Garde-fous** : liste blanche de chemins (liste, conversation, messages, message) et de
+  paramètres (`view`, `pageSize`, `startTime`, `targetType`, `syncState`), appliquée par la page
+  **et** par le moteur ; lecture seule (GET) à ce stade ; le moteur ne reçoit que le corps
+  métier, jamais le jeton ni l'adresse signée.
+- **Auto-test** : `diagnose` → `chatsvc_selftest` = `{ ok, status, stage, region }` (étape
+  atteinte : `bearer` → `authz` → `chatsvc` → `ok`), au plus toutes les 5 minutes. Visible dans
+  la carte « API Teams web » (ligne « Service de chat ») et dans `/api/teams-web`.
 
 ## Étapes suivantes (PR séparées)
 
-1. **Découverte** : mécanisme `webfetch` + capture `fetch`/XHR (PR initiale), puis capture
-   `WebSocket` + endpoints réels documentés (cette PR).
-2. **Arbitrage lectures** : la découverte montre que messages/historique/présence passent par le
-   WebSocket trouter, pas par REST. Avant d'implémenter des « lectures par l'API », décider :
-   - soit capter le canal trouter dans la page (fragile, à évaluer avec la capture `sockets`),
-   - soit garder les messages sur le DOM et ne passer par l'API que ce qui est réellement REST
-     (images/pièces jointes via asyncgw ; éventuellement réglages/roster via middletier).
-3. **Lectures** retenues par l'API de la page, converties vers `backend/models.py`, repli DOM par
-   action.
-4. **Écritures** (marquer comme lu, réactions, envoi, réponse citée, suppression), uniquement si
-   l'envoi peut être **prouvé par une relecture**, en gardant tous les garde-fous de
-   `backend/safety.py` (jamais de faux « Envoyé », anti-doublon, titre de conversation).
-5. Carte **Réglages › Général › « API Teams web »** (remplace « Microsoft Graph ») : montre, action
-   par action, la voie suivie (API page / DOM), via un `routes()` comme le `GraphDriver`.
+1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
+2. **Session chatsvc dans la page** : cette PR.
+3. **Lectures** : liste et non-lus, lecture d'un fil, surveillance (sondage `syncState`),
+   converties vers `backend/models.py` ; `routes()` passe à « api » action par action, repli DOM
+   sur échec.
+4. **Écritures prouvées par relecture** : marquer comme lu (`consumptionhorizon`), réactions
+   (`properties?name=emotions`), envoi (relu par `clientmessageid`), réponse citée, suppression,
+   avec tous les garde-fous de `backend/safety.py`.
+5. Présence et statut, note, recherche (personnes, messages), nouvelle conversation.
+6. **Contrôle des repères** : ne vérifier que les repères des actions restées sur la page.
