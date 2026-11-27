@@ -57,19 +57,19 @@ def test_unmark_drops_marker_and_tone(sent):
 def test_auto_send_carries_the_tone(make_client):
     _client, watcher, driver = make_client(brain=FakeBrain(reply="Désolé, je n'ai pas pu relancer le build."))
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert _sent(driver) == ["Désolé, je n'ai pas pu relancer le build. 🤖😔"]
+    assert _sent(driver) == ["Désolé, je n'ai pas pu relancer le build."]
 
 
 def test_auto_send_is_marked(make_client):
     _client, watcher, driver = make_client()
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert _sent(driver) == ["Réponse de test 🤖"]
+    assert _sent(driver) == ["Réponse de test"]
 
 
-def test_countdown_log_shows_the_marked_text(make_client):
+def test_countdown_log_shows_the_original_text(make_client):
     _client, watcher, _driver = make_client()
     watcher._process(_msg(DM_AUTO))
-    assert any("tout de suite" in log.text and "Réponse de test 🤖" in log.text for log in watcher.state.logs)
+    assert any("tout de suite" in log.text and "Réponse de test" in log.text for log in watcher.state.logs)
 
 
 def test_manual_send_is_not_marked(make_client):
@@ -113,7 +113,7 @@ def test_old_config_without_the_key_marks(make_client, fresh_home):
     assert settings_mod.from_config(watcher.cfg).safety.mark_auto_replies is True
     assert client.get("/api/settings").json()["settings"]["safety"]["mark_auto_replies"] is True
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert _sent(driver) == ["Réponse de test 🤖"]
+    assert _sent(driver) == ["Réponse de test"]
 
 
 def test_shipped_config_turns_it_on(make_client):
