@@ -20,8 +20,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
-from drivers.base import TeamsDriver
-from models import IncomingMessage, Surface, WatchEntity
+from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
+from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
 _OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
@@ -90,7 +90,7 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read", "watch", "unread"})
+    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send"})
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
@@ -329,6 +329,67 @@ class WebApiDriver:
                 "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
                             "type_user": (st.rows[c].get("last") or {}).get("user")}
                            for t, c in st.mapped.items() if c in st.rows and self._unread(st.rows[c])][:20]}
+
+    # --- Gestes sur le service de chat, sans ouvrir la conversation ----------------------
+    # Prouvés par relecture du service. Rien n'est parti (pas d'id Teams, message différent,
+    # service indisponible avant l'appel) : la page fait le geste, comme avant. Parti sans
+    # preuve : « incertain », jamais refait (un double est pire qu'un doute).
+    def _gesture(self, action: str, kind: str, thread_id: str, **args: Any) -> Optional[dict]:
+        gesture = getattr(self._inner, "chat_gesture", None)
+        if not callable(gesture):
+            return None
+        res = gesture(kind, thread_id, **args)
+        if res.get("ok"):
+            self._route(action, "api")
+            return res
+        if not res.get("attempted"):
+            self._route(action, "page", f"repli sur la page : {res.get('error') or 'geste non tenté'}")
+            return None
+        self._route(action, "api", res.get("error"))
+        return res
+
+    def mark_read(self, thread_id: str) -> bool:
+        res = self._gesture("mark_read", "markread", thread_id)
+        if res is None:
+            return self._inner.mark_read(thread_id)
+        if not res.get("ok"):
+            self._inner.last_error = res.get("error") or "marquer comme lu non confirmé"
+        return bool(res.get("ok"))
+
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
+        res = self._gesture("react", "react", thread_id, message=self._inner._ref(target), reaction=reaction)
+        if res is None:
+            return self._inner.react_focused(thread_id, target, reaction, restore=restore)
+        if res.get("uncertain"):
+            raise ReactUncertain(res.get("error") or "réaction non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def delete_focused(self, thread_id: str, target: MessageRef, restore: bool = True) -> Focus:
+        res = self._gesture("delete", "delete", thread_id, message=self._inner._ref(target))
+        if res is None:
+            return self._inner.delete_focused(thread_id, target, restore=restore)
+        if res.get("uncertain"):
+            raise DeleteUncertain(res.get("error") or "suppression non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,
+                     reply_to: Optional[MessageRef] = None, mentions: Any = (), files: Any = ()) -> Focus:
+        """Un envoi de texte simple part par le service de chat ; une saisie sans envoi, une
+        réponse citée, une mention ou une pièce jointe passent par la page."""
+        if send and reply_to is None and not mentions and not files and text.strip():
+            res = self._gesture("send", "send", thread_id, text=text)
+            if res is not None:
+                if res.get("uncertain"):
+                    raise SendUncertain(res.get("error") or "envoi non confirmé")
+                return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+        kwargs: dict[str, Any] = {}
+        if reply_to is not None:
+            kwargs["reply_to"] = reply_to
+        if mentions:
+            kwargs["mentions"] = mentions
+        if files:
+            kwargs["files"] = files
+        return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
 
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont
