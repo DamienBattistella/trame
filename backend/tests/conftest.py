@@ -74,6 +74,7 @@ def fresh_home(monkeypatch):
     assert home != REPO and cfgmod.HOME == home
     cfg = json.loads((REPO / "config.json").read_text(encoding="utf-8"))
     cfg["reply"]["auto_send_countdown_seconds"] = 0
+    cfg["triggers"]["self_names"] = ["Damien", "Damien Battistella"]  # the mock driver's user
     # Never the skills installed on the machine running the tests.
     cfg["skills"] = {"dirs": [], "repos": [], "state": {}}
     shutil.rmtree(home / "skills", ignore_errors=True)

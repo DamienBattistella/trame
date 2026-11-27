@@ -48,6 +48,8 @@ _MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "ao
 
 
 CANCELLED = "Action annulée."
+# self_names shipped in config.json by earlier versions: replaced by the name Teams gives.
+FORMER_SHIPPED_SELF_NAMES = ("Damien", "Damien Battistella")
 
 
 def _gathered(n_messages: int, people: str) -> str:
@@ -662,10 +664,10 @@ class Watcher:
         """Announce a received message, followed conversation or not. Never the user's
         own messages nor the replies Trame just sent."""
         try:
-            if self._is_own_message(msg, self.cfg.get("triggers", {}).get("self_names", ["Damien"])):
+            if self._is_own_message(msg, self._self_names()):
                 return
             entity = next((w for w in self.state.watchlist if w.thread_id == msg.thread_id), None)
-            names = [n.strip().casefold() for n in self.cfg.get("triggers", {}).get("self_names", ["Damien"]) if n.strip()]
+            names = [n.strip().casefold() for n in self._self_names() if n.strip()]
             mentioned = any(m.strip().casefold() in names or any(m.strip().casefold().startswith(n + " ") for n in names)
                             for m in msg.mentions)
             notice = Notice(id=str(uuid.uuid4())[:8], thread_id=msg.thread_id,
@@ -700,7 +702,7 @@ class Watcher:
         if entity is None:
             return None
         triggers = cfg.get("triggers", {})
-        self_names = triggers.get("self_names", ["Damien"])
+        self_names = self._self_names()
         if self._is_own_message(msg, self_names):
             return None
         if not safety.should_react(entity.surface.value, msg.mentions, entity.named_people, triggers, self_names):
@@ -899,6 +901,34 @@ class Watcher:
         return not (self._stop.is_set() or self.state.paused)
 
     SELF_ECHO_TTL = 600.0
+
+    def _self_names(self) -> list[str]:
+        return [n for n in self.cfg.get("triggers", {}).get("self_names", []) if n.strip()]
+
+    def _learn_self_name(self, discovered: list[WatchEntity]) -> None:
+        """Teams marks the user's own chat (« (You) ») with their name: it fills
+        self_names when empty, or when it still holds the names shipped by older
+        versions (written for Damien) and Teams says the user is someone else."""
+        name = next((c.display_name.strip() for c in discovered if c.is_self and c.display_name.strip()), None)
+        if not name:
+            return
+        with self._lock:
+            current = self._self_names()
+            known = {n.strip().casefold() for n in current}
+            former = known == {n.casefold() for n in FORMER_SHIPPED_SELF_NAMES}
+            if current and not (former and name.casefold() not in known):
+                return
+            first = name.split()[0]
+            names = [name] + ([first] if first.casefold() != name.casefold() else [])
+            cfg = dict(self.cfg)
+            cfg["triggers"] = {**cfg.get("triggers", {}), "self_names": names}
+            self.cfg = cfg
+            try:
+                cfgmod.save(cfg)
+            except Exception as e:
+                self.log("warn", f"Sauvegarde de ton nom impossible: {e}")
+                return
+        self.log("info", f"Ton nom dans Teams : {name}")
 
     def _is_own_message(self, msg: IncomingMessage, self_names: list[str]) -> bool:
         """The user's own messages, and the replies Trame just sent, must never trigger
@@ -1470,7 +1500,7 @@ class Watcher:
 
     # --- manual mode: read a conversation, reply by hand, or ask for a proposal ---
     def _is_mine(self, sender: str) -> bool:
-        names = self.cfg.get("triggers", {}).get("self_names", ["Damien"])
+        names = self._self_names()
         s = (sender or "").strip().casefold()
         return s in ("you", "vous", "moi") or any(s == n.strip().casefold() for n in names if n.strip())
 
@@ -3065,6 +3095,7 @@ class Watcher:
         clean id, then dropped."""
         if not discovered:
             return self.state.watchlist
+        self._learn_self_name(discovered)
         by_id = {w.thread_id: w for w in self.state.watchlist}
         by_name = {d.display_name.casefold(): d.thread_id for d in discovered}
         for w in self.state.watchlist:
