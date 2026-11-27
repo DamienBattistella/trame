@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -180,8 +180,9 @@ async fn restart_backend(app: AppHandle) {
     spawn_backend(&app);
 }
 
-/// How often the running app looks for a new release (the LED in the header).
-const UPDATE_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Minutes between two looks for a new release while the app runs (the LED in the
+/// header); 0: at launch only. Réglages › Mises à jour sets it (config.json › ui).
+static UPDATE_CHECK_MINUTES: AtomicU64 = AtomicU64::new(15);
 
 /// A release the UI can offer: its version and the release notes of latest.json
 /// (the app changelog, as JSON, since the build publishes it there).
@@ -197,15 +198,22 @@ impl From<&tauri_plugin_updater::Update> for UpdateInfo {
     }
 }
 
-/// Trame lives in the tray and is rarely relaunched: look for a new release every
-/// 15 minutes too, and let the UI light its LED (once per version).
+/// Trame lives in the tray and is rarely relaunched: look for a new release on the
+/// chosen schedule too, and let the UI light its LED (once per version). Wakes every
+/// minute so a new setting applies without a restart.
 async fn watch_updates(app: AppHandle) {
     if cfg!(debug_assertions) || is_trial(&app) {
         return;
     }
     let mut announced: Option<String> = None;
+    let mut last_check = std::time::Instant::now();
     loop {
-        pause_for(UPDATE_CHECK_EVERY).await;
+        pause_for(std::time::Duration::from_secs(60)).await;
+        let minutes = UPDATE_CHECK_MINUTES.load(Ordering::SeqCst);
+        if minutes == 0 || last_check.elapsed() < std::time::Duration::from_secs(minutes * 60) {
+            continue;
+        }
+        last_check = std::time::Instant::now();
         if UPDATING.load(Ordering::SeqCst) {
             continue;
         }
@@ -221,6 +229,12 @@ async fn watch_updates(app: AppHandle) {
 
 async fn pause_for(d: std::time::Duration) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
+/// Réglages › Mises à jour : the chosen frequency, sent at startup and on every change.
+#[tauri::command]
+fn set_update_check_minutes(minutes: u64) {
+    UPDATE_CHECK_MINUTES.store(minutes.min(24 * 60), Ordering::SeqCst);
 }
 
 const TRIAL_NO_UPDATE: &str = "Pas de mise à jour dans l'instance d'essai.";
@@ -477,6 +491,7 @@ fn main() {
             restart_backend,
             check_update,
             install_update,
+            set_update_check_minutes,
             teams_web_open,
             teams_web_hide,
             teams_web_close,

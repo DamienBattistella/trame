@@ -169,7 +169,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
-        "ui": {"conversation_sort": "watched"},
+        "ui": {"conversation_sort": "watched", "update_check_minutes": 15},
     }
 
 
@@ -196,12 +196,34 @@ def test_settings_put_partial_hot_swap_and_persist(make_client, fresh_home):
 
 def test_conversation_sort_defaults_to_watched_and_persists(make_client, fresh_home):
     client, _watcher, _driver = make_client()
-    assert client.get("/api/settings").json()["settings"]["ui"] == {"conversation_sort": "watched"}
+    assert client.get("/api/settings").json()["settings"]["ui"]["conversation_sort"] == "watched"
     r = client.put("/api/settings", json={"ui": {"conversation_sort": "alpha"}})
     assert r.status_code == 200 and r.json()["settings"]["ui"]["conversation_sort"] == "alpha"
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["conversation_sort"] == "alpha"
     assert client.put("/api/settings", json={"ui": {"conversation_sort": "nope"}}).status_code == 422
+
+
+def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_home):
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["update_check_minutes"] == 15
+    r = client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
+    assert r.status_code == 200
+    ui = r.json()["settings"]["ui"]
+    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60}
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["ui"]["update_check_minutes"] == 60
+    # 0: at launch only; values outside the offered choices are refused.
+    assert client.put("/api/settings", json={"ui": {"update_check_minutes": 0}}).json()["settings"]["ui"]["update_check_minutes"] == 0
+    assert client.put("/api/settings", json={"ui": {"update_check_minutes": 7}}).status_code == 422
+
+
+def test_update_check_minutes_hand_edited_falls_back_to_15():
+    from settings import from_config
+
+    for bad in (7, "15", True, None, -5):
+        assert from_config({"ui": {"update_check_minutes": bad}}).ui.update_check_minutes == 15
+    assert from_config({"ui": {"update_check_minutes": 360}}).ui.update_check_minutes == 360
 
 
 def test_settings_put_same_brain_keeps_instance(make_client):

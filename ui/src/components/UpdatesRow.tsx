@@ -3,12 +3,22 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownToLine, Check, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Segment } from "@/components/kit";
 import { appVersion, checkUpdate, installUpdate, isDesktop, setAvailableUpdate } from "@/desktop";
+import { cn } from "@/lib/utils";
+import { UPDATE_CHECK_CHOICES, UpdateCheckMinutes } from "@/types";
 
 type State = { kind: "idle" } | { kind: "checking" } | { kind: "latest" } | { kind: "available"; version: string } | { kind: "installing" };
 
+/** « toutes les 15 minutes », « toutes les heures »… ; 0 : au lancement seulement. */
+function checkEveryLabel(minutes: UpdateCheckMinutes): string {
+  if (minutes === 0) return "Vérifiées au lancement seulement";
+  const every = minutes === 60 ? "toutes les heures" : minutes > 60 ? `toutes les ${minutes / 60} heures` : `toutes les ${minutes} minutes`;
+  return `Vérifiées au lancement puis ${every}`;
+}
+
 /** Réglages › Général › Mises à jour : version installée, recherche, installation. */
-export function UpdatesRow() {
+export function UpdatesRow({ checkMinutes }: { checkMinutes: UpdateCheckMinutes }) {
   const [version, setVersion] = useState<string | null>(null);
   const [state, setState] = useState<State>({ kind: "idle" });
   const desktop = isDesktop();
@@ -47,7 +57,7 @@ export function UpdatesRow() {
           ? `Version ${state.version} disponible`
           : state.kind === "installing"
             ? "Téléchargement et installation…"
-            : "Vérifiées au lancement puis toutes les 15 minutes";
+            : checkEveryLabel(checkMinutes);
 
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
@@ -81,6 +91,25 @@ export function UpdatesRow() {
           Rechercher
         </Button>
       )}
+    </div>
+  );
+}
+
+const CHECK_OPTIONS = UPDATE_CHECK_CHOICES.map((m) => ({ value: String(m), label: m === 0 ? "Au lancement" : m < 60 ? `${m} min` : `${m / 60} h` }));
+
+/** Réglages › Général › Mises à jour : fréquence de recherche d'une nouvelle version (config.json › ui). */
+export function UpdateFrequencyRow({ value, onChange }: { value: UpdateCheckMinutes; onChange: (m: UpdateCheckMinutes) => void }) {
+  const desktop = isDesktop();
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <span className={cn("text-sm transition-colors", !desktop && "text-muted-foreground")}>Rechercher une nouvelle version</span>
+      <Segment
+        label="Fréquence de recherche des mises à jour"
+        value={String(value)}
+        disabled={!desktop}
+        options={CHECK_OPTIONS}
+        onChange={(v) => onChange(Number(v) as UpdateCheckMinutes)}
+      />
     </div>
   );
 }
