@@ -320,7 +320,7 @@ def test_read_history_api_asks_the_page_and_converts_like_the_dom_read():
     def rpc(op, **kw):
         calls.append((op, kw))
         return {"ok": True, "top": True, "messages": [
-            {"sender": "Ana", "text": "Bonjour", "at": "10:02", "id": "1700000000001", "reactions": ["like", "inconnue"],
+            {"sender": "Ana", "text": "Bonjour", "at": "10:02", "id": "1700000000001", "reactions": ["like", "Pas une clé!"],
              "files": [{"name": "plan.pdf", "url": "https://dedalus.sharepoint.com/x"}], "images": [], "links": [], "cards": []},
             {"sender": "Ana", "text": "Ce message a été supprimé.", "at": "10:03", "id": "1700000000002",
              "reactions": [], "files": [], "images": [], "links": [], "cards": []},

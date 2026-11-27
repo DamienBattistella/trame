@@ -225,13 +225,28 @@ export interface Brief {
 }
 
 /** Le petit jeu de réactions de Teams. */
-export type Reaction = "like" | "heart" | "laugh" | "surprised";
+/** Clé de réaction de Teams : les six rapides, ou tout emoji (« 1f44f_clappinghands »). */
+export type Reaction = string;
+/** Une réaction sur un message : combien l'ont mise, et si tu en fais partie. */
+export interface ReactionCount {
+  key: Reaction;
+  /** L'emoji déduit de la clé par le moteur ; "" pour une émoticône propre à l'organisation. */
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
 export const REACTIONS: { key: Reaction; emoji: string; label: string }[] = [
   { key: "like", emoji: "👍", label: "J'aime" },
   { key: "heart", emoji: "❤️", label: "Cœur" },
   { key: "laugh", emoji: "😆", label: "Rigole" },
   { key: "surprised", emoji: "😮", label: "Surpris" },
+  { key: "sad", emoji: "😢", label: "Triste" },
+  { key: "angry", emoji: "😡", label: "En colère" },
 ];
+
+/** Ce qu'on montre d'une réaction : son emoji, sinon sa clé (émoticône de l'organisation). */
+export const reactionGlyph = (key: Reaction, emoji?: string) =>
+  emoji || REACTIONS.find((r) => r.key === key)?.emoji || `:${key}:`;
 
 export interface ThreadMessage {
   /** Identifiant du message dans Teams, quand le pilote le connaît. */
@@ -242,6 +257,8 @@ export interface ThreadMessage {
   mine: boolean;
   /** Réactions que tu as mises sur ce message. */
   reactions?: Reaction[];
+  /** Toutes les réactions du message (les tiennes et celles des autres), quand Teams les donne. */
+  reaction_counts?: ReactionCount[];
   /** Pièces jointes reçues : fichiers (nom, lien) et images (aperçu). */
   files?: ReceivedFile[];
   images?: ReceivedImage[];

@@ -1509,7 +1509,13 @@ export function useTrame() {
             { source: "GitHub", title: "Mapping HL7 des résultats de labo · Pull Request #214", url: "https://github.com/Wifsimster/passerelle/pull/214", fields: [] },
           ],
         },
-        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [], files: [{ name: "Recette-OBX.pdf", url: "" }, { name: "demo-parcours.mp4", url: "https://example-my.sharepoint.com/:v:/g/personal/demo/IQDemo", kind: "video" }], images: [{ data: null, width: 0, height: 0 }] },
+        { id: "d3", sender: who, text: "Top. Tu peux relire la PR #214 avant ce soir ?", at: "10:02", mine: false, reactions: demoReactions.get(`${threadId}/d3`) ?? [],
+          // Réactions des collègues (données d'exemple) : toutes les réactions de Teams, avec leur nombre.
+          reaction_counts: [
+            { key: "like", emoji: "👍", count: 2, mine: false },
+            { key: "1f44f_clappinghands", emoji: "👏", count: 1, mine: false },
+            { key: "sad", emoji: "😢", count: 1, mine: false },
+          ], files: [{ name: "Recette-OBX.pdf", url: "" }, { name: "demo-parcours.mp4", url: "https://example-my.sharepoint.com/:v:/g/personal/demo/IQDemo", kind: "video" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);
       return { ok: true, messages, top: true, meeting };

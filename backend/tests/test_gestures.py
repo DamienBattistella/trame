@@ -84,16 +84,19 @@ def test_react_refuses_wrong_author(make_client):
 
 def test_react_unknown_reaction_is_rejected(make_client):
     client, _watcher, driver = make_client()
-    r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "rocket"})
-    assert r.status_code == 422 and driver.reactions == {}
-
-
-def test_only_the_one_click_reactions_of_teams(make_client):
-    # La barre de survol de Teams n'offre que 👍 ❤️ 😆 😮 ; le reste passe par un sélecteur.
-    client, _watcher, driver = make_client()
-    for reaction in ("sad", "angry"):
-        assert client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": reaction}).status_code == 422
+    # Une clé de Teams est en minuscules, chiffres, « _ » et « - » : le reste est refusé.
+    for bad in ("Rocket!", "", "a b", "x" * 80):
+        r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": bad})
+        assert r.status_code == 422
     assert driver.reactions == {}
+
+
+def test_every_teams_reaction_key_is_accepted(make_client):
+    # Toutes les réactions de Teams : les six rapides et les emoji (« 1f44f_clappinghands »). La
+    # barre de la page n'en a que quatre : le repli sur la page refuse les autres (côté page).
+    client, _watcher, driver = make_client()
+    for reaction in ("sad", "angry", "1f44f_clappinghands"):
+        assert client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": reaction}).status_code == 200
 
 
 def test_react_needs_the_conversation_confirmed(make_client):
@@ -196,7 +199,7 @@ class GesturePage:
             return {"ok": True, "title": self.title}
         if op == "read":
             return {"messages": [{"sender": "Romain CUREAU", "text": "Tu as vu ?", "at": "10:00", "id": "1700",
-                                  "reactions": ["like", "bogus"]}], "top": True}
+                                  "reactions": ["like", "Pas une clé!"]}], "top": True}
         if op == "type":
             return {"ok": True}
         if op == "react":
@@ -286,3 +289,25 @@ def test_bridge_gives_time_to_scroll_up_to_an_older_message(monkeypatch):
     (_, react_t, _), (_, quote_t, quote_args), (_, plain_t, plain_args) = calls
     assert react_t >= 20 and quote_t > react_t and quote_args["quote"]["id"] == "1700"
     assert plain_t == 15 and "quote" not in plain_args
+
+
+def test_reaction_keys_become_emoji():
+    from models import reaction_emoji
+    assert reaction_emoji("like") == "👍" and reaction_emoji("sad") == "😢" and reaction_emoji("angry") == "😡"
+    assert reaction_emoji("1f44f_clappinghands") == "👏"
+    assert reaction_emoji("2764-fe0f_redheart") == "❤️"
+    assert reaction_emoji("1f680_rocket") == "🚀"
+    assert reaction_emoji("clap") == "👏"
+    assert reaction_emoji("customorgemoji") == ""
+
+
+def test_every_reaction_of_a_message_is_read_with_its_count():
+    from drivers.web_bridge import _reaction_counts
+    got = _reaction_counts([
+        {"key": "like", "count": 3, "mine": True},
+        {"key": "1f44f_clappinghands", "count": 1, "mine": False},
+        {"key": "Pas une clé!", "count": 2},
+        {"key": "customorgemoji", "count": 2, "emoji": "<img src=x>"},
+    ])
+    assert [(r.key, r.emoji, r.count, r.mine) for r in got] == [
+        ("like", "👍", 3, True), ("1f44f_clappinghands", "👏", 1, False), ("customorgemoji", "", 2, False)]

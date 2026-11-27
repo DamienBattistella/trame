@@ -2065,7 +2065,8 @@
   const chatMessage = (() => {
     // Messages écrits par quelqu'un ; les événements (ajout de membre, appel…) sont ignorés.
     const USER_TYPES = /^(Text|RichText(\/Html|\/Media_Card|\/Media_GenericFile|\/UriObject)?)$/i;
-    const EMOTIONS = { like: "like", heart: "heart", laugh: "laugh", surprised: "surprised" };
+    // Toute clé de réaction de Teams (« like », « clap », « 1f44f_clappinghands »…).
+    const EMOTION_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const parseJson = (v) => {
       if (Array.isArray(v) || (v && typeof v === "object")) return v;
       try {
@@ -2134,10 +2135,21 @@
       if (!me) return [];
       const out = new Set();
       for (const e of parseJson(props && props.emotions) || []) {
-        const key = EMOTIONS[e && e.key];
-        if (key && ((e && e.users) || []).some((u) => u && u.mri === me)) out.add(key);
+        const key = String((e && e.key) || "");
+        if (EMOTION_KEY.test(key) && ((e && e.users) || []).some((u) => u && u.mri === me)) out.add(key);
       }
       return Array.from(out);
+    };
+    // Toutes les réactions d'un message : clé, combien de personnes, et si tu en fais partie.
+    const countsIn = (props, me) => {
+      const out = [];
+      for (const e of parseJson(props && props.emotions) || []) {
+        const key = String((e && e.key) || "");
+        const users = ((e && e.users) || []).filter((u) => u && u.mri);
+        if (!EMOTION_KEY.test(key) || !users.length) continue;
+        out.push({ key, count: users.length, mine: Boolean(me) && users.some((u) => u.mri === me) });
+      }
+      return out.slice(0, 30);
     };
     const isUser = (raw) => USER_TYPES.test(String((raw && raw.messagetype) || ""));
     // Analyse du corps HTML d'un message SANS le DOM de la page : Teams impose les Trusted
@@ -2226,6 +2238,7 @@
         id: String(raw.id || ""),
         status: null,
         reactions: deleted ? [] : mineIn(props, me),
+        reactionCounts: deleted ? [] : countsIn(props, me),
         files: deleted ? [] : filesFrom(props),
         images: root ? bodyImages(root) : [],
         links: deleted ? [] : p.links || [],
@@ -2469,7 +2482,7 @@
     };
     // Pose la réaction, ou la retire (remove) : jamais une bascule, l'état voulu est explicite.
     const react = async ({ thread, message, reaction, remove }) => {
-      if (!["like", "heart", "laugh", "surprised"].includes(reaction)) return notSent("réaction inconnue");
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(String(reaction || ""))) return notSent("réaction inconnue");
       const off = remove === true;
       const t = await target(thread, message);
       if (t.error) return notSent(t.error);
@@ -4096,7 +4109,7 @@
     },
     react: async ({ name, message, reaction, remove }) => {
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
-      if (!REACTION_NAMES[reaction]) return { ok: false, error: "réaction inconnue" };
+      if (!REACTION_NAMES[reaction]) return { ok: false, error: "cette réaction n'est pas dans la barre de Teams : elle passe seulement par le service de chat" };
       const off = remove === true;
       const found = await lookup(message);
       if (!found) return { ok: false, error: "message introuvable ou différent de celui choisi" };

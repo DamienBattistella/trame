@@ -33,7 +33,7 @@ import settings as settingsmod
 from github import context as gh
 from github import knowledge as ghknow
 from github import publish as ghpublish
-from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
+from models import (DELETED_TEXT, REACTION_KEY, REACTIONS, reaction_emoji, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, QuoteRef, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
 from drivers.base import DeleteUncertain, EditUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
@@ -1607,7 +1607,8 @@ class Watcher:
         entity = self._conversation(thread_id)
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
         out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
-                "reactions": list(m.reactions), "files": [f.model_dump() for f in m.files],
+                "reactions": list(m.reactions), "reaction_counts": [r.model_dump() for r in m.reaction_counts],
+                "files": [f.model_dump() for f in m.files],
                 "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted,
                 "links": [link.model_dump() for link in m.links], "cards": [c.model_dump() for c in m.cards],
                 "quote": m.quote.model_dump() if m.quote else None, "mentions": list(m.mentions), "edited": m.edited}
@@ -1782,11 +1783,11 @@ class Watcher:
         message checked by author and text. Success only once Teams shows the reaction
         there (or gone): never a false « fait »."""
         entity = self._conversation(thread_id)
-        if reaction not in REACTIONS:
+        if not REACTION_KEY.match(reaction or ""):
             raise ActionError(422, "Réaction inconnue.")
         self._require("react")
         self._typing_allowed()
-        emoji = REACTIONS[reaction]
+        emoji = reaction_emoji(reaction) or f"« {reaction} »"
         none = "Aucune réaction retirée" if remove else "Aucune réaction posée"
         with self._ui_lock:
             if self._screen_share_guarded():

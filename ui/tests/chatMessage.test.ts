@@ -80,7 +80,7 @@ test("image d'un autre site dans le corps : ni AMS ni GIF de Teams, ignorée", (
   assert.deepEqual(convert({ ...base, content: '<img src="https://giphy.com.example.net/x.gif">' }).images, []);
 });
 
-test("réactions : seules les MIENNES, et seulement les quatre de Trame", () => {
+test("réactions : les MIENNES quelle que soit la clé, et le décompte de toutes", () => {
   const m = convert({
     ...base,
     content: "ok",
@@ -92,13 +92,18 @@ test("réactions : seules les MIENNES, et seulement les quatre de Trame", () => 
       ]),
     },
   });
-  assert.deepEqual(m.reactions, ["like"]);
+  assert.deepEqual(m.reactions, ["like", "angry"]);
+  assert.deepEqual(m.reactionCounts, [
+    { key: "like", count: 1, mine: true },
+    { key: "heart", count: 1, mine: false },
+    { key: "angry", count: 1, mine: true },
+  ]);
 });
 
 test("message supprimé : le texte que Teams affiche, rien d'autre", () => {
   const m = convert({ ...base, content: "", properties: { deletetime: "1795777009999", files: '[{"fileName":"x.pdf"}]' } });
   assert.equal(m.text, "Ce message a été supprimé.");
-  assert.deepEqual([m.files, m.images, m.links, m.reactions], [[], [], [], []]);
+  assert.deepEqual([m.files, m.images, m.links, m.reactions, m.reactionCounts], [[], [], [], [], []]);
 });
 
 test("aperçu de lien du service de chat → carte (titre + adresse)", () => {
