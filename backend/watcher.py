@@ -130,6 +130,8 @@ class Watcher:
         self._history: dict[str, tuple[float, str]] = {}
         # Images joined to the cached summary (same key, same lifetime as `_history`).
         self._history_images: dict[str, list[str]] = {}
+        # Images shown to the brain by the last proposal, per conversation (MCP suggest_reply).
+        self.images_shown: dict[str, int] = {}
         # thread id -> (read at, messages, how many were asked, start of the conversation reached)
         self._thread_cache: dict[str, tuple[float, list[dict], int, bool]] = {}
         # Organisateur des réunions dont la transcription a été relue (par meeting_id).
@@ -1791,6 +1793,7 @@ class Watcher:
                if m.text or m.files or m.images or m.cards]
         reflection.check_cancelled()
         msgs, images = self._brain_view(raw)
+        self.images_shown[thread_id] = len(images)
         theirs = [m for m in msgs if not self._is_mine(m.sender)]
         if not theirs:
             raise ActionError(409, "Aucun message à qui répondre dans cette conversation.")
@@ -1811,6 +1814,7 @@ class Watcher:
         On one of the user's own messages, a follow-up or a complement, never a reply to
         themself. Only returns the text: nothing is queued, nothing is sent."""
         msgs, images = self._brain_view(raw)
+        self.images_shown[entity.thread_id] = len(images)
         idx = next((i for i in range(len(raw) - 1, -1, -1)
                     if (not target.id or raw[i].id == target.id)
                     # Compared without the image numbers: the app names an image-only message « [image] ».
