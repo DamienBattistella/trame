@@ -34,6 +34,8 @@ export interface DraftItem {
   mode: Mode;
   usedGithub?: string;
   senderLabel?: string;
+  /** Message auquel la réponse répond : cité dans Teams à l'envoi. */
+  replyTo?: MessageRef | null;
 }
 
 /** Message tout juste reçu, annoncé par une notification Windows. */

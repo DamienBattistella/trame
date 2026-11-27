@@ -253,6 +253,7 @@ function mapDraft(d: any): DraftItem {
     mode: d.mode,
     usedGithub: d.used_github ?? undefined,
     senderLabel: d.sender_label ?? undefined,
+    replyTo: d.reply_to ? { id: d.reply_to.id ?? null, sender: d.reply_to.sender ?? "", text: d.reply_to.text, at: d.reply_to.at ?? "" } : null,
   };
 }
 function mapState(s: any): TrameState {
