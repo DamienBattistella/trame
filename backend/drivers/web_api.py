@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
+from drivers import rail_label
 from drivers.base import DeleteUncertain, EditUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
@@ -127,6 +128,10 @@ class _ChatState:
         # (et celles dont l'id Teams est dans l'id de la page) reçoivent des gestes par le service.
         self.strong: set[str] = set()
         self.presence_at = 0.0  # dernière lecture de la présence des tête-à-tête
+        # Tête-à-tête ouverts par Trame sur le service (« Nouvelle conversation ») : thread_id de
+        # Trame -> id Teams. Gardés à chaque relecture de la liste, même absents de la page ; l'id
+        # Teams contient l'identifiant de la personne choisie : la preuve est forte.
+        self.started: dict[str, str] = {}
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -137,7 +142,7 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
-                             "presence", "my_status", "set_status", "set_note", "search_people"})
+                             "presence", "my_status", "set_status", "set_note", "search_people", "start_chat"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -280,6 +285,10 @@ class WebApiDriver:
             cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
             if cid:
                 mapped[e.thread_id] = cid
+        for tid, cid in self._chat.started.items():
+            if tid not in mapped and cid not in mapped.values():
+                mapped[tid] = cid
+                self._chat.strong.add(tid)
         self._chat.mapped = mapped
         # Remplacé d'un bloc : une lecture de fil en parallèle voit l'ancienne table ou la nouvelle.
         if isinstance(getattr(self._inner, "chat_aliases", None), dict):
@@ -483,6 +492,51 @@ class WebApiDriver:
         if files:
             kwargs["files"] = files
         return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
+
+    # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
+    def start_chat(self, name: str) -> Optional[WatchEntity]:
+        """Le tête-à-tête avec `name`, trouvé sur le service sans ouvrir la page : la personne
+        par la recherche de Teams (un seul nom identique), puis SA conversation dans la liste du
+        service de chat (l'id du tête-à-tête contient son identifiant). Rien n'est tapé. Personne
+        introuvable, homonymes, ou tête-à-tête jamais créé : la page, comme avant."""
+        shown = " ".join((name or "").split())
+        hit = self._existing_dm(shown) if shown else None
+        if hit is None:
+            return self._inner.start_chat(name)
+        person, cid = hit
+        st = self._chat
+        thread_id = next((t for t, c in st.mapped.items() if c == cid), None) or f"name:{person}"
+        st.started[thread_id] = cid
+        st.mapped = {**st.mapped, thread_id: cid}
+        st.strong.add(thread_id)
+        if isinstance(getattr(self._inner, "chat_aliases", None), dict) and thread_id.startswith("name:"):
+            self._inner.chat_aliases = {**self._inner.chat_aliases, thread_id: cid}
+        for attr, value in (("_names", person), ("_kinds", Surface.dm)):
+            table = getattr(self._inner, attr, None)
+            if isinstance(table, dict):
+                table[thread_id] = value
+        self._route("start_chat", "api")
+        return WatchEntity(thread_id=thread_id, display_name=person, surface=Surface.dm)
+
+    def _existing_dm(self, name: str) -> Optional[tuple[str, str]]:
+        res = self._people("start_chat", "search", query=name, limit=8)
+        if res is None or not res.get("ok"):
+            return None
+        same = {str(p.get("mri")): str(p.get("name")) for p in res.get("people") or []
+                if p.get("mri") and rail_label.same_name(str(p.get("name") or ""), name)}
+        if len(same) != 1:
+            why = "homonymes dans Teams" if same else "personne introuvable par la recherche de Teams"
+            self._route("start_chat", "page", f"repli sur la page : {why}")
+            return None
+        mri, person = next(iter(same.items()))
+        st = self._chat
+        if not st.ok:
+            self._refresh_chat()
+        cid = next((c for c, r in st.rows.items() if r.get("kind") == "dm" and r.get("other") == mri), None)
+        if cid is None:
+            self._route("start_chat", "page", "repli sur la page : pas encore de conversation avec cette personne")
+            return None
+        return person, cid
 
     # --- Présence, statut, note et recherche de personnes ------------------------------
     def _people(self, action: str, kind: str, **args: Any) -> Optional[dict]:

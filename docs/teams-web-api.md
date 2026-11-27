@@ -253,6 +253,12 @@ y est refusé).
   Durées en heure locale : 30 min, 1 h, 2 h ; « aujourd'hui » jusqu'à 23:59:59 ; « cette semaine »
   jusqu'à dimanche 23:59:59 ; « Personnalisé » à l'heure donnée. Rien n'est parti ou refus net : le
   menu de la page, comme avant ; parti sans preuve : jamais refait (« vérifie dans Teams »).
+- **Nouvelle conversation** : la personne est trouvée par la recherche de Teams (un seul nom
+  identique, sinon la page), puis SON tête-à-tête dans la liste du service de chat (l'id
+  `19:{guid}_{guid}@unq.gbl.spaces` contient son identifiant : preuve forte). Rien n'est ouvert
+  dans la page ; la conversation reste reliée au service (lecture et écriture) même si la page ne
+  la montre pas. Un tête-à-tête jamais créé reste sur la page (la création n'est pas encore
+  câblée).
 - La **recherche de messages** reste sur la page : elle passe par `substrate.office.com`, dont la
   page n'expose pas le jeton.
 
@@ -263,5 +269,6 @@ y est refusé).
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
 4. ~~Écritures simples~~ (#128), ~~réponse citée~~ (#138), ~~mentions~~.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
-   restent la recherche de messages, la nouvelle conversation.
+   ~~nouvelle conversation avec un tête-à-tête existant~~ ; restent la recherche de messages et la
+   création d'un tête-à-tête.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
