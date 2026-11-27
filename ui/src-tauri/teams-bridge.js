@@ -596,6 +596,8 @@
       delete: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, "?behavior=softDelete"],
       edit: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, ""],
       send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
+      // Création d'un tête-à-tête (c : son id calculé, jamais mis dans le chemin).
+      thread: () => ["POST", "/v1/threads", ""],
     };
     // { ok, status } ; { sent: false } si rien n'est parti (refus avant l'appel) ; { sent: true,
     // unknown: true } si l'appel est parti sans réponse lisible (réseau coupé en route).
@@ -2643,6 +2645,43 @@
     };
   })();
 
+  // --- Tête-à-tête avec quelqu'un, trouvé ou créé sur le service de chat ---
+  // L'id d'un tête-à-tête se calcule comme Teams le fait : « 19:{guid A}_{guid B}@unq.gbl.spaces »,
+  // les deux guids triés. S'il existe : rien n'est écrit. Sinon, il est créé comme le fait Teams
+  // (POST /v1/threads, « uniquerosterthread » : un seul fil par paire, jamais de doublon), puis
+  // relu. Aucun message n'est envoyé.
+  const chatDm = (() => {
+    const GUID = /^8:orgid:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+    const enc = (c) => encodeURIComponent(c);
+    return async ({ mri } = {}) => {
+      const other = GUID.exec(String(mri || ""));
+      const me = await chatsvc.whoami();
+      const mine = GUID.exec(String(me || ""));
+      if (!other) return { ok: false, attempted: false, error: "identifiant Teams de la personne inattendu" };
+      if (!mine) return { ok: false, attempted: false, error: "identifiant Teams de l'utilisateur inconnu" };
+      if (other[1].toLowerCase() === mine[1].toLowerCase()) return { ok: false, attempted: false, error: "c'est toi" };
+      const [a, b] = [mine[1].toLowerCase(), other[1].toLowerCase()].sort();
+      const id = `19:${a}_${b}@unq.gbl.spaces`;
+      const exists = async () => {
+        const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(id)}`, query: { view: "msnp24Equivalent" } });
+        return r.ok && r.json && String(r.json.id || id) === id;
+      };
+      if (await exists()) return { ok: true, id, created: false };
+      const w = await chatsvc.write("thread", id, null, {
+        members: [{ id: `8:orgid:${mine[1]}`, role: "Admin" }, { id: `8:orgid:${other[1]}`, role: "Admin" }],
+        properties: { threadType: "chat", chatFilesIndexId: "2", fixedRoster: true, uniquerosterthread: true },
+      });
+      if (!w.sent) return { ok: false, attempted: false, error: w.error };
+      for (const wait of [0, 700, 1500, 3000]) {
+        if (wait) await sleep(wait);
+        if (await exists()) return { ok: true, id, created: true };
+      }
+      // Pas relu : la page ouvre la conversation, comme avant (le fil est unique par paire :
+      // une ouverture par la page ne crée jamais de doublon).
+      return { ok: false, attempted: false, error: w.ok ? "tête-à-tête créé mais pas encore relu" : `création refusée (HTTP ${w.status || "?"})` };
+    };
+  })();
+
   // --- Présence, note de statut et recherche de personnes (middletier) ---
   // Le service de présence et la recherche de personnes acceptent le bearer middletier que
   // Teams pose lui-même (vérifié en direct). Requêtes fixes ici ; le moteur ne donne que des
@@ -3377,6 +3416,7 @@
     teamspeople: (args) => teamsPeople(args || {}),
     // Un geste sur le service de chat (lu, réaction, suppression, envoi), vérifié puis prouvé.
     chatgesture: (args) => chatGestures(args || {}),
+    chatdm: (args) => chatDm(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.

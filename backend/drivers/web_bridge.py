@@ -581,6 +581,20 @@ class WebBridgeDriver(TeamsDriver):
         rows = [r for r in (res.get("rows") or []) if isinstance(r, dict) and self.chat_id(str(r.get("id") or ""))]
         return {"rows": rows, "sync": str(res.get("sync") or ""), "full": bool(res.get("full")), "me": str(res.get("me") or "")}
 
+    def chat_dm(self, mri: str, timeout: float = 20.0) -> dict:
+        """Le tête-à-tête avec la personne `mri` sur le service de chat : trouvé par son id
+        (calculé comme Teams), ou créé comme Teams le fait puis relu. {ok, id, created} ;
+        {ok: False, attempted: False} : la page ouvre la conversation, comme avant."""
+        try:
+            res = self._rpc("chatdm", mri=str(mri or ""), timeout=timeout)
+        except Exception as e:
+            return {"ok": False, "attempted": False, "error": str(e)}
+        if not isinstance(res, dict):
+            return {"ok": False, "attempted": False, "error": "réponse illisible de la page"}
+        if res.get("ok") and not CHAT_ID.fullmatch(str(res.get("id") or "")):
+            return {"ok": False, "attempted": False, "error": "identifiant de tête-à-tête inattendu"}
+        return res
+
     def chat_gesture(self, kind: str, thread_id: str, timeout: float = 25.0, **args: Any) -> dict:
         """Un geste sur le service de chat (markread, react, delete, send), fait DANS la page :
         vérifié avant (bon message, le sien pour supprimer) puis prouvé par relecture.
