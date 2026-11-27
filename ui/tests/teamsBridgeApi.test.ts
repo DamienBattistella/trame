@@ -163,6 +163,37 @@ test("webfetch avec sign:false n'attache aucune auth, même si un credential est
   assert.ok(!("Authorization" in out.init.headers), "auth posée malgré sign:false");
 });
 
+test("diagnose rejoue une sonde signée et rapporte le statut (jamais le corps)", async () => {
+  const p = teamsPage();
+  p.setResponse(fakeResponse('{"tenants":[{"secret":"TENANT-DATA"}]}', { status: 200 }));
+  // Teams appelle lui-même un GET authentifié, sûr et idempotent (sonde de signature).
+  await p.ctx.window.fetch("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/tenantsv2", {
+    headers: { authorization: "Bearer TOK" },
+  });
+  await new Promise((r) => setImmediate(r));
+  const before = p.fetchCalls.length;
+  const diag = (await p.run("diagnose")).result;
+  // L'auto-test a rejoué la sonde, signée, et ne rapporte que le statut.
+  assert.equal(diag.sign_selftest.status, 200);
+  assert.equal(diag.sign_selftest.ok, true);
+  assert.equal(p.fetchCalls[before].init.headers["Authorization"], "Bearer TOK");
+  // Jamais le corps de la sonde dans le diagnostic.
+  assert.ok(!/TENANT-DATA/.test(JSON.stringify(diag)), "corps de la sonde exposé");
+});
+
+test("l'auto-test de signature révèle un 401 (signature KO) sans exposer de corps", async () => {
+  const p = teamsPage();
+  p.setResponse(fakeResponse("{}", { status: 200 }));
+  await p.ctx.window.fetch("https://teams.cloud.microsoft/api/mt/part/emea-03/beta/users/tenantsv2", {
+    headers: { authorization: "Bearer TOK" },
+  });
+  await new Promise((r) => setImmediate(r));
+  p.setResponse(fakeResponse("Unauthorized", { status: 401, contentType: "text/plain" }));
+  const diag = (await p.run("diagnose")).result;
+  assert.equal(diag.sign_selftest.status, 401);
+  assert.equal(diag.sign_selftest.ok, false);
+});
+
 test("la capture WebSocket ne retient que l'URL de connexion (hôte + chemin masqué)", async () => {
   const p = teamsPage();
   // La page ouvre un canal trouter (où passent les messages en v2).
