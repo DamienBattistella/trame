@@ -12,7 +12,7 @@ def test_shipped_soul_names_nobody():
 
 
 def test_untouched_former_default_follows_the_new_one(fresh_home):
-    (fresh_home / "SOUL.md").write_bytes(FORMER.read_bytes().replace(b"\n", b"\r\n"))
+    (fresh_home / "SOUL.md").write_bytes(FORMER.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
     cfgmod._refresh_shipped_soul()
     assert (fresh_home / "SOUL.md").read_bytes() == (cfgmod.BUNDLE / "SOUL.md").read_bytes()
     assert not cfgmod.soul_is_custom()
