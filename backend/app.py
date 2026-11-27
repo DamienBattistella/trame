@@ -313,6 +313,11 @@ class ResetBody(BaseModel):
     confirm: Literal["RESET"]
 
 
+class SoulLearningBody(BaseModel):
+    enabled: Optional[bool] = None
+    every: Optional[int] = None
+
+
 class SoulBody(BaseModel):
     filename: str
     content: str
@@ -429,7 +434,8 @@ def create_app(
     @app.post("/api/drafts/{draft_id}/send")
     def send_draft(draft_id: str, body: Optional[SendBody] = None):
         queued = watcher.send_draft(draft_id, body.text if body else None, body.reply_to if body else None,
-                                    body.mentions if body else None, _files(body), force=bool(body and body.force))
+                                    body.mentions if body else None, _files(body), force=bool(body and body.force),
+                                    learn=True)
         # Teams pas prêt : le message attend dans la file d'envoi et partira seul.
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
@@ -440,7 +446,7 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/dismiss")
     def dismiss_draft(draft_id: str):
-        watcher.dismiss_draft(draft_id)
+        watcher.dismiss_draft(draft_id, learn=True)
         return {"ok": True}
 
     @app.post("/api/follow-ups/{item_id}/send")
@@ -553,7 +559,8 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/send")
     def thread_send(thread_id: str, body: SendBody):
-        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body), force=body.force)
+        queued = watcher.send_manual(thread_id, body.text or "", body.reply_to, body.mentions, _files(body), force=body.force,
+                                     learn=True)
         return {"ok": True, "queued": queued.model_dump()} if queued else {"ok": True}
 
     @app.get("/api/attachments")
@@ -580,7 +587,7 @@ def create_app(
 
     @app.post("/api/threads/{thread_id:path}/suggest")
     def thread_suggest(thread_id: str, body: Optional[SuggestBody] = None):
-        return {"ok": True, "text": watcher.suggest_reply(thread_id, target=body.message if body else None)}
+        return {"ok": True, "text": watcher.suggest_reply(thread_id, target=body.message if body else None, learn=True)}
 
     @app.post("/api/threads/{thread_id:path}/check")
     def thread_check(thread_id: str, body: CheckBody):
@@ -783,6 +790,35 @@ def create_app(
     def get_soul():
         custom = cfgmod.soul_is_custom()
         return {"ok": True, "soul": {"custom": custom, "filename": "SOUL.md", "content": watcher.soul if custom else ""}}
+
+    @app.get("/api/soul/details")
+    def soul_details():
+        """Le SOUL.md en clair, lu section par section, ses versions et l'apprentissage."""
+        return {"ok": True, **watcher.soul_details()}
+
+    @app.get("/api/soul/versions/{version_id}")
+    def soul_version(version_id: str):
+        return {"ok": True, "version": watcher.soul_version(version_id)}
+
+    @app.post("/api/soul/versions/{version_id}/restore")
+    def soul_restore(version_id: str):
+        watcher.restore_soul(version_id)
+        return {"ok": True, **watcher.soul_details()}
+
+    @app.post("/api/soul/learn")
+    def soul_learn():
+        result = watcher.learn_soul()
+        return {"ok": True, "result": result, **watcher.soul_details()}
+
+    @app.post("/api/soul/learning")
+    def soul_learning(body: SoulLearningBody):
+        watcher.set_soul_learning(body.enabled, body.every)
+        return {"ok": True, **watcher.soul_details()}
+
+    @app.post("/api/soul/signals/forget")
+    def soul_forget():
+        watcher.forget_soul_signals()
+        return {"ok": True, **watcher.soul_details()}
 
     @app.get("/api/soul/template")
     def soul_template():

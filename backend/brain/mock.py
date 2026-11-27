@@ -52,6 +52,9 @@ class MockBrain(Brain):
     def complete(self, prompt: str, timeout: float | None = None) -> str:
         if prompt.startswith(skillsmod.PROTOCOL):
             return self._skill_turn(prompt)
+        if "### SIGNAUX" in prompt:
+            return ("- Réponses d'une ou deux phrases, sans formule d'ouverture.\n"
+                    "- Tutoiement avec l'équipe, « Merci ! » pour clore plutôt que « Cordialement ».")
         import reports
         if prompt.startswith(reports.MARK):
             _think("Je lis la transcription : qui parle, de quoi, quelles décisions et quelles actions. "

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, Fingerprint, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -20,6 +20,7 @@ const BriefSheet = lazy(() => import("@/components/BriefSheet").then((m) => ({ d
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GithubConnect } from "@/components/GithubConnect";
 import { EntourageSection } from "@/components/EntourageSection";
+import { SoulSettings } from "@/components/SoulSettings";
 import { UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
@@ -275,7 +276,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
   );
 }
 
-type SettingsPane = "general" | "health" | "brain" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "skills" | "mcp" | "advanced";
+type SettingsPane = "general" | "health" | "brain" | "persona" | "conversations" | "people" | "github" | "brief" | "followUps" | "safety" | "telemetry" | "skills" | "mcp" | "advanced";
 
 function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRestartSetup: () => void; onBrief: OpenBrief }) {
   const [pane, setPane] = useState<SettingsPane>("general");
@@ -416,6 +417,14 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         </div>
       </motion.div>
       ),
+    },
+    {
+      id: "persona",
+      wide: true,
+      label: "Persona",
+      icon: Fingerprint,
+      desc: "Ton SOUL.md : ce que Trame en lit, l'éditer, ses versions, et ce qu'il apprend de tes réponses.",
+      body: <SoulSettings trame={trame} />,
     },
     {
       id: "conversations",

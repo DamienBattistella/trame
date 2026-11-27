@@ -45,6 +45,7 @@ import {
   PublishedRef,
   GithubReportState,
 } from "@/types";
+import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify } from "@/desktop";
 import { loadPrefs, toasts } from "@/lib/notifyPrefs";
@@ -1335,6 +1336,30 @@ export function useTrame() {
     return request<{ incoming: string; reply: string }>("POST", "/api/soul/preview", { content });
   };
 
+  /** Réglages › Persona : le SOUL.md lu section par section, ses versions, son apprentissage. */
+  const soulCall = async (method: string, path: string, body?: unknown): Promise<Result<{ details: SoulDetails }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      await wait(400);
+      return { ok: true, details: demoSoulDetails() };
+    }
+    const res = await request<Record<string, unknown>>(method, path, body);
+    return res.ok ? { ok: true, details: mapSoulDetails(res) } : res;
+  };
+  const getSoulDetails = () => soulCall("GET", "/api/soul/details");
+  const restoreSoulVersion = (id: string) => soulCall("POST", `/api/soul/versions/${encodeURIComponent(id)}/restore`);
+  const learnSoul = () => soulCall("POST", "/api/soul/learn");
+  const setSoulLearning = (patch: { enabled?: boolean; every?: number }) => soulCall("POST", "/api/soul/learning", patch);
+  const forgetSoulSignals = () => soulCall("POST", "/api/soul/signals/forget");
+  const getSoulVersion = async (id: string): Promise<Result<{ content: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, content: demoSoulDetails().content.split("\n## Appris")[0] + "\n" };
+    }
+    const res = await request<{ version: { content: string } }>("GET", `/api/soul/versions/${encodeURIComponent(id)}`);
+    return res.ok ? { ok: true, content: res.version.content } : res;
+  };
+
   /** Mode manuel : historique d'une conversation, réponse tapée à la main, proposition, ouverture dans Teams. */
   /** `last` : combien de messages remonter ; `top` dans la réponse : le début de la conversation est atteint. */
   const threadMessages = async (
@@ -2222,6 +2247,12 @@ export function useTrame() {
     exportLogs,
     queryLogs,
     previewSoul,
+    getSoulDetails,
+    getSoulVersion,
+    restoreSoulVersion,
+    learnSoul,
+    setSoulLearning,
+    forgetSoulSignals,
     getPeople,
     listPeople,
     searchPeople,

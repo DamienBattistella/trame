@@ -17,6 +17,7 @@ import config as cfgmod
 import follow_ups as followmod
 import safety
 import people as peoplemod
+import persona as personamod
 import presence as presencemod
 import search as searchmod
 import journal as journalmod
@@ -89,6 +90,14 @@ class Watcher:
         self.brain_factory = brain_factory
         self.cfg = cfgmod.load()
         self.soul = cfgmod.load_soul()
+        # Versions du SOUL.md et ce que Trame apprend de tes réponses (sur ce poste).
+        self.soul_history = personamod.History()
+        self.soul_signals = personamod.Signals()
+        if not self.soul_history.list():
+            self.soul_history.snapshot(self.soul, "initial", "Version trouvée au démarrage")
+        self._proposed: dict[str, str] = {}
+        self._suggested: dict[str, tuple[float, str, str]] = {}
+        self._learning = False
         self.people = peoplemod.Directory.load()
         self._why = threading.local()
         self.telemetry_error = telemetry.configure(self.cfg.get("telemetry"))
@@ -1025,6 +1034,9 @@ class Watcher:
                 used_github=gh_ref, sender_label=self._sender_label(msg.sender),
             ))
             self.state.drafts = drafts
+            live = {d.id for d in drafts}
+            self._proposed = {k: v for k, v in self._proposed.items() if k in live}
+            self._proposed[draft_id] = proposal
         # The discussion view rereads the conversation: its cached copy lacks this message.
         self._thread_cache.pop(msg.thread_id, None)
 
@@ -1283,7 +1295,7 @@ class Watcher:
 
     def send_draft(self, draft_id: str, text: Optional[str] = None, reply_to: Optional[MessageRef] = None,
                    mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = (),
-                   force: bool = False) -> Optional[QueuedSend]:
+                   force: bool = False, learn: bool = False) -> Optional[QueuedSend]:
         if reply_to is not None:
             self._require("reply")
         self._attach_allowed(files)
@@ -1311,6 +1323,8 @@ class Watcher:
                         raise ActionError(409, f"Rien n'a été envoyé, le brouillon est conservé.{self._because()}")
             with self._lock:
                 self.state.drafts = [x for x in self.state.drafts if x is not d]
+        if learn:
+            self._observe_reply(d.from_, d.incoming, self._proposed.pop(d.id, d.proposal), body)
         if queued:
             return queued
         self._history.pop(d.thread_id, None)
@@ -1542,11 +1556,18 @@ class Watcher:
 
     def send_manual(self, thread_id: str, text: str, reply_to: Optional[MessageRef] = None,
                     mentions: Optional[Sequence[str]] = None, files: Sequence[Attachment] = (),
-                    force: bool = False) -> Optional[QueuedSend]:
+                    force: bool = False, learn: bool = False) -> Optional[QueuedSend]:
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body and not files:
             raise ActionError(422, "Le message est vide.")
+        queued = self._send_manual(entity, thread_id, body, reply_to, mentions, files, force)
+        if learn and body:
+            self._observe_written(thread_id, entity.display_name, body)
+        return queued
+
+    def _send_manual(self, entity: WatchEntity, thread_id: str, body: str, reply_to: Optional[MessageRef],
+                     mentions: Optional[Sequence[str]], files: Sequence[Attachment], force: bool) -> Optional[QueuedSend]:
         if reply_to is not None:
             self._require("reply")
         names = self._mentions_in(body, mentions)
@@ -1682,13 +1703,18 @@ class Watcher:
     def _brain_call(self, what: str) -> None:
         reflection.step(f"Appel envoyé à {self.brain.label or self.state.brain} : {what}")
 
-    def suggest_reply(self, thread_id: str, last_n: int = 15, target: Optional[MessageRef] = None) -> str:
+    def suggest_reply(self, thread_id: str, last_n: int = 15, target: Optional[MessageRef] = None,
+                      learn: bool = False) -> str:
         """Proposal for the last message from someone else, or for target: the brain
         then answers that very message, with the thread up to it as context."""
         with self._reflect("suggest", thread_id):
             reply = self._suggest_reply(thread_id, last_n, target)
             reflection.step(f"Réponse reçue et nettoyée ({len(reply)} caractères)")
             reflection.result(reply)
+            if learn:
+                # Ce que tu en feras dans la zone de saisie dira ce qui te ressemble.
+                with self._lock:
+                    self._suggested[thread_id] = (time.monotonic(), reply, target.text if target else "")
             return reply
 
     def _suggest_reply(self, thread_id: str, last_n: int, target: Optional[MessageRef]) -> str:
@@ -1925,9 +1951,13 @@ class Watcher:
             d.proposal = body[:4000]
         return d
 
-    def dismiss_draft(self, draft_id: str) -> None:
+    def dismiss_draft(self, draft_id: str, learn: bool = False) -> None:
         with self._lock:
+            gone = next((x for x in self.state.drafts if x.id == draft_id), None)
             self.state.drafts = [x for x in self.state.drafts if x.id != draft_id]
+            original = self._proposed.pop(draft_id, gone.proposal if gone else "")
+        if learn and gone is not None:
+            self._observe("rejeté", gone.from_, gone.incoming, original, "")
 
     def catchup(self) -> int:
         """Process unread messages of watched threads, always as drafts (never auto-send)."""
@@ -2740,6 +2770,10 @@ class Watcher:
             if new_brain is not None:
                 self.brain = new_brain
             self.soul = cfgmod.load_soul()
+            self.soul_history.clear()
+            self.soul_signals.clear()
+            personamod.save_state({})
+            self.soul_history.snapshot(self.soul, "initial", "Persona par défaut (réinitialisation)")
             self.people = peoplemod.restore_default()
             self._briefs.clear()
             self._history.clear()
@@ -2764,7 +2798,7 @@ class Watcher:
             self.state.archived = {}
         self.log("info", "Trame réinitialisé : configuration à refaire")
 
-    def set_soul(self, content: str) -> None:
+    def set_soul(self, content: str, source: personamod.Source = "manuel", note: str = "") -> None:
         with self._lock:
             try:
                 cfgmod.save_soul(content)
@@ -2776,7 +2810,154 @@ class Watcher:
                 cfgmod.save(cfg)
                 self.cfg = cfg
             self.soul = content
-        self.log("info", "Persona mis à jour")
+            try:
+                self.soul_history.snapshot(content, source, note)
+            except OSError as e:
+                self.log("warn", f"Version du persona non conservée : {e}")
+        self.log("info", "Persona appris des conversations" if source == "appris" else "Persona mis à jour")
+
+    # --- persona : lecture, versions, apprentissage ---
+    SUGGESTION_TTL = 1800.0
+    LEARN_SIGNALS = 40
+
+    def _learning_cfg(self) -> tuple[bool, int]:
+        learning = (self.cfg.get("persona") or {}).get("learning") or {}
+        try:
+            every = min(50, max(3, int(learning.get("every", personamod.LEARN_EVERY))))
+        except (TypeError, ValueError):
+            every = personamod.LEARN_EVERY
+        return bool(learning.get("enabled", True)), every
+
+    def soul_details(self) -> dict:
+        enabled, every = self._learning_cfg()
+        state = personamod.load_state()
+        signals = self.soul_signals.all()
+        waiting = personamod.pending(signals, str(state.get("last_at", "")))
+        return {
+            "content": self.soul,
+            "custom": cfgmod.soul_is_custom(),
+            "parsed": personamod.parse(self.soul),
+            "history": self.soul_history.list(),
+            "learning": {
+                "enabled": enabled, "every": every, "running": self._learning,
+                "pending": len(waiting), "informative": personamod.informative(waiting),
+                "total": len(signals), "last_at": state.get("last_at"), "last_run_at": state.get("last_run_at"),
+                "last_result": state.get("last_result"),
+                "recent": [{k: s.get(k, "") for k in ("at", "kind", "conversation", "proposal", "final")}
+                           for s in reversed(signals[-10:])],
+            },
+        }
+
+    def soul_version(self, version_id: str) -> dict:
+        entry = next((v for v in self.soul_history.list() if v["id"] == version_id), None)
+        try:
+            content = self.soul_history.read(version_id)
+        except KeyError:
+            raise ActionError(404, "Version introuvable.")
+        return {**(entry or {"id": version_id}), "content": content, "parsed": personamod.parse(content)}
+
+    def restore_soul(self, version_id: str) -> None:
+        version = self.soul_version(version_id)
+        try:
+            when = datetime.fromisoformat(str(version.get("at"))).strftime("%d/%m/%Y à %H:%M")
+        except (TypeError, ValueError):
+            when = ""
+        self.set_soul(version["content"], "restauré", f"Version du {when}" if when else "")
+
+    def set_soul_learning(self, enabled: Optional[bool] = None, every: Optional[int] = None) -> None:
+        with self._lock:
+            cfg = json.loads(json.dumps(self.cfg))
+            persona = cfg.get("persona") if isinstance(cfg.get("persona"), dict) else {}
+            learning = persona.get("learning") if isinstance(persona.get("learning"), dict) else {}
+            if enabled is not None:
+                learning["enabled"] = bool(enabled)
+            if every is not None:
+                if not 3 <= every <= 50:
+                    raise ActionError(422, "Apprendre tous les 3 à 50 échanges.")
+                learning["every"] = every
+            persona["learning"] = learning
+            cfg["persona"] = persona
+            try:
+                cfgmod.save(cfg)
+            except Exception as e:
+                raise ActionError(500, f"Sauvegarde des réglages impossible: {e}")
+            self.cfg = cfg
+
+    def forget_soul_signals(self) -> None:
+        self.soul_signals.clear()
+        personamod.save_state({**personamod.load_state(), "last_at": None})
+        self.log("info", "Persona : exemples observés oubliés")
+
+    def _observe_reply(self, conversation: str, incoming: str, proposal: str, final: str) -> None:
+        same = " ".join(proposal.split()) == " ".join(final.split())
+        self._observe("accepté" if same else "corrigé", conversation, incoming, proposal, final)
+
+    def _observe_written(self, thread_id: str, conversation: str, body: str) -> None:
+        with self._lock:
+            suggested = self._suggested.pop(thread_id, None)
+        if suggested and time.monotonic() - suggested[0] < self.SUGGESTION_TTL:
+            self._observe_reply(conversation, suggested[2], suggested[1], body)
+        else:
+            self._observe("écrit", conversation, "", "", body)
+
+    def _observe(self, kind: personamod.SignalKind, conversation: str, incoming: str, proposal: str, final: str) -> None:
+        """Garde ce que tu as fait d'une réponse, puis apprend quand assez s'est accumulé."""
+        enabled, every = self._learning_cfg()
+        if not enabled:
+            return
+        try:
+            self.soul_signals.add(kind, conversation, incoming, proposal, final)
+        except OSError:
+            return
+        waiting = personamod.pending(self.soul_signals.all(), str(personamod.load_state().get("last_at", "")))
+        if personamod.informative(waiting) >= every and not self._learning:
+            threading.Thread(target=self._learn_quietly, daemon=True).start()
+
+    def _learn_quietly(self) -> None:
+        try:
+            self.learn_soul()
+        except ActionError as e:
+            self.log("warn", f"Persona : apprentissage reporté ({e.message})")
+        except Exception as e:  # pragma: no cover - dernier filet du fil d'arrière-plan
+            self.log("warn", f"Persona : apprentissage reporté ({e})")
+
+    def learn_soul(self) -> dict:
+        """Met à jour la section « Appris des conversations » d'après ce que tu as fait des
+        réponses depuis la dernière fois. Le reste du SOUL.md n'est jamais réécrit."""
+        with self._lock:
+            if self._learning:
+                raise ActionError(409, "Un apprentissage est déjà en cours.")
+            self._learning = True
+        try:
+            state = personamod.load_state()
+            waiting = personamod.pending(self.soul_signals.all(), str(state.get("last_at", "")))
+            if not personamod.informative(waiting):
+                raise ActionError(409, "Rien de nouveau à apprendre : corrige, écarte ou écris quelques réponses d'abord.")
+            batch = waiting[-self.LEARN_SIGNALS:]
+            before = personamod.learned_rules(self.soul)
+            try:
+                answer = self.brain.complete(personamod.build_prompt(self.soul, batch), timeout=120)
+            except Exception as e:
+                raise ActionError(502, f"Le cerveau n'a pas pu tirer de leçon : {e}")
+            rules = personamod.parse_rules(answer or "")
+            if not rules and before:
+                raise ActionError(502, "Réponse du cerveau inexploitable : le persona est inchangé.")
+            added = [r for r in rules if r not in before]
+            removed = [r for r in before if r not in rules]
+            result = {"changed": bool(added or removed), "rules": rules, "added": added, "removed": removed,
+                      "signals": len(batch)}
+            if result["changed"]:
+                with self._lock:
+                    updated = personamod.with_learned(self.soul, rules)
+                note = f"{len(added)} ajoutée(s), {len(removed)} retirée(s), d'après {len(batch)} échange(s)"
+                self.set_soul(updated, "appris", note)
+            now = datetime.now().isoformat(timespec="seconds")
+            personamod.save_state({**state, "last_at": batch[-1]["at"], "last_run_at": now,
+                                   "last_result": {k: result[k] for k in ("changed", "added", "removed", "signals")}})
+            return result
+        finally:
+            with self._lock:
+                self._learning = False
 
     # --- helpers ---
     HISTORY_TTL = 120.0
