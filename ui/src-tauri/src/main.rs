@@ -579,7 +579,8 @@ fn main() {
                     let _ = w.set_icon(icon.clone());
                 }
             }
-            *app.state::<TrayBase>().0.lock().unwrap() = Some(icon.clone());
+            *app.state::<TrayBase>().0.lock().unwrap() =
+                Some(tauri::image::Image::new_owned(icon.rgba().to_vec(), icon.width(), icon.height()));
             TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip(if is_trial(app.handle()) { "Trame (essai)" } else { "Trame" })
