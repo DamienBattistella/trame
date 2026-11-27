@@ -1184,7 +1184,7 @@ test("meetingshapes : structure des conversations de réunion seulement, jamais 
   const r = (await p.run("meetingshapes", {})).result;
   assert.equal(r.ok, true);
   assert.equal(r.chats.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].messages[0])), { id: "1795777000001", type: "Event/Call", root: "partlist", tags: ["partlist", "part", "name"], props: ["callId"] });
+  assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].messages[0])), { id: "1795777000001", type: "Event/Call", root: "partlist", tags: ["partlist", "part", "name"], props: ["callId"], startShape: "", endShape: "" });
   assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].meetingKeys)), ["subject", "organizerId"]);
   assert.ok(!/secret/i.test(JSON.stringify(r)));
 });
@@ -1358,4 +1358,28 @@ test("chatmeetings : heures prévues en UTC sans « Z » (relevé en direct), r�
   });
   const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
   assert.equal(r.chats[0].recaps[0].when, "jeudi 26 novembre 2026 09:00 - 09:20");
+});
+
+test("chatmeetings : heure prévue sans fuseau au format américain lue en UTC aussi", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_format@thread.v2";
+  const start = new Date("2026-11-26T09:00:30").getTime();
+  const end = new Date("2026-11-26T10:00:10").getTime();
+  const us = (local: string) => {
+    const d = new Date(local);
+    const z = (n: number) => String(n).padStart(2, "0");
+    return `${z(d.getUTCMonth() + 1)}/${z(d.getUTCDate())}/${d.getUTCFullYear()} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:00`;
+  };
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: `<partlist><meetingdetails><starttime>${us("2026-11-26T09:00:00")}</starttime><endtime>${us("2026-11-26T10:00:00")}</endtime></meetingdetails></partlist>` },
+    { id: String(end), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
+  assert.equal(r.chats[0].recaps[0].when, "jeudi 26 novembre 2026 09:00 - 10:00");
 });
