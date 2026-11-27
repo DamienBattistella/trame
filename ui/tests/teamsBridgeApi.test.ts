@@ -1383,3 +1383,28 @@ test("chatmeetings : heure prévue sans fuseau au format américain lue en UTC a
   const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
   assert.equal(r.chats[0].recaps[0].when, "jeudi 26 novembre 2026 09:00 - 10:00");
 });
+
+test("chatmeetings : une occurrence déplacée garde le créneau porté par son message de fin", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_deplacee@thread.v2";
+  const start = new Date("2026-11-24T11:01:05").getTime();
+  const end = new Date("2026-11-24T12:11:22").getTime();
+  const us = (local: string) => {
+    const d = new Date(local);
+    const z = (n: number) => String(n).padStart(2, "0");
+    return `${z(d.getUTCMonth() + 1)}/${z(d.getUTCDate())}/${d.getUTCFullYear()} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:00`;
+  };
+  const slot = (a: string, b: string) => `<meetingdetails><starttime>${us(a)}</starttime><endtime>${us(b)}</endtime></meetingdetails>`;
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: `<partlist>${slot("2026-10-15T11:00:00", "2026-10-15T11:20:00")}</partlist>` },
+    { id: String(end), messagetype: "Event/Call", content: `<ended/><partlist>${slot("2026-11-24T11:00:00", "2026-11-24T11:45:00")}</partlist>` },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
+  assert.equal(r.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:00 - 11:45");
+});

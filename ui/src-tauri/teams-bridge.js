@@ -2886,7 +2886,11 @@
           }
         }
         const startId = start ? Number(start.id) : endId;
-        const planned = start ? [dateOf(tag(start.content, "starttime")), dateOf(tag(start.content, "endtime"))] : [null, null];
+        // Heures prévues de CETTE occurrence : celles du message de fin d'abord (une occurrence
+        // déplacée y garde son créneau, vu en direct), sinon celles du début (créneau de la série).
+        const plannedIn = (x) => (x ? [dateOf(tag(x.content, "starttime")), dateOf(tag(x.content, "endtime"))] : [null, null]);
+        const fromEnd = plannedIn(m);
+        const planned = fromEnd[0] && fromEnd[1] ? fromEnd : plannedIn(start);
         const actual = new Date(startId);
         const a = planned[0] ? onDay(actual, planned[0]) : actual;
         let b = planned[1] ? onDay(actual, planned[1]) : new Date(endId);
