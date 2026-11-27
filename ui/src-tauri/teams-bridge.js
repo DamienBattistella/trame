@@ -1805,7 +1805,9 @@
   // <<< message-files
   const filesOf = messageFiles.filesOf;
   const imagesOf = messageFiles.imagesOf;
-  const THUMBS = { max: 8, width: 1024, budget: 3_000_000 };
+  // 2048 px : assez pour lire une capture d'écran une fois zoomée dans la visionneuse. Le
+  // budget (taille des data URL cumulées) garde les 8 aperçus à cette résolution.
+  const THUMBS = { max: 8, width: 2048, budget: 6_000_000 };
   const loaded = (img) => img.complete && img.naturalWidth > 0;
   const local = (src) => {
     try {
