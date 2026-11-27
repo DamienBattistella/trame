@@ -787,7 +787,8 @@ const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.ena
 
 // « API Teams web » : voie suivie par action (appel API depuis la page / DOM) et santé de la
 // signature des appels API (le jeton reste dans la page, docs/teams-web-api.md).
-export type ApiRoute = { via: "api" | "page"; reason: string | null; at: string };
+/** tried : la voie a servi depuis le démarrage (false : câblée sur l'API mais rien de prouvé encore). */
+export type ApiRoute = { via: "api" | "page"; reason: string | null; at: string; tried?: boolean };
 export type ApiSigning = { ok?: boolean; status?: number; source?: string; error?: string } | null;
 // Session du service de chat ouverte dans la page : étape atteinte (bearer → authz → chatsvc → ok).
 export type ApiChatSession = { ok?: boolean; status?: number; stage?: string; region?: string; error?: string } | null;
@@ -799,8 +800,10 @@ const DEMO_TEAMS_API: TeamsApiStatus = {
       "send", "start_chat", "react", "mark_read", "delete", "edit", "set_status", "set_note"].map((k) => [
       k,
       k === "read"
-        ? { via: "api" as const, reason: null, at: "10:02:11" }
-        : { via: "page" as const, reason: "via la page Teams", at: "10:02:12" },
+        ? { via: "api" as const, reason: null, at: "10:02:11", tried: true }
+        : k === "send"
+          ? { via: "api" as const, reason: "câblé sur l'API Teams web, pas encore essayé", at: "10:02:12", tried: false }
+          : { via: "page" as const, reason: "via la page Teams", at: "10:02:12", tried: false },
     ]),
   ),
   signing: { ok: true, status: 200, source: "path" },
