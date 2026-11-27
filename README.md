@@ -22,7 +22,7 @@ Un assistant Windows qui veille sur tes conversations Microsoft Teams et te pré
 
 Trame tourne en tâche de fond, dans la barre des tâches. Quand quelqu'un que tu as choisi t'écrit sur Teams, Trame lit le message, rédige une réponse dans ton style et te la propose. Tu relis, tu ajustes, tu envoies — ou, pour les personnes de confiance, Trame envoie lui-même après un court délai que tu peux annuler.
 
-- **Il pilote l'application Teams que tu as déjà ouverte.** Aucune API Microsoft Graph, aucun jeton, aucune autorisation d'administrateur : Trame agit dans ta session, comme tu le ferais au clavier.
+- **Il pilote l'application Teams que tu as déjà ouverte.** Aucune application Microsoft Graph à enregistrer, aucun jeton stocké, aucune autorisation d'administrateur : Trame agit dans ta session, par les mêmes appels que Teams fait déjà (le jeton ne quitte jamais la page), et retombe sur l'interface de Teams quand un appel n'aboutit pas.
 - **Il écrit dans ta voix.** Ton style, ton rôle et ce qu'il doit refuser sont décrits dans un fichier `SOUL.md` que tu déposes dans l'application.
 - **Tu gardes la main.** Brouillon par défaut, envoi automatique seulement pour les conversations que tu désignes, pause en un clic.
 

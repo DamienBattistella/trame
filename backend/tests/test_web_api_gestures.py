@@ -193,3 +193,14 @@ def test_one_to_one_linked_only_by_the_day_gets_reads_but_never_writes_by_the_se
     d._chat.strong = {"name:Ana Martin"}
     d.type_focused("name:Ana Martin", "Bonjour", True, restore=True)
     assert [c[0] for c in page.calls] == ["send"]
+
+
+def test_hide_in_teams_goes_to_the_chat_service_and_reports_failures():
+    page = FakePage({"ok": True})
+    d = WebApiDriver(page)
+    assert d.can_hide_chat is True
+    assert d.hide_chat(TID, True) is True
+    assert page.calls == [("hide", TID, {"hidden": True})]
+    refused = WebApiDriver(FakePage({"ok": False, "attempted": True, "error": "masquage refusé (HTTP 403)"}))
+    with pytest.raises(RuntimeError, match="403"):
+        refused.hide_chat(TID, True)

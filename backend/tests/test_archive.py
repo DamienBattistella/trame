@@ -145,13 +145,26 @@ def test_mcp_lists_archived_read_only(make_client, fresh_home):
     assert by_id[CHIARA]["archived"] is True and by_id[SOFIA]["archived"] is False
 
 
-# --- masquer dans Teams : indisponible sans Microsoft Graph (retiré) ---
+# --- masquer dans Teams : par le service de chat de Teams ---
 
-def test_hiding_in_teams_is_unavailable_and_archive_stays_local(make_client):
-    """Le masquage dans Teams passait par Microsoft Graph, retiré : il n'est plus proposé et
+def test_hiding_in_teams_is_unavailable_without_the_chat_service_and_archive_stays_local(make_client):
+    """Sans le service de chat (pilote sans API Teams web), le masquage n'est pas proposé et
     l'archivage reste local à Trame, même avec l'option activée."""
     client, watcher, _d = make_client()
     assert client.get("/api/archive").json()["can_hide_in_teams"] is False
     client.put("/api/settings", json={"archive": {"hide_in_teams": True}})
     client.post(f"/api/archive/{SOFIA}", json={"archived": True})
     assert watcher.state.archived[SOFIA].hidden is False
+
+
+def test_hiding_in_teams_goes_through_the_chat_service_and_comes_back_on_unarchive(make_client):
+    client, watcher, driver = make_client()
+    calls = []
+    driver.can_hide_chat = True
+    driver.hide_chat = lambda thread_id, hide: calls.append((thread_id, hide)) or True
+    assert client.get("/api/archive").json()["can_hide_in_teams"] is True
+    client.put("/api/settings", json={"archive": {"hide_in_teams": True}})
+    client.post(f"/api/archive/{SOFIA}", json={"archived": True})
+    assert watcher.state.archived[SOFIA].hidden is True
+    client.post(f"/api/archive/{SOFIA}", json={"archived": False})
+    assert calls == [(SOFIA, True), (SOFIA, False)]

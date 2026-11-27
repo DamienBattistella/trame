@@ -2267,7 +2267,7 @@ class Watcher:
 
     def set_archived(self, thread_id: str, archived: bool) -> dict:
         """Archiver (ou désarchiver) à la main. Rien n'est supprimé ; dans Teams, la
-        conversation n'est masquée que si l'option est active et Graph connecté."""
+        conversation n'est masquée que si l'option est active et le service de chat joignable."""
         with self._lock:
             entity = self._entity(thread_id)
             was = thread_id in self.state.archived
@@ -2282,10 +2282,10 @@ class Watcher:
             return {t: a.model_dump() for t, a in self.state.archived.items()}
 
     def can_hide_in_teams(self) -> bool:
-        """Masquer dans Teams demande Microsoft Graph : jamais par la page Teams."""
-        client = getattr(self.driver, "_client", None)
+        """Masquer dans Teams passe par le service de chat de Teams (API Teams web) : jamais par
+        le menu de la page."""
         try:
-            return bool(callable(client) and client() is not None and hasattr(self.driver, "hide_chat"))
+            return bool(getattr(self.driver, "can_hide_chat", False)) and hasattr(self.driver, "hide_chat")
         except Exception:
             return False
 
@@ -3421,7 +3421,7 @@ class Watcher:
                     if prev is None or (w.watch and not prev.watch):
                         by_id[clean] = w
         # A chat saved under its name (started from Trame, or listed without an id), now
-        # listed with Teams' own id (page or Microsoft Graph): the choices follow it.
+        # listed with Teams' own id (page or chat service): the choices follow it.
         moved: set[str] = set()
         for w in self.state.watchlist:
             if not w.thread_id.startswith("name:"):

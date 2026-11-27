@@ -107,7 +107,7 @@ export interface Settings {
   brief: { enabled: boolean; lastMessages: number; range: BriefRange };
   /** Relances : proposer de relancer une question restée sans réponse depuis delayHours heures ouvrées. */
   followUps: { enabled: boolean; delayHours: number };
-  /** Archivage : sans activité depuis afterDays jours (0 : jamais), et masquer aussi dans Teams (Graph). */
+  /** Archivage : sans activité depuis afterDays jours (0 : jamais), et masquer aussi dans Teams (service de chat). */
   archive: { afterDays: number; hideInTeams: boolean };
   telemetry: { enabled: boolean; endpoint: string; includeContent: boolean };
   mcp: { enabled: boolean; token: string; allowSend: boolean };

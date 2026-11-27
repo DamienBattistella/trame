@@ -43,7 +43,8 @@ def make_driver() -> TeamsDriver:
         from drivers.web_bridge import WebBridgeDriver
         # « API Teams web » : la session Teams déjà authentifiée de l'utilisateur. Les appels
         # API se font dans la page, signés avec l'auth de la page (le jeton ne la quitte jamais,
-        # docs/teams-web-api.md). Tout passe par la page aujourd'hui ; routes() dit la voie.
+        # docs/teams-web-api.md). Chaque action essaie l'API puis retombe sur la page ;
+        # routes() dit la voie suivie.
         return WebApiDriver(WebBridgeDriver())
     if os.name == "nt" and mode != "mock":
         try:
