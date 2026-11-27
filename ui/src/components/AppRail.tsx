@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { CalendarDays, MessagesSquare, Pause, Play, ScrollText, Settings } from "lucide-react";
+import { CalendarDays, Captions, MessagesSquare, Pause, Play, ScrollText, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { OwnStatus } from "@/components/OwnStatus";
@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 
 const SECTIONS: { id: Exclude<PanelTab, "settings">; label: string; icon: React.ElementType; key: string }[] = [
   { id: "inbox", label: "Discussions", icon: MessagesSquare, key: "1" },
-  { id: "meetings", label: "Réunions", icon: CalendarDays, key: "2" },
-  { id: "logs", label: "Journal", icon: ScrollText, key: "3" },
+  { id: "meetings", label: "Réunions", icon: Captions, key: "2" },
+  { id: "calendar", label: "Calendrier", icon: CalendarDays, key: "3" },
+  { id: "logs", label: "Journal", icon: ScrollText, key: "4" },
 ];
 
 const iconButton =

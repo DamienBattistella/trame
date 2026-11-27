@@ -46,7 +46,7 @@ import { dayOf, durationLabel, durationMinutes, fold, groupByPeriod, matches, oc
 import { Meeting, ReportSession, SavedTranscript } from "@/types";
 import { ReportDialog } from "@/components/ReportDialog";
 
-type Fetch =
+export type Fetch =
   | { state: "queued" }
   | { state: "run" }
   | { state: "ok"; saved: SavedTranscript }
@@ -57,8 +57,8 @@ const kindOf = (status?: number): "none" | "denied" | "other" => (status === 404
 
 type ListError = { message: string; status?: number };
 
-// La liste survit au changement d'onglet : la relire rouvre les conversations de réunion dans Teams.
-const memory: { meetings: Meeting[] | null; directory: string; readAt: Date | null; fetches: Record<string, Fetch> } = {
+// La liste survit au changement d'onglet et sert aussi au Calendrier : la relire rouvre les conversations de réunion dans Teams.
+export const memory: { meetings: Meeting[] | null; directory: string; readAt: Date | null; fetches: Record<string, Fetch> } = {
   meetings: null,
   directory: "",
   readAt: null,

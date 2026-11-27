@@ -162,6 +162,7 @@ Theme = Literal["dark", "light"]
 # Son des notifications Windows : « off » (muet, comportement historique) ou un son du système.
 NotificationSound = Literal["off", "Default", "IM", "Mail", "Reminder", "SMS"]
 NOTIFICATION_SOUNDS = ("off", "Default", "IM", "Mail", "Reminder", "SMS")
+CalendarView = Literal["week", "day"]
 
 
 class UiSettings(BaseModel):
@@ -170,6 +171,7 @@ class UiSettings(BaseModel):
     update_check_minutes: UpdateCheckMinutes = 15
     theme: Theme = "dark"
     notification_sound: NotificationSound = "off"
+    calendar_view: CalendarView = "week"
 
 
 class Settings(BaseModel):
@@ -267,6 +269,7 @@ class UiPatch(_Patch):
     update_check_minutes: Optional[UpdateCheckMinutes] = None
     theme: Optional[Theme] = None
     notification_sound: Optional[NotificationSound] = None
+    calendar_view: Optional[CalendarView] = None
 
 
 class SettingsPatch(_Patch):
@@ -374,6 +377,7 @@ def _ui(u: dict) -> UiSettings:
         update_check_minutes=every if type(every) is int and every in UPDATE_CHECK_CHOICES else 15,
         theme="light" if u.get("theme") == "light" else "dark",
         notification_sound=sound if (sound := u.get("notification_sound")) in NOTIFICATION_SOUNDS else "off",
+        calendar_view="day" if u.get("calendar_view") == "day" else "week",
     )
 
 

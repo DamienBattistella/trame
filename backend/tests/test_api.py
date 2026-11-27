@@ -169,7 +169,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
-        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark", "notification_sound": "off"},
+        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark", "notification_sound": "off", "calendar_view": "week"},
     }
 
 
@@ -204,6 +204,20 @@ def test_conversation_sort_defaults_to_watched_and_persists(make_client, fresh_h
     assert client.put("/api/settings", json={"ui": {"conversation_sort": "nope"}}).status_code == 422
 
 
+def test_calendar_view_defaults_to_week_persists_and_keeps_other_ui_choices(make_client, fresh_home):
+    path = fresh_home / "config.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg.setdefault("ui", {}).update({"conversation_sort": "alpha", "theme": "light"})
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["calendar_view"] == "week"
+    r = client.put("/api/settings", json={"ui": {"calendar_view": "day"}})
+    assert r.status_code == 200 and r.json()["settings"]["ui"]["calendar_view"] == "day"
+    saved = json.loads(path.read_text(encoding="utf-8"))["ui"]
+    assert saved["calendar_view"] == "day" and saved["conversation_sort"] == "alpha" and saved["theme"] == "light"
+    assert client.put("/api/settings", json={"ui": {"calendar_view": "month"}}).status_code == 422
+
+
 def test_settings_save_keeps_keys_it_does_not_know(make_client, fresh_home):
     """An update must never drop an option: a save keeps every key, known or not."""
     path = fresh_home / "config.json"
@@ -226,7 +240,7 @@ def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_hom
     r = client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     assert r.status_code == 200
     ui = r.json()["settings"]["ui"]
-    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark", "notification_sound": "off"}
+    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark", "notification_sound": "off", "calendar_view": "week"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["update_check_minutes"] == 60
     # 0: at launch only; values outside the offered choices are refused.
@@ -248,7 +262,7 @@ def test_theme_defaults_to_dark_and_persists_without_losing_other_ui_keys(make_c
     client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     r = client.put("/api/settings", json={"ui": {"theme": "light", "notification_sound": "off"}})
     assert r.status_code == 200
-    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light", "notification_sound": "off"}
+    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light", "notification_sound": "off", "calendar_view": "week"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["theme"] == "light"
     assert saved["ui"]["update_check_minutes"] == 60
