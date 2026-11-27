@@ -89,7 +89,7 @@ def test_type_reply_guard_on_mock():
 def test_auto_send_and_refusal(make_client):
     _client, watcher, driver = make_client()
     assert watcher._process(_msg(DM_AUTO)) == "sent"
-    assert driver.typed == [(DM_AUTO, "Réponse de test 🤖", True)]
+    assert driver.typed == [(DM_AUTO, "Réponse de test", True)]
 
     _client2, watcher2, driver2 = make_client(driver=RefusingDriver(interval=9999))
     assert watcher2._process(_msg(DM_AUTO)) == "draft"
