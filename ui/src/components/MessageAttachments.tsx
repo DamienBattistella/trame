@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Download, ExternalLink, FileText, Film, ImageIcon, LoaderCircle, Play } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { ImageViewer } from "@/components/ImageViewer";
 import { openExternal } from "@/desktop";
 import { cn } from "@/lib/utils";
 import type { Result } from "@/api";
@@ -64,13 +64,14 @@ export function MessageAttachments({
           />
         )
       )}
-      <Dialog open={zoom !== null} onOpenChange={(open) => !open && setZoom(null)}>
-        <DialogContent className="w-auto max-w-[90vw] p-3 sm:max-w-[min(90vw,1100px)]">
-          <DialogTitle className="sr-only">Image envoyée par {sender}</DialogTitle>
-          <DialogDescription className="sr-only">Aperçu de l'image reçue dans Teams.</DialogDescription>
-          {zoom?.data && <img src={zoom.data} alt={`Image envoyée par ${sender}`} className="max-h-[80vh] w-full rounded-md object-contain" />}
-        </DialogContent>
-      </Dialog>
+      <ImageViewer
+        open={zoom !== null}
+        onOpenChange={(open) => !open && setZoom(null)}
+        src={zoom?.data ?? null}
+        width={zoom?.width ?? 0}
+        height={zoom?.height ?? 0}
+        alt={`Image envoyée par ${sender}`}
+      />
     </div>
   );
 }
