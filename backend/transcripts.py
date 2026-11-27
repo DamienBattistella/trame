@@ -289,7 +289,7 @@ _RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f
 
 
 def file_name(title: str, day: Optional[date]) -> str:
-    """« 2026-11-24 Migration weekly.vtt » : sans caractère interdit sous Windows,
+    """« 2026-11-24 Point hebdo.vtt » : sans caractère interdit sous Windows,
     sans point ni espace final, raisonnablement court."""
     clean = " ".join(_FORBIDDEN.sub(" ", title or "").split()).strip(" .")[:90].strip(" .")
     if not clean or clean.lower() in _RESERVED:

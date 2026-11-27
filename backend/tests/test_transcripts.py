@@ -144,7 +144,7 @@ def test_parse_meeting_date(when, expected):
 
 
 @pytest.mark.parametrize("title,day,expected", [
-    ("Migration weekly", date(2026, 11, 24), "2026-11-24 Migration weekly.vtt"),
+    ("Point hebdo", date(2026, 11, 24), "2026-11-24 Point hebdo.vtt"),
     ('Avancement E4M <> H10 : "point"?', date(2026, 11, 25), "2026-11-25 Avancement E4M H10 point.vtt"),
     ("RE: a/b\\c|d*", None, "RE a b c d.vtt"),
     ("Stratégie rendez-vous.", date(2026, 1, 2), "2026-01-02 Stratégie rendez-vous.vtt"),
@@ -189,8 +189,8 @@ def test_owner_name(segment, expected):
 
 
 def test_meeting_id_round_trip():
-    mid = t.meeting_id("19:meeting_abc@thread.v2", "1795518682052")
-    assert t.split_meeting_id(mid) == ("19:meeting_abc@thread.v2", "1795518682052")
+    mid = t.meeting_id("19:meeting_abc@thread.v2", "1700000000999")
+    assert t.split_meeting_id(mid) == ("19:meeting_abc@thread.v2", "1700000000999")
     for bad in ["", "19:meeting_abc@thread.v2", "#123", "19:x#../../a"]:
         with pytest.raises(t.TranscriptError):
             t.split_meeting_id(bad)
