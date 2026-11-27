@@ -110,9 +110,6 @@ WS_KEEPALIVE = 15.0
 WS_REFLECTION_POLL = 0.08
 
 
-class GraphConfigBody(BaseModel):
-    client_id: str = Field(default="", max_length=64)
-    tenant_id: str = Field(default="", max_length=64)
 
 
 class PauseBody(BaseModel):
@@ -857,42 +854,6 @@ def create_app(
     def teams_web_reply(body: BridgeReply):
         _bridge().deliver(body.id, body.ok, body.result, body.error)
         return {"ok": True}
-
-    # --- Microsoft Graph (docs/teams-graph.md): registration, sign-in, path per action ---
-    def _graph_status() -> dict:
-        from msgraph.service import SERVICE
-        routes = getattr(watcher.driver, "routes", None)
-        return {**SERVICE.status(), "routes": routes() if callable(routes) else {}}
-
-    @app.get("/api/graph")
-    def graph_status():
-        return {"ok": True, "graph": _graph_status()}
-
-    @app.put("/api/graph")
-    def graph_configure(body: GraphConfigBody):
-        from msgraph.service import SERVICE
-        try:
-            SERVICE.configure(body.client_id, body.tenant_id)
-        except ValueError as e:
-            raise ActionError(422, str(e))
-        return {"ok": True, "graph": _graph_status()}
-
-    @app.post("/api/graph/login")
-    def graph_login():
-        from msgraph.service import SERVICE
-        auth = SERVICE.auth(retry=True)
-        if auth is None:
-            raise ActionError(409, SERVICE.error or "Application Graph non renseignée (identifiants donnés par la DSI).")
-        auth.login()
-        return {"ok": True, "graph": _graph_status()}
-
-    @app.post("/api/graph/logout")
-    def graph_logout():
-        from msgraph.service import SERVICE
-        auth = SERVICE.auth()
-        if auth is not None:
-            auth.logout()
-        return {"ok": True, "graph": _graph_status()}
 
     # --- API Teams web (docs/teams-web-api.md): voie par action + santé de la signature ---
     @app.get("/api/teams-web")

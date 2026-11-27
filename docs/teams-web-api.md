@@ -9,9 +9,9 @@ La voie choisie pour fiabiliser ces actions : faire, **depuis la page**, les mê
 réseau que le client Teams fait déjà — ses **API internes** — en réutilisant la session web
 **déjà authentifiée** de l'utilisateur. Pas de Microsoft Graph, pas de demande à la DSI.
 
-> Cette approche **remplace** la voie Microsoft Graph décrite dans
-> [`teams-graph.md`](teams-graph.md). Le `GraphDriver` et la carte « Microsoft Graph » des
-> réglages seront retirés dans une étape ultérieure.
+> Cette approche **a remplacé** l'ancienne voie Microsoft Graph : le `WebApiDriver` et la carte
+> « API Teams web » des réglages ont pris la place du `GraphDriver` et de la carte « Microsoft
+> Graph » (code Graph et `msgraph/` retirés).
 
 ## Règle absolue : le jeton ne quitte jamais la page
 
