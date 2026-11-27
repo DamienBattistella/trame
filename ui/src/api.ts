@@ -48,6 +48,8 @@ import {
   PublishPlan,
   PublishedRef,
   GithubReportState,
+  NOTIFICATION_SOUNDS,
+  type NotificationSound,
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
@@ -366,11 +368,13 @@ function mapSettings(s: any): Settings {
       conversationSort: toSort(s?.ui?.conversation_sort),
       updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes),
       theme: s?.ui?.theme === "light" ? "light" : "dark",
+      notificationSound: toSound(s?.ui?.notification_sound),
     },
   };
 }
 /** Copie locale du thème, pour le premier rendu avant la réponse du moteur. */
 const THEME_KEY = "trame.theme";
+const toSound = (v: unknown): NotificationSound => (NOTIFICATION_SOUNDS.includes(v as NotificationSound) ? (v as NotificationSound) : "off");
 const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
 const toCheckMinutes = (v: unknown): UpdateCheckMinutes =>
   UPDATE_CHECK_CHOICES.includes(v as UpdateCheckMinutes) ? (v as UpdateCheckMinutes) : 15;
@@ -609,6 +613,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.ui.conversationSort !== undefined) u.conversation_sort = p.ui.conversationSort;
     if (p.ui.updateCheckMinutes !== undefined) u.update_check_minutes = p.ui.updateCheckMinutes;
     if (p.ui.theme !== undefined) u.theme = p.ui.theme;
+    if (p.ui.notificationSound !== undefined) u.notification_sound = p.ui.notificationSound;
     out.ui = u;
   }
   return out;
@@ -693,7 +698,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark" },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off" },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -913,9 +918,14 @@ export function useTrame() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+  // Son des notifications Windows, enregistré dans config.json ; lu par une ref à l'arrivée des messages.
+  const [notificationSound, setNotificationSoundState] = useState<NotificationSound>(localSettings.ui.notificationSound);
+  const soundRef = useRef(notificationSound);
+  soundRef.current = notificationSound;
   const applyPrefs = (s: Settings) => {
     setBriefPrefs(prefsOf(s));
     setThemeState(s.ui.theme);
+    setNotificationSoundState(s.ui.notificationSound);
     setConversationSortState(s.ui.conversationSort);
     setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
     void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
@@ -949,7 +959,7 @@ export function useTrame() {
       // Trame au premier plan : la liste montre déjà le message.
       if (!fresh.length || !notificationsEnabled() || document.hasFocus()) return;
       // Filtrées (portée, heures calmes) et regroupées selon les réglages de notification.
-      for (const t of toasts(fresh.reverse(), loadPrefs(), new Date(), next.screenSharing)) notify(t.title, t.body);
+      for (const t of toasts(fresh.reverse(), loadPrefs(), new Date(), next.screenSharing)) notify(t.title, t.body, soundRef.current);
     };
 
     const connect = () => {
@@ -1205,6 +1215,11 @@ export function useTrame() {
   const setTheme = (next: Theme) => {
     setThemeState(next);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { theme: next } });
+  };
+  /** Optimiste, comme le thème : le son vaut dès la prochaine notification, puis est enregistré. */
+  const setNotificationSound = (next: NotificationSound) => {
+    setNotificationSoundState(next);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { notificationSound: next } });
   };
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -2286,6 +2301,8 @@ export function useTrame() {
     theme,
     setTheme,
     toggleTheme,
+    notificationSound,
+    setNotificationSound,
     getBrief,
     generateBrief,
     githubStatus,

@@ -169,7 +169,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
-        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark"},
+        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark", "notification_sound": "off"},
     }
 
 
@@ -226,7 +226,7 @@ def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_hom
     r = client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     assert r.status_code == 200
     ui = r.json()["settings"]["ui"]
-    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark"}
+    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark", "notification_sound": "off"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["update_check_minutes"] == 60
     # 0: at launch only; values outside the offered choices are refused.
@@ -246,9 +246,9 @@ def test_theme_defaults_to_dark_and_persists_without_losing_other_ui_keys(make_c
     client, _watcher, _driver = make_client()
     assert client.get("/api/settings").json()["settings"]["ui"]["theme"] == "dark"
     client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
-    r = client.put("/api/settings", json={"ui": {"theme": "light"}})
+    r = client.put("/api/settings", json={"ui": {"theme": "light", "notification_sound": "off"}})
     assert r.status_code == 200
-    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light"}
+    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light", "notification_sound": "off"}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["theme"] == "light"
     assert saved["ui"]["update_check_minutes"] == 60
@@ -260,9 +260,33 @@ def test_theme_hand_edited_falls_back_to_dark():
 
     for bad in ("blue", "LIGHT", True, None, 1):
         assert from_config({"ui": {"theme": bad}}).ui.theme == "dark"
-    assert from_config({"ui": {"theme": "light"}}).ui.theme == "light"
+    assert from_config({"ui": {"theme": "light", "notification_sound": "off"}}).ui.theme == "light"
     # A config written before the theme existed keeps its other UI choices.
     assert from_config({"ui": {"conversation_sort": "alpha"}}).ui.conversation_sort == "alpha"
+
+
+def test_notification_sound_defaults_to_off_and_persists_without_losing_other_ui_keys(make_client, fresh_home):
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["notification_sound"] == "off"
+    client.put("/api/settings", json={"ui": {"theme": "light"}})
+    r = client.put("/api/settings", json={"ui": {"notification_sound": "IM"}})
+    assert r.status_code == 200
+    assert r.json()["settings"]["ui"]["notification_sound"] == "IM"
+    saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
+    assert saved["ui"]["notification_sound"] == "IM"
+    assert saved["ui"]["theme"] == "light"
+    assert client.put("/api/settings", json={"ui": {"notification_sound": "Bell"}}).status_code == 422
+
+
+def test_notification_sound_hand_edited_falls_back_to_off():
+    from settings import from_config
+
+    for bad in ("Bell", "im", True, None, 1, {}):
+        assert from_config({"ui": {"notification_sound": bad}}).ui.notification_sound == "off"
+    assert from_config({"ui": {"notification_sound": "Mail"}}).ui.notification_sound == "Mail"
+    # A config written before the sound existed keeps its other UI choices, and stays silent.
+    cfg = from_config({"ui": {"theme": "light"}}).ui
+    assert (cfg.theme, cfg.notification_sound) == ("light", "off")
 
 
 def test_settings_put_same_brain_keeps_instance(make_client):

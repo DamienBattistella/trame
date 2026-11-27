@@ -42,7 +42,7 @@ import { mergeSettings, Result, Trame } from "@/api";
 import { HealthPane } from "@/components/HealthPane";
 import { autostartEnabled, isDesktop, notificationsEnabled, notify, setAutostart, setNotificationsEnabled } from "@/desktop";
 import { loadPrefs, savePrefs, type NotifyPrefs, type NotifyScope } from "@/lib/notifyPrefs";
-import { DraftItem, Settings, SettingsPatch, Surface, Theme, WatchEntity } from "@/types";
+import { DraftItem, Settings, SettingsPatch, Surface, NotificationSound, Theme, WatchEntity } from "@/types";
 
 
 type OpenBrief = (t: BriefTarget) => void;
@@ -361,7 +361,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
           <UpdatesRow checkMinutes={trame.updateCheckMinutes} />
           <UpdateFrequencyRow value={trame.updateCheckMinutes} onChange={trame.setUpdateCheckMinutes} />
           <ChangelogRow />
-          <NotificationsRow />
+          <NotificationsRow sound={trame.notificationSound} onSoundChange={trame.setNotificationSound} />
           <AutostartRow />
           <div className="px-4 py-2.5 text-xs text-muted-foreground">
             Fermer la fenêtre garde Trame actif dans la barre des tâches. Pour l'arrêter : clic droit sur l'icône, Quitter.
@@ -1232,7 +1232,17 @@ function ThemeRow({ value, onChange }: { value: Theme; onChange: (t: Theme) => v
   );
 }
 
-function NotificationsRow() {
+const SOUNDS: { value: NotificationSound; label: string }[] = [
+  { value: "off", label: "Aucun (muette)" },
+  { value: "Default", label: "Son par défaut de Windows" },
+  { value: "IM", label: "Message instantané" },
+  { value: "Mail", label: "Courrier" },
+  { value: "Reminder", label: "Rappel" },
+  { value: "SMS", label: "SMS" },
+];
+
+/** Réglages › Général › Notifications. Le son est enregistré dans config.json (section ui). */
+function NotificationsRow({ sound, onSoundChange }: { sound: NotificationSound; onSoundChange: (s: NotificationSound) => void }) {
   const [on, setOn] = useState(notificationsEnabled);
   const [prefs, setPrefs] = useState<NotifyPrefs>(loadPrefs);
   const update = (next: NotifyPrefs) => {
@@ -1256,7 +1266,7 @@ function NotificationsRow() {
           onCheckedChange={async (v) => {
             setOn(v);
             setNotificationsEnabled(v);
-            if (v && !(await notify("Trame", "Les notifications sont activées."))) {
+            if (v && !(await notify("Trame", "Les notifications sont activées.", sound))) {
               toast.error("Notification non affichée", { description: "Windows a refusé la notification. Vérifie Paramètres › Système › Notifications." });
             }
           }}
@@ -1273,6 +1283,27 @@ function NotificationsRow() {
             className="h-8 min-w-0 max-w-72 flex-1 rounded-md border bg-background px-2 text-sm"
           >
             {SCOPES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">Son</span>
+          <select
+            aria-label="Son des notifications"
+            value={sound}
+            disabled={!active}
+            onChange={(e) => {
+              const next = e.target.value as NotificationSound;
+              onSoundChange(next);
+              // Aperçu : on entend tout de suite le son choisi.
+              if (next !== "off") void notify("Trame", "Voici le son des notifications.", next);
+            }}
+            className="h-8 min-w-0 max-w-72 flex-1 rounded-md border bg-background px-2 text-sm"
+          >
+            {SOUNDS.map((s) => (
               <option key={s.value} value={s.value}>
                 {s.label}
               </option>

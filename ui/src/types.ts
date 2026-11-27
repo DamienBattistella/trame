@@ -111,11 +111,14 @@ export interface Settings {
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
   /** Préférences d'interface, gardées dans config.json : une mise à jour ne les perd pas. */
-  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme };
+  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound };
 }
 
 export type ConversationSort = "watched" | "recent" | "alpha";
 export type Theme = "dark" | "light";
+/** Son des notifications Windows : « off » (muet) ou un son du système. */
+export type NotificationSound = "off" | "Default" | "IM" | "Mail" | "Reminder" | "SMS";
+export const NOTIFICATION_SOUNDS: readonly NotificationSound[] = ["off", "Default", "IM", "Mail", "Reminder", "SMS"];
 /** Minutes entre deux recherches de mise à jour pendant que Trame tourne (0 : au lancement seulement). */
 export type UpdateCheckMinutes = 0 | 5 | 15 | 60 | 360;
 export const UPDATE_CHECK_CHOICES: readonly UpdateCheckMinutes[] = [5, 15, 60, 360, 0];

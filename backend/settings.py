@@ -159,6 +159,9 @@ ConversationSort = Literal["watched", "recent", "alpha"]
 UpdateCheckMinutes = Literal[0, 5, 15, 60, 360]
 UPDATE_CHECK_CHOICES = (0, 5, 15, 60, 360)
 Theme = Literal["dark", "light"]
+# Son des notifications Windows : « off » (muet, comportement historique) ou un son du système.
+NotificationSound = Literal["off", "Default", "IM", "Mail", "Reminder", "SMS"]
+NOTIFICATION_SOUNDS = ("off", "Default", "IM", "Mail", "Reminder", "SMS")
 
 
 class UiSettings(BaseModel):
@@ -166,6 +169,7 @@ class UiSettings(BaseModel):
     conversation_sort: ConversationSort = "watched"
     update_check_minutes: UpdateCheckMinutes = 15
     theme: Theme = "dark"
+    notification_sound: NotificationSound = "off"
 
 
 class Settings(BaseModel):
@@ -262,6 +266,7 @@ class UiPatch(_Patch):
     conversation_sort: Optional[ConversationSort] = None
     update_check_minutes: Optional[UpdateCheckMinutes] = None
     theme: Optional[Theme] = None
+    notification_sound: Optional[NotificationSound] = None
 
 
 class SettingsPatch(_Patch):
@@ -368,6 +373,7 @@ def _ui(u: dict) -> UiSettings:
         conversation_sort=sort if sort in ("watched", "recent", "alpha") else "watched",
         update_check_minutes=every if type(every) is int and every in UPDATE_CHECK_CHOICES else 15,
         theme="light" if u.get("theme") == "light" else "dark",
+        notification_sound=sound if (sound := u.get("notification_sound")) in NOTIFICATION_SOUNDS else "off",
     )
 
 
