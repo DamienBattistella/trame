@@ -100,6 +100,9 @@ class IncomingMessage(BaseModel):
     # Identifiant du message dans Teams quand le pilote le connaît, et réactions que
     # l'utilisateur y a déjà mises (clés de REACTIONS).
     id: Optional[str] = None
+    # Écrit par l'utilisateur, d'après son identifiant Teams (lecture par le service de chat) ;
+    # None quand le pilote ne le dit pas (le nom de l'auteur fait alors foi).
+    from_me: Optional[bool] = None
     reactions: list[str] = Field(default_factory=list)
     # Toutes les réactions du message (les tiennes et celles des autres), quand le pilote les lit.
     reaction_counts: list["ReactionCount"] = Field(default_factory=list)

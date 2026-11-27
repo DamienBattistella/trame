@@ -642,6 +642,9 @@ class WebBridgeDriver(TeamsDriver):
         chat = self.chat_aliases.get(thread_id) or self.chat_id(thread_id)
         if not chat:
             return {"ok": False, "attempted": False, "error": "conversation sans identifiant Teams"}
+        if not self.relay_connected():
+            # Refusé avant d'être mis en file : rien n'est parti (la file d'envoi réessaiera).
+            return {"ok": False, "attempted": False, "error": "la fenêtre Teams de Trame n'est pas prête"}
         try:
             res = self._rpc("chatgesture", kind=kind, thread=chat, timeout=timeout, **args)
         except Exception as e:
@@ -692,7 +695,8 @@ class WebBridgeDriver(TeamsDriver):
                                         links=[] if deleted else links, cards=[] if deleted else cards,
                                         quote=None if deleted else _quote(m.get("quote")),
                                         mentions=[] if deleted else _mentions(m.get("mentions")),
-                                        edited=not deleted and m.get("edited") is True))
+                                        edited=not deleted and m.get("edited") is True,
+                                        from_me=m.get("fromMe") if isinstance(m.get("fromMe"), bool) else None))
         return msgs
 
     @staticmethod

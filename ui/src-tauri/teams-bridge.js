@@ -2307,7 +2307,8 @@
           const t = Date.parse(raw.originalarrivaltime || raw.composetime || "");
           if (Number.isFinite(t)) oldest = Math.min(oldest, t);
           if (!chatMessage.isUser(raw)) continue;
-          if (!acc.has(raw.id)) acc.set(raw.id, convert(raw, me));
+          // « fromMe » : écrit par l'utilisateur (son identifiant, pas son nom) ; jamais signalé comme reçu.
+          if (!acc.has(raw.id)) acc.set(raw.id, { ...convert(raw, me), fromMe: Boolean(me) && String(raw.from || "").endsWith(`/contacts/${me}`) });
         }
         const back = r.json && r.json._metadata && r.json._metadata.backwardLink;
         if (!list.length || !back) {

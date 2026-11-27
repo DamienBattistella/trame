@@ -179,6 +179,8 @@ class WebApiDriver:
     NOTE_NEVER = _note_never()
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
+    # Messages relus au plus quand plusieurs sont arrivés dans une conversation entre deux tours.
+    CATCH_UP = 20
     PAGE_REASON = "via la page Teams (pas encore câblé sur l'API Teams web)"
 
     def __init__(self, inner: TeamsDriver) -> None:
@@ -495,12 +497,45 @@ class WebApiDriver:
             if seen and now - seen[1] < 600 and seen[0] and _norm(text).startswith(seen[0][:40]):
                 continue
             e = convs.get(tid)
+            surface = e.surface if e else Surface.dm
+            # Plusieurs messages depuis le tour précédent : le service ne donne que le dernier. Les
+            # autres sont relus (sans ouvrir la conversation) et signalés dans l'ordre, avant lui.
+            for earlier in self._between(tid, prev, lid):
+                on_message(earlier.model_copy(update={"surface": surface}))
             on_message(IncomingMessage(thread_id=tid, sender=str(last.get("sender") or ""), text=text,
                                        received_at=str(last.get("at") or ""), id=lid,
-                                       surface=e.surface if e else Surface.dm))
+                                       surface=surface))
         if st.primed_at is None:
             st.primed_at = now
         self._route("watch", "api")
+
+    def _between(self, tid: str, prev: Optional[str], lid: str) -> list[IncomingMessage]:
+        """Les messages reçus strictement entre `prev` (dernier vu) et `lid` (nouveau dernier), lus
+        sur le service de chat. Jamais les tiens, jamais au-delà de CATCH_UP ; rien si le service
+        ne répond pas (le dernier reste signalé)."""
+        if not prev:
+            return []
+        try:
+            low, high = int(prev), int(lid)
+        except ValueError:
+            return []
+        if high <= low:
+            return []
+        try:
+            got = self.read_history_direct(tid, self.CATCH_UP, since=datetime.fromtimestamp(low / 1000))
+        except Exception:
+            return []
+        if not got:
+            return []
+        out = []
+        for m in got[0]:
+            try:
+                mid = int(m.id or 0)
+            except ValueError:
+                continue
+            if low < mid < high and m.from_me is not True and (m.text or m.files or m.images):
+                out.append(m)
+        return sorted(out, key=lambda m: int(m.id or 0))
 
     def watch(self, on_message: Callable[[IncomingMessage], None], should_stop: Callable[[], bool]) -> None:
         while not should_stop():
