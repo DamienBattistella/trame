@@ -173,3 +173,66 @@ def test_bridge_signals_a_refusal_but_not_a_probe(monkeypatch):
     assert driver.mark_read("19:x@thread.v2")
     t.join()
     assert fired == [True]
+
+
+# --- Actions passées par l'API Teams web : leurs repères ne servent plus qu'en repli ---------
+
+def test_reactions_served_by_the_api_are_no_longer_an_alert():
+    # Le cas de la carte « Page Teams » : J'aime, Cœur et Surpris introuvables.
+    results = _all(react_like=False, react_heart=False, react_surprised=False)
+    before = tc.evaluate(results, {}, NOW)
+    assert not before.ok and "les réactions ne marcheront plus" in before.summary
+    after = tc.evaluate(results, {}, NOW, served={"react", "read", "delete", "mark_read"})
+    assert after.ok and after.summary == "" and after.missing == []
+    assert [m.key for m in after.fallback] == ["react_like", "react_heart", "react_surprised"]
+    assert after.served == ["delete", "mark_read", "react", "read"]
+
+
+def test_a_landmark_still_needed_by_the_page_stays_missing_for_that_only():
+    # La barre d'actions sert aussi à « Répondre », qui passe toujours par la page.
+    check = tc.evaluate(_all(action_bar=False), {}, NOW, served={"react", "delete"})
+    assert not check.ok and [m.features for m in check.missing] == [["reply"]]
+    assert check.summary == "Teams a changé : la réponse à un message précis ne marchera plus, rien d'autre n'est touché."
+    assert check.fallback == []
+
+
+def test_sending_keeps_its_landmarks_even_with_the_api():
+    check = tc.evaluate(_all(send=False), {}, NOW, served={"react", "read", "delete", "mark_read"})
+    assert not check.ok and check.missing[0].key == "send"
+
+
+def test_unknown_served_features_are_ignored():
+    check = tc.evaluate(_all(quote=False), {}, NOW, served={"reply-bidon"})
+    assert not check.ok and check.served == []
+
+
+class ApiDriver(Driver):
+    def __init__(self, raw, served):
+        super().__init__(raw)
+        self.served = served
+
+    def api_features(self):
+        return set(self.served)
+
+
+def test_watcher_passes_what_the_api_serves_and_alerts_again_when_it_falls_back(make_client):
+    results = _all(react_like=False, react_heart=False)
+    driver = ApiDriver({"ready": True, "results": results, "marks": {}}, {"react"})
+    _client, watcher, _ = make_client(driver=driver)
+    check = watcher.check_teams()
+    assert check.ok and len(check.fallback) == 2 and _warns(watcher) == []
+    driver.served = set()  # le service de chat est tombé : les réactions repassent par la page
+    check = watcher.check_teams()
+    assert not check.ok and _warns(watcher)[0].startswith("Teams a changé : les réactions")
+
+
+def test_webapi_features_follow_the_routes():
+    from drivers.web_api import WebApiDriver
+
+    class Page:
+        last_error = None
+
+    d = WebApiDriver(Page())
+    assert d.api_features() == {"read", "react", "delete", "mark_read"}
+    d._route("react", "page", "repli sur la page : service indisponible")
+    assert d.api_features() == {"read", "delete", "mark_read"}

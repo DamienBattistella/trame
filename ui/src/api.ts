@@ -128,9 +128,19 @@ export interface TeamsCheck {
   ok: boolean;
   summary: string;
   missing: TeamsLandmark[];
+  /** Absents, mais leurs actions passent par l'API Teams web : ils ne servent plus qu'en repli. */
+  fallback: TeamsLandmark[];
   verified: number;
   unverified: number;
 }
+
+const mapLandmark = (m: any): TeamsLandmark => ({
+  key: String(m.key),
+  label: String(m.label ?? m.key),
+  features: Array.isArray(m.features) ? m.features.map(String) : [],
+  how: m.how === "usage" ? "usage" : "page",
+  at: String(m.at ?? ""),
+});
 
 function mapTeamsCheck(c: any): TeamsCheck | null {
   if (!c || typeof c !== "object") return null;
@@ -138,13 +148,8 @@ function mapTeamsCheck(c: any): TeamsCheck | null {
     at: String(c.at ?? ""),
     ok: Boolean(c.ok),
     summary: String(c.summary ?? ""),
-    missing: (c.missing ?? []).map((m: any) => ({
-      key: String(m.key),
-      label: String(m.label ?? m.key),
-      features: Array.isArray(m.features) ? m.features.map(String) : [],
-      how: m.how === "usage" ? "usage" : "page",
-      at: String(m.at ?? ""),
-    })),
+    missing: (c.missing ?? []).map(mapLandmark),
+    fallback: (c.fallback ?? []).map(mapLandmark),
     verified: Number(c.verified ?? 0),
     unverified: Number(c.unverified ?? 0),
   };

@@ -97,11 +97,15 @@ class TeamsLandmark(BaseModel):
 
 
 class TeamsCheck(BaseModel):
-    """Dernier contrôle de la page Teams web. summary est vide quand rien ne manque."""
+    """Dernier contrôle de la page Teams web. summary est vide quand rien ne manque.
+    fallback : repères absents dont les actions passent par l'API Teams web (service de chat) ;
+    ils ne servent plus qu'en repli, leur absence n'est pas une panne."""
     at: str
     ok: bool
     summary: str = ""
     missing: list[TeamsLandmark] = Field(default_factory=list)
+    fallback: list[TeamsLandmark] = Field(default_factory=list)
+    served: list[str] = Field(default_factory=list)
     verified: int = 0
     unverified: int = 0
 
@@ -143,25 +147,37 @@ def merge_marks(known: dict[str, dict], marks: Any) -> dict[str, dict]:
     return out
 
 
-def evaluate(results: Any, marks: dict[str, dict], now: Optional[datetime] = None) -> TeamsCheck:
+def evaluate(results: Any, marks: dict[str, dict], now: Optional[datetime] = None,
+             served: Any = ()) -> TeamsCheck:
     """results : clé -> True / False / None, tel que le contrôle du pont l'a vu.
     marks : derniers constats des opérations (merge_marks). Un repère vu présent dans la
-    page l'emporte sur un vieux constat d'absence."""
+    page l'emporte sur un vieux constat d'absence.
+    served : fonctions (clés de FEATURES) que le pilote fait aujourd'hui par l'API Teams web,
+    sans la page. Un repère absent qui ne sert qu'à elles passe en « repli » (pas d'alerte) ;
+    un repère qui sert aussi à autre chose reste manquant, pour ces autres fonctions seulement."""
     stamp = (now or datetime.now()).isoformat(timespec="seconds")
     results = results if isinstance(results, dict) else {}
+    served = {f for f in (served or ()) if f in FEATURES}
     missing: list[TeamsLandmark] = []
+    fallback: list[TeamsLandmark] = []
     verified = unverified = 0
     for key, (label, feats) in LANDMARKS.items():
         page, mark = results.get(key), marks.get(key)
         if page is True or (page is None and mark and mark["ok"]):
             verified += 1
-        elif page is False:
-            missing.append(TeamsLandmark(key=key, label=label, features=list(feats), how="page", at=stamp))
+            continue
+        if page is False:
+            how, at = "page", stamp
         elif mark and not mark["ok"]:
-            missing.append(TeamsLandmark(key=key, label=label, features=list(feats), how="usage",
-                                         at=_iso(mark.get("at"), stamp)))
+            how, at = "usage", _iso(mark.get("at"), stamp)
         else:
             unverified += 1
+            continue
+        left = [f for f in feats if f not in served]
+        if left:
+            missing.append(TeamsLandmark(key=key, label=label, features=left, how=how, at=at))
+        else:
+            fallback.append(TeamsLandmark(key=key, label=label, features=list(feats), how=how, at=at))
     features = [f for f in FEATURES if any(f in m.features for m in missing)]
     return TeamsCheck(at=stamp, ok=not missing, summary=summarize(features), missing=missing,
-                      verified=verified, unverified=unverified)
+                      fallback=fallback, served=sorted(served), verified=verified, unverified=unverified)
