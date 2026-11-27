@@ -316,7 +316,7 @@ def gather(complete: Callable[[str, float], str], incoming: str, thread_summary:
     candidates = (hits + docs)[:MAX_CANDIDATES]
     if not candidates:
         return ""
-    # Paths say a lot (`docs/support/install-at-customer.fr.md`): the brain picks among
+    # Paths say a lot (`docs/guides/reset-password.fr.md`): the brain picks among
     # them better than keyword ranking, which stays the fallback.
     try:
         chosen = parse_select(complete(build_select_prompt(incoming, candidates), PLAN_TIMEOUT), candidates)

@@ -9,8 +9,8 @@ from models import IncomingMessage, Surface
 from github import context as gh
 from github import knowledge as kn
 
-DOC = "# Valider les demandes\n\nIntro.\n\n## Où\n\nOnglet **Demandes en attente**.\n"
-CATALOG = [{"nameWithOwner": "acme/deployhub-server", "description": "Serveur DeployHub"},
+DOC = "# Réinitialiser un mot de passe\n\nIntro.\n\n## Où\n\nMenu **Sécurité**.\n"
+CATALOG = [{"nameWithOwner": "acme/serveur", "description": "Serveur du produit"},
            {"nameWithOwner": "acme/portail", "description": None}]
 
 
@@ -65,34 +65,34 @@ def brain(plan: dict, files=None, prompts=None):
 
 
 def test_parse_plan_keeps_known_repos_and_dedups_queries():
-    plan = kn.parse_plan('```json {"repos": ["ACME/Portail", "evil/x"], "queries": ["Enrôlement", "enrôlement", " a  b "]}```',
+    plan = kn.parse_plan('```json {"repos": ["ACME/Portail", "evil/x"], "queries": ["Mot de passe", "mot de passe", " a  b "]}```',
                          ["acme/portail"])
-    assert plan.repos == ["acme/portail"] and plan.queries == ["Enrôlement", "a b"]
+    assert plan.repos == ["acme/portail"] and plan.queries == ["Mot de passe", "a b"]
     assert kn.parse_plan("pas du json") == kn.Plan()
 
 
 def test_docs_outrank_code_tests_and_changelog():
-    assert kn.rank_path("docs_fr/deployhub/approving.md") > kn.rank_path("src/enroll.ts")
-    assert kn.rank_path("src/enroll.ts") > kn.rank_path("tests/enroll.test.ts")
-    assert kn.rank_path("CHANGELOG.md") < kn.rank_path("src/enroll.ts")
+    assert kn.rank_path("docs_fr/guides/reset.md") > kn.rank_path("src/reset.ts")
+    assert kn.rank_path("src/reset.ts") > kn.rank_path("tests/reset.test.ts")
+    assert kn.rank_path("CHANGELOG.md") < kn.rank_path("src/reset.ts")
 
 
 def test_gather_lists_docs_of_the_chosen_repo_and_reads_the_pick(monkeypatch):
-    stub = RepoGh(search={"enrôlement": [("acme/deployhub-server", "src/enroll.ts")]},
-                  tree={"acme/deployhub-server": ["docs/support/install.fr.md", "CHANGELOG.md", "src/a.ts"]},
-                  files={"docs/support/install.fr.md": DOC, "src/enroll.ts": "export function enroll() {}"})
+    stub = RepoGh(search={"mot de passe": [("acme/serveur", "src/reset.ts")]},
+                  tree={"acme/serveur": ["docs/guides/reset.fr.md", "CHANGELOG.md", "src/a.ts"]},
+                  files={"docs/guides/reset.fr.md": DOC, "src/reset.ts": "export function reset() {}"})
     monkeypatch.setattr(gh, "_gh", stub)
     prompts: list[str] = []
-    out = kn.gather(brain({"repos": ["acme/deployhub-server"], "queries": ["enrôlement"]}, [2, 1], prompts),
-                    "Comment on approuve ?", "", [], True)
-    assert out.split("\n")[0] == "=== acme/deployhub-server — docs/support/install.fr.md ==="
-    assert "Demandes en attente" in out and "enroll()" in out
-    assert "- acme/deployhub-server : Serveur DeployHub" in prompts[0] and "- acme/portail\n" in prompts[0]
+    out = kn.gather(brain({"repos": ["acme/serveur"], "queries": ["mot de passe"]}, [2, 1], prompts),
+                    "Comment on réinitialise ?", "", [], True)
+    assert out.split("\n")[0] == "=== acme/serveur — docs/guides/reset.fr.md ==="
+    assert "Sécurité" in out and "reset()" in out
+    assert "- acme/serveur : Serveur du produit" in prompts[0] and "- acme/portail\n" in prompts[0]
     # Code hits first, then the repo's docs; changelog and code files are not listed as docs.
-    assert "1. acme/deployhub-server — src/enroll.ts\n2. acme/deployhub-server — docs/support/install.fr.md" in prompts[1]
+    assert "1. acme/serveur — src/reset.ts\n2. acme/serveur — docs/guides/reset.fr.md" in prompts[1]
     assert "CHANGELOG" not in prompts[1] and "src/a.ts" not in prompts[1]
     search = next(c for c in stub.calls if c[:2] == ["search", "code"])
-    assert search[2:4] == ["--repo", "acme/deployhub-server"]
+    assert search[2:4] == ["--repo", "acme/serveur"]
     # Reads only: no write verb, no HTTP method override.
     assert all(c[:2] in (["repo", "list"], ["search", "code"]) or c[0] == "api" for c in stub.calls)
     assert not any(flag in c for c in stub.calls for flag in ("-X", "--method", "-f", "-F", "--input"))
@@ -126,16 +126,16 @@ def test_allowlist_is_the_catalog(monkeypatch):
     monkeypatch.setattr(gh, "_gh", stub)
     prompts: list[str] = []
     kn.gather(brain({"repos": [], "queries": ["x"]}, prompts=prompts), "question", "", ["acme/portail"], False)
-    assert "- acme/portail" in prompts[0] and "deployhub" not in prompts[0]
+    assert "- acme/portail" in prompts[0] and "serveur" not in prompts[0]
     assert not any(c[:2] == ["repo", "list"] for c in stub.calls)
     assert next(c for c in stub.calls if c[:2] == ["search", "code"])[2:4] == ["--repo", "acme/portail"]
 
 
 def test_excerpt_keeps_matching_sections_of_a_long_doc():
     filler = "\n\n".join(f"## Section {i}\n\n" + "bla " * 300 for i in range(10))
-    doc = "# Titre\n\nIntro.\n\n" + filler + "\n\n## Mutualisé\n\nUne seule demande pour une VM partagée.\n"
-    out = kn.excerpt(doc, ["partagée"], budget=1500)
-    assert out.startswith("# Titre") and "Une seule demande pour une VM partagée." in out
+    doc = "# Titre\n\nIntro.\n\n" + filler + "\n\n## Poste partagé\n\nUn seul compte pour un poste partagé.\n"
+    out = kn.excerpt(doc, ["partagé"], budget=1500)
+    assert out.startswith("# Titre") and "Un seul compte pour un poste partagé." in out
     assert len(out) < 1600
 
 
@@ -147,10 +147,10 @@ def test_knowledge_joins_the_github_context_as_data():
 
 
 DM_DRAFT = "19:bb22@thread.v2"
-KNOWLEDGE = "=== acme/docs — a.md ===\nonglet Demandes en attente"
+KNOWLEDGE = "=== acme/docs — a.md ===\nmenu Sécurité"
 
 
-def _msg(text="Comment on approuve une machine ?"):
+def _msg(text="Comment on réinitialise un mot de passe ?"):
     return IncomingMessage(thread_id=DM_DRAFT, sender="Quelqu'un", text=text, received_at="10:00",
                            surface=Surface.dm, mentions=[])
 
@@ -171,7 +171,7 @@ def test_draft_gets_what_the_repos_say(make_client, fake_gather):
     brain = FakeBrain()
     _client, watcher, _driver = make_client(brain=brain)
     assert watcher._process(_msg(), force_draft=True) == "draft"
-    assert fake_gather == ["Comment on approuve une machine ?"]
+    assert fake_gather == ["Comment on réinitialise un mot de passe ?"]
     assert len(brain.github) == 1 and KNOWLEDGE in brain.github[0]
 
 
