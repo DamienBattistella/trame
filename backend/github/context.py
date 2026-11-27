@@ -150,6 +150,32 @@ def list_repos() -> list[str]:
     return repos
 
 
+_owners_cache: tuple[float, list[str]] | None = None
+
+
+def account_owners() -> list[str]:
+    """The account and its organizations, cached 10 min. `gh repo list` only lists the
+    account's own repos: an « all repos » search must also cover the orgs' ones."""
+    global _owners_cache
+    now = time.monotonic()
+    if _owners_cache and now - _owners_cache[0] < REPOS_TTL:
+        return list(_owners_cache[1])
+    login = _gh(["api", "user", "-q", ".login"], timeout=CALL_TIMEOUT)
+    orgs = _gh(["api", "user/orgs", "-q", ".[].login"], timeout=CALL_TIMEOUT)
+    owners = list(dict.fromkeys(o for o in [login, *orgs.splitlines()] if o.strip()))
+    if owners:
+        _owners_cache = (now, owners)
+    return owners
+
+
+def search_filters(repos: list[str], all_repos: bool) -> list[str]:
+    """`gh search` scope: every owner (account, its orgs, owners of the listed repos) or the allowlist."""
+    if all_repos:
+        owners = list(dict.fromkeys([*account_owners(), *(r.split("/", 1)[0] for r in repos if "/" in r)]))
+        return [a for o in owners[:MAX_OWNERS] for a in ("--owner", o)]
+    return [a for r in repos[:MAX_SEARCH_REPOS] for a in ("--repo", r)]
+
+
 MAX_HITS = 8
 MAX_NUMBERS = 3
 MAX_LOOKUP_REPOS = 5
@@ -254,11 +280,7 @@ def search(queries: list[str], numbers: list[int], repos: list[str], all_repos: 
         if full():
             return hits
 
-    if all_repos:
-        owners = list(dict.fromkeys(r.split("/", 1)[0] for r in repos if "/" in r))[:MAX_OWNERS]
-        filters = [a for o in owners for a in ("--owner", o)]
-    else:
-        filters = [a for r in repos[:MAX_SEARCH_REPOS] for a in ("--repo", r)]
+    filters = search_filters(repos, all_repos)
 
     for kind, limit in (("prs", 3), ("issues", 3), ("commits", 2)):
         for q in queries:

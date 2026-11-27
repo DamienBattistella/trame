@@ -31,6 +31,7 @@ import transcripts as transcriptsmod
 from drivers import rail_label
 import settings as settingsmod
 from github import context as gh
+from github import knowledge as ghknow
 from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, Surface,
@@ -690,15 +691,15 @@ class Watcher:
         except Exception:
             pass
 
-    def _process(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
+    def _process(self, msg: IncomingMessage, force_draft: bool = False, research: bool = True) -> Optional[str]:
         self.archive.add(msg.thread_id, [msg])
         with telemetry.span("message", conversation=msg.thread_id, surface=msg.surface.value, force_draft=force_draft,
                             text=telemetry.content(msg.text)) as sp:
-            outcome = self._process_inner(msg, force_draft)
+            outcome = self._process_inner(msg, force_draft, research)
             telemetry.set_attrs(sp, outcome=outcome or "ignored")
             return outcome
 
-    def _process_inner(self, msg: IncomingMessage, force_draft: bool = False) -> Optional[str]:
+    def _process_inner(self, msg: IncomingMessage, force_draft: bool = False, research: bool = True) -> Optional[str]:
         """Run one message through the pipeline. Returns "draft", "sent" or None."""
         if self.state.paused:
             return None
@@ -750,8 +751,10 @@ class Watcher:
                                    github=bool(gh_ctx)):
                 reflection.step(f"Message reçu de {msg.sender} ({len(msg.text)} caractères), "
                                 f"mode {'auto' if entity.mode == 'auto' and not force_draft else 'brouillon'}")
+                knowledge = self._knowledge(msg.text, summary) if research else ""
                 reflection.step(f"Contexte : fil ({summary.count(chr(10)) + 1 if summary else 0} ligne(s))"
-                                f"{', GitHub' if gh_ctx else ''}{_images_seen(images)}")
+                                f"{', GitHub' if gh_ctx else ''}{', dépôts' if knowledge else ''}{_images_seen(images)}")
+                gh_ctx = ghknow.with_knowledge(gh_ctx, knowledge)
                 self._brain_call("rédiger la réponse")
                 proposal = self._draft_reply(summary, msg.text or self._as_text(msg).text, gh_ctx,
                                              self._people_context(msg, summary, entity), images)
@@ -1829,7 +1832,8 @@ class Watcher:
         reflection.step(_gathered(len(msgs), people) + _images_seen(images))
         self._brain_call(f"réponse au dernier message de {last.sender}")
         try:
-            reply = self._draft_reply(summary, last.text, "", people, images)
+            reply = self._draft_reply(summary, last.text, ghknow.with_knowledge("", self._knowledge(last.text, summary)),
+                                      people, images)
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -1873,7 +1877,8 @@ class Watcher:
         reflection.step(_gathered(len(before) + len(after), people) + _images_seen(images))
         self._brain_call(f"{'relance de ton message' if mine else f'réponse au message cité de {last.sender}'}")
         try:
-            reply = self._draft_reply(summary, last.text, "", people, images)
+            reply = self._draft_reply(summary, last.text, ghknow.with_knowledge("", self._knowledge(last.text, summary)),
+                                      people, images)
         except Exception as e:
             raise ActionError(502, f"Le cerveau n'a pas pu proposer de réponse : {e}")
         return reply.strip()
@@ -2070,7 +2075,9 @@ class Watcher:
             unread = self.driver.list_unread(watched)
         except Exception as e:
             raise ActionError(502, f"Lecture des non-lus impossible: {e}")
-        queued = sum(1 for m in unread if self._process(m, force_draft=True) == "draft")
+        # Without the repo search: ~30 s and 3 code searches a message would stall a batch
+        # and exhaust GitHub's 10 code searches a minute.
+        queued = sum(1 for m in unread if self._process(m, force_draft=True, research=False) == "draft")
         self.log("info", f"Rattrapage : {queued} brouillon(s) sur {len(unread)} non-lu(s)")
         return queued
 
@@ -2446,6 +2453,28 @@ class Watcher:
             if p and p not in found:
                 found.append(p)
         return [peoplemod.Directory.card(p) for p in found[:12]]
+
+    def _knowledge(self, text: str, summary: str) -> str:
+        """What the team's repos say about the question (docs, code), read-only; "" when
+        GitHub or this search (`context.github.knowledge`) is off. Never blocks a draft:
+        any failure means a reply written without it."""
+        prefs = self.get_settings()
+        gh_cfg = self.cfg.get("context", {}).get("github", {})
+        if not prefs.github.enabled or not gh_cfg.get("knowledge", True) or not text.strip():
+            return ""
+        try:
+            repos = gh.list_repos() if prefs.github.all_repos else gh_cfg.get("repos_allowlist", [])
+            with telemetry.span("github.knowledge", repos=len(repos)) as sp:
+                out = ghknow.gather(lambda p, t: self.brain.complete(p, timeout=t), text, summary,
+                                    repos, prefs.github.all_repos)
+                telemetry.set_attrs(sp, chars=len(out))
+            if out:
+                read = [line[4:-4] for line in out.splitlines() if line.startswith("=== ") and line.endswith(" ===")]
+                reflection.step(f"Dépôts lus : {', '.join(read)}")
+            return out
+        except Exception as e:
+            self.log("warn", f"Recherche dans les dépôts impossible : {e}")
+            return ""
 
     def _github_facts(self, text: str) -> str:
         """State of the PR / issues the message names, read-only; "" when GitHub is off."""
