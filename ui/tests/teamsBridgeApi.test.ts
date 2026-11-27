@@ -865,6 +865,37 @@ test("chatgesture send : HTML du composeur (échappé, liens), prouvé par son c
   assert.ok(writes[0].url.startsWith("https://emea.ng.msg.teams.microsoft.com/"));
 });
 
+test("chatgesture send en réponse : citation écrite comme Teams (id, auteur, heure, extrait), prouvée relue", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = {
+    "1795777000001": msgRaw("1795777000001", { imdisplayname: "Ana Martin", content: "<p>On livre <b>vendredi</b> ?</p>" }),
+  };
+  const writes = chatServer(p, messages);
+  const reply = { id: "1795777000001", sender: "Ana Martin", text: "On livre vendredi ?" };
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "Oui", reply })).result;
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
+  const html = writes[0].body.content;
+  assert.match(html, /^<blockquote itemscope itemtype="http:\/\/schema\.skype\.com\/Reply" itemid="1795777000001">/);
+  assert.match(html, /<strong itemprop="mri" itemid="8:orgid:[^"]+">Ana Martin<\/strong>/);
+  assert.match(html, /<span itemprop="time" itemid="\d{13}"><\/span>/);
+  assert.match(html, /<p itemprop="preview">On livre vendredi \?<\/p><\/blockquote><p>Oui<\/p>$/);
+});
+
+test("chatgesture send en réponse : message cité différent de celui affiché → rien ne part", async () => {
+  const p = teamsPage();
+  p.ctx.crypto = globalThis.crypto;
+  await withTeamsBearer(p);
+  const messages: any = { "1795777000001": msgRaw("1795777000001", { imdisplayname: "Ana Martin", content: "<p>Autre chose</p>" }) };
+  const writes = chatServer(p, messages);
+  const r = (await p.run("chatgesture", { kind: "send", thread: GROUP_ID, text: "Oui", reply: { id: "1795777000001", sender: "Ana Martin", text: "On livre vendredi ?" } })).result;
+  assert.equal(r.ok, false);
+  assert.equal(r.attempted, false);
+  assert.equal(writes.length, 0);
+});
+
 test("chatgesture send : réseau coupé pendant l'envoi → incertain, aucun second envoi", async () => {
   const p = teamsPage();
   p.ctx.crypto = globalThis.crypto;

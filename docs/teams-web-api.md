@@ -201,6 +201,7 @@ Requêtes relevées dans le code de Teams, faites dans la page avec la session d
 | réaction | `PUT …/messages/{mid}/properties?name=emotions` `{"emotions": {"key": "like", "value": <maintenant>}}` |
 | suppression | `DELETE …/messages/{mid}?behavior=softDelete` |
 | envoi | `POST …/conversations/{id}/messages` (`RichText/Html`, `clientmessageid` de 19 chiffres) |
+| réponse citée | même envoi, précédé de `<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="{mid}"><strong itemprop="mri" itemid="{mri}">{nom}</strong><span itemprop="time" itemid="{ms}"></span><p itemprop="preview">{extrait}</p></blockquote>` (format du composeur de Teams) |
 
 - **Avant d'écrire**, la page vérifie la cible : message retrouvé par son id, même auteur et
   même début de texte que ce que l'utilisateur a vu ; pour supprimer, un de SES messages.
@@ -211,9 +212,10 @@ Requêtes relevées dans le code de Teams, faites dans la page avec la session d
   `uncertain` parti sans preuve, remonté comme `SendUncertain` / `ReactUncertain` /
   `DeleteUncertain` et jamais refait (les garde-fous du moteur s'appliquent : anti-doublon,
   « vérifie dans Teams avant de renvoyer »).
-- Passent par le service : l'envoi d'un texte simple, la réaction, la suppression, le marquage
-  comme lu. Restent sur la page : la saisie sans envoi (brouillon), la réponse citée, les
-  mentions, les pièces jointes.
+- Passent par le service : l'envoi d'un texte simple ou en réponse citée (message cité vérifié
+  comme pour une réaction, citation relue pour prouver l'envoi), la réaction, la suppression, le
+  marquage comme lu, la modification. Restent sur la page : la saisie sans envoi (brouillon), les
+  mentions, les pièces jointes, et la réponse à un message sans id Teams.
 - **Écrire exige une correspondance forte** : id Teams contenu dans l'id de la page (groupes),
   conversation avec soi-même, ou tête-à-tête relié par son nom ET par le même début de texte ou
   la même heure à la minute. Relié au jour près seulement : lecture par le service, gestes par la
@@ -254,7 +256,7 @@ y est refusé).
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
 2. ~~Session chatsvc dans la page~~ (#121).
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
-4. ~~Écritures simples~~ (#128) ; restent la réponse citée et les mentions par le service.
+4. ~~Écritures simples~~ (#128), ~~réponse citée~~ ; restent les mentions par le service.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
    restent la recherche de messages, la nouvelle conversation.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
