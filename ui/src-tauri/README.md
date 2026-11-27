@@ -42,7 +42,7 @@ npm run tauri icon src-tauri/icons/source.png
 ```powershell
 cd ui
 npm run tauri dev     # dev : Vite + fenêtre native sans cadre + sidecar
-npm run tauri build   # installeur (.msi / .exe)
+npm run tauri build   # installeur NSIS (-setup.exe)
 ```
 
 ## Notes

@@ -30,6 +30,18 @@ if [ "$bump" = "auto" ]; then
 fi
 [ "${MANUAL:-false}" = "true" ] && release=true
 
+# Commit déjà dépassé : si main a avancé depuis ce commit, le run lancé pour le commit
+# plus récent publiera aussi celui-ci. Inutile de construire une version intermédiaire
+# (deux merges rapprochés donnaient deux builds de 6 min à la suite).
+if [ "${MANUAL:-false}" != "true" ] && [ "$release" = "true" ]; then
+  git fetch --quiet origin main 2>/dev/null || true
+  tip=$(git rev-parse --verify --quiet origin/main || true)
+  if [ -n "$tip" ] && [ "$tip" != "$(git rev-parse HEAD)" ] && git merge-base --is-ancestor HEAD "$tip"; then
+    echo "main a avancé ($(git rev-parse --short "$tip")) : release confiée au run du commit le plus récent."
+    release=false
+  fi
+fi
+
 IFS=. read -r major minor patch <<<"${last#v}"
 if [ "$bump" = "major" ] && [ "$major" = "0" ]; then bump=minor; fi
 case "$bump" in
