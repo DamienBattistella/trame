@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { GithubConnect } from "@/components/GithubConnect";
 import { EntourageSection } from "@/components/EntourageSection";
 import { SoulSettings } from "@/components/SoulSettings";
-import { UpdatesRow } from "@/components/UpdatesRow";
+import { UpdateFrequencyRow, UpdatesRow } from "@/components/UpdatesRow";
 import { DiagnosticRow } from "@/components/DiagnosticRow";
 import { ConversationSheet } from "@/components/ConversationSheet";
 import { LogExportButtons } from "@/components/LogExportButtons";
@@ -374,7 +374,8 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
         <TeamsWebSettings trame={trame} />
         <GraphSettings trame={trame} />
         <GroupList>
-          <UpdatesRow checkMinutes={trame.updateCheckMinutes} onCheckMinutesChange={trame.setUpdateCheckMinutes} />
+          <UpdatesRow checkMinutes={trame.updateCheckMinutes} />
+          <UpdateFrequencyRow value={trame.updateCheckMinutes} onChange={trame.setUpdateCheckMinutes} />
           <ChangelogRow />
           <NotificationsRow />
           <AutostartRow />
