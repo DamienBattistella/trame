@@ -178,6 +178,7 @@
   const apiCapture = (() => {
     const MAX = 150;
     const seen = new Map(); // clé -> { method, host, path, type, status, count, auth, first, last }
+    const sockets = new Map(); // clé -> { scheme, host, path, count, first, last } (WebSocket)
     const tmpl = (path) =>
       (path || "/")
         .split("/")
@@ -261,10 +262,39 @@
         });
       }
     };
+    // Connexion WebSocket ouverte par la page (ex. trouter) : en Teams v2, messages et
+    // présence passent par ce canal, invisible au hook fetch/XHR. On ne retient que l'URL
+    // de connexion (hôte + gabarit de chemin masqué) et un compte — jamais une frame, jamais
+    // de contenu. Sert à repérer le service de chat/présence.
+    const noteSocket = (rawUrl) => {
+      let u;
+      try {
+        u = new URL(rawUrl, location.origin);
+      } catch {
+        return;
+      }
+      if (!/^wss?:$/.test(u.protocol)) return;
+      const path = tmpl(u.pathname);
+      const key = `${u.hostname} ${path}`;
+      const now = Date.now();
+      const prev = sockets.get(key);
+      if (prev) {
+        prev.count++;
+        prev.last = now;
+      } else {
+        if (sockets.size >= 40) {
+          let oldestKey, oldest = Infinity;
+          for (const [k, v] of sockets) if (v.last < oldest) ((oldest = v.last), (oldestKey = k));
+          if (oldestKey) sockets.delete(oldestKey);
+        }
+        sockets.set(key, { scheme: u.protocol.replace(":", ""), host: u.hostname, path, hasQuery: Boolean(u.search), count: 1, first: now, last: now });
+      }
+    };
     const summary = () => {
       const rows = Array.from(seen.values()).sort((a, b) => b.last - a.last);
       const byService = {};
       for (const r of rows) byService[r.service] = (byService[r.service] || 0) + 1;
+      const wsRows = Array.from(sockets.values()).sort((a, b) => b.last - a.last);
       return {
         count: rows.length,
         byService,
@@ -280,9 +310,11 @@
           hasQuery: r.hasQuery,
           auth: r.auth.slice(0, 6), // noms d'en-têtes seulement
         })),
+        // WebSockets : URL de connexion seulement (jamais de frame ni de contenu).
+        sockets: wsRows.slice(0, 20).map((s) => ({ scheme: s.scheme, host: s.host, path: s.path, hasQuery: s.hasQuery, count: s.count })),
       };
     };
-    return { note, authNames, summary };
+    return { note, noteSocket, authNames, summary };
   })();
 
   // Pose les hooks passifs. On ne lit jamais la VALEUR d'un en-tête ni un corps : pour
@@ -354,6 +386,25 @@
           } catch {}
           return oSend.apply(this, arguments);
         };
+      }
+      // WebSocket : on note seulement l'URL de connexion (le canal trouter porte les
+      // messages en v2). Jamais une frame. On renvoie une vraie WebSocket inchangée.
+      const OWS = window.WebSocket;
+      if (typeof OWS === "function" && !OWS.__trameWrapped) {
+        const WS = function (url, protocols) {
+          try {
+            apiCapture.noteSocket(String(url));
+          } catch {}
+          return protocols === undefined ? new OWS(url) : new OWS(url, protocols);
+        };
+        WS.prototype = OWS.prototype;
+        WS.__trameWrapped = true;
+        for (const k of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) {
+          try {
+            WS[k] = OWS[k];
+          } catch {}
+        }
+        window.WebSocket = WS;
       }
     } catch {}
   })();

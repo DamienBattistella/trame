@@ -22,7 +22,19 @@ const fakeResponse = (body: string, { status = 200, contentType = "application/j
 const teamsPage = () => {
   const replies: any[] = [];
   const fetchCalls: Array<{ url: string; init: any }> = [];
+  const wsCreated: string[] = [];
   let nextResponse = fakeResponse('{"ok":true}');
+  class FakeWS {
+    url: string;
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    constructor(url: string) {
+      this.url = url;
+      wsCreated.push(url);
+    }
+  }
   const doc: any = {
     title: "Chat | Microsoft Teams",
     hasFocus: () => false,
@@ -43,6 +55,18 @@ const teamsPage = () => {
       fetchCalls.push({ url: String(url), init });
       return nextResponse;
     },
+    WebSocket: FakeWS,
+    // Stub XHR : présent sur la vraie page, il doit l'être ici pour que le bloc d'install
+    // n'échoue pas avant la pose du hook WebSocket.
+    XMLHttpRequest: class {
+      open() {}
+      send() {}
+      setRequestHeader() {}
+      addEventListener() {}
+      getResponseHeader() {
+        return "";
+      }
+    },
     __TAURI_INTERNALS__: { invoke: (_name: string, { payload }: any) => replies.push(payload) },
   };
   ctx.window = ctx;
@@ -56,6 +80,7 @@ const teamsPage = () => {
     ctx,
     run,
     fetchCalls,
+    wsCreated,
     setResponse: (r: any) => (nextResponse = r),
   };
 };
@@ -103,6 +128,27 @@ test("diagnose rapporte l'empreinte du pont injecté par l'hôte (sinon null)", 
   const p = teamsPage();
   p.ctx.__trameBridge = "deadbeefcafe0001"; // posée par l'hôte à l'injection
   assert.equal((await p.run("diagnose")).result.bridge, "deadbeefcafe0001");
+});
+
+test("la capture WebSocket ne retient que l'URL de connexion (hôte + chemin masqué)", async () => {
+  const p = teamsPage();
+  // La page ouvre un canal trouter (où passent les messages en v2).
+  const ws = new p.ctx.window.WebSocket(
+    "wss://go-eu.trouter.teams.microsoft.com/socket.io/1/websocket/F9c2aLongSessionToken1234567890?v=v4&tc=1",
+  );
+  // La vraie WebSocket est bien renvoyée, inchangée.
+  assert.equal(ws.url.startsWith("wss://go-eu.trouter"), true);
+  assert.equal(p.wsCreated.length, 1);
+  const cap = (await p.run("diagnose")).result.api_capture;
+  assert.equal(cap.sockets.length, 1);
+  const s = cap.sockets[0];
+  assert.equal(s.scheme, "wss");
+  assert.equal(s.host, "go-eu.trouter.teams.microsoft.com");
+  // Le jeton de session dans le chemin est masqué, la requête n'est pas conservée.
+  assert.ok(s.path.includes("{id}") && !/F9c2aLong/.test(s.path), s.path);
+  assert.equal(s.hasQuery, true);
+  // Aucune valeur sensible nulle part dans la capture.
+  assert.ok(!/F9c2aLongSessionToken/.test(JSON.stringify(cap)));
 });
 
 test("la capture ne retient que la structure : chemin masqué, NOMS d'auth, aucune valeur", async () => {
