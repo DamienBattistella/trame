@@ -20,8 +20,9 @@ class FakePage:
             {"id": "19:grp@thread.v2", "kind": "group", "topic": "Projet X", "last": {"id": "9", "ts": 9000}},
         ]}
 
-    def meetings_api(self, threads):
+    def meetings_api(self, threads, topics=None):
         self.asked.append(list(threads))
+        self.topics = dict(topics or {})
         if self.fail:
             raise WebBridgeDriver.ApiError(self.fail)
         return [{"thread": MEET, "recaps": [{"mid": "1700000000999", "when": "vendredi 27 novembre 2026 11:00 - 11:20",
@@ -37,6 +38,7 @@ def test_meetings_are_read_on_the_service_with_the_page_ids():
     d = WebApiDriver(page)
     got = d.list_meetings()
     assert page.asked == [[MEET]] and page.page == []
+    assert page.topics == {MEET: "Point hebdo"}
     assert got == [{"thread_id": "title-" + MEET, "chat": "Point hebdo", "mid": "1700000000999",
                     "title": "Point hebdo", "when": "vendredi 27 novembre 2026 11:00 - 11:20", "transcript": True}]
     assert d.routes()["meetings"]["via"] == "api"

@@ -2865,7 +2865,41 @@
       d.setHours(at.getHours(), at.getMinutes(), 0, 0);
       return d;
     };
-    const one = async (thread) => {
+    // Le créneau d'une occurrence déplacée n'est que dans l'agenda : Teams le lit par Graph
+    // (`/me/events`, vu dans la capture). Avec le jeton Graph que Teams a posé, on lit l'agenda
+    // du jour de l'appel ; un événement ne remplace le créneau que s'il est le SEUL à porter le
+    // sujet de la réunion et à commencer à moins de 2 h de l'appel. Sinon rien ne change.
+    const norm = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+    const calendar = new Map(); // jour (AAAA-MM-JJ) -> événements, le temps d'un appel de l'op
+    const dayEvents = async (d) => {
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (calendar.has(key)) return calendar.get(key);
+      const from = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const to = new Date(from.getTime() + 86400000);
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${encodeURIComponent(from.toISOString())}&endDateTime=${encodeURIComponent(to.toISOString())}&$select=subject,start,end&$top=100`;
+      let list = [];
+      try {
+        const r = await ops.webfetch({ url, method: "GET", sign: true, json: true, cookies: false, headers: { Prefer: 'outlook.timezone="UTC"' } });
+        if (r && r.ok && r.json && Array.isArray(r.json.value)) {
+          list = r.json.value
+            .map((e) => ({
+              subject: norm(e && e.subject),
+              start: new Date(`${String((e && e.start && e.start.dateTime) || "").replace(/Z$/, "")}Z`),
+              end: new Date(`${String((e && e.end && e.end.dateTime) || "").replace(/Z$/, "")}Z`),
+            }))
+            .filter((e) => e.subject && !Number.isNaN(e.start.getTime()) && !Number.isNaN(e.end.getTime()));
+        }
+      } catch {}
+      calendar.set(key, list);
+      return list;
+    };
+    const fromCalendar = async (topic, callStart) => {
+      const want = norm(topic);
+      if (!want) return null;
+      const near = (await dayEvents(callStart)).filter((e) => e.subject === want && Math.abs(e.start - callStart) <= 2 * 3600000);
+      return near.length === 1 ? near[0] : null;
+    };
+    const one = async (thread, topic) => {
       const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(thread)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
       if (!r.ok) return { thread, ok: false, error: r.error || "fil refusé par le service de chat" };
       const msgs = ((r.json && r.json.messages) || []).filter((m) => m && /^\d{1,20}$/.test(String(m.id || ""))).sort((a, b) => Number(a.id) - Number(b.id));
@@ -2897,16 +2931,20 @@
         if (b < a) b = new Date(endId);
         // Transcrite : un message de transcription entre le début et peu après la fin.
         const transcript = msgs.some((x) => x.messagetype === "RichText/Media_CallTranscript" && Number(x.id) >= startId && Number(x.id) <= endId + 10 * 60 * 1000);
-        recaps.push({ mid: String(m.id), when: when(a, b), transcript, ts: endId });
+        // L'agenda dit le créneau de CETTE occurrence (déplacée ou non) quand il le dit sans doute.
+        const ev = await fromCalendar(topic, actual);
+        const slot = ev ? [ev.start, ev.end] : [a, b];
+        recaps.push({ mid: String(m.id), when: when(slot[0], slot[1]), transcript, ts: endId, calendar: Boolean(ev) });
       }
       return { thread, ok: true, recaps: recaps.reverse() };
     };
-    return async ({ threads = [] } = {}) => {
+    return async ({ threads = [], topics = {} } = {}) => {
       const ids = (Array.isArray(threads) ? threads : []).filter((t) => /^19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2$/.test(String(t))).slice(0, 30);
       const out = [];
+      calendar.clear();
       for (const t of ids) {
         const started = Date.now();
-        out.push(await one(t));
+        out.push(await one(t, (topics && typeof topics === "object" && topics[t]) || ""));
         const spent = Date.now() - started;
         if (spent < 125) await sleep(125 - spent);
       }

@@ -728,7 +728,8 @@ class WebApiDriver:
                           key=lambda r: -((r.get("last") or {}).get("ts") or 0))[: limit or self.MAX_MEETING_CHATS]
             if rows:
                 try:
-                    chats = api([str(r["id"]) for r in rows])
+                    # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence déplacée).
+                    chats = api([str(r["id"]) for r in rows], {str(r["id"]): str(r.get("topic") or "") for r in rows})
                 except Exception as e:
                     self._route("meetings", "page", f"repli sur la page : {e}")
                 else:
