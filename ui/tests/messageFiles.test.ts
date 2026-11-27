@@ -86,6 +86,24 @@ test("image collée dans le corps, sans son nom : vaut pour une image voulue, pa
   assert.deepEqual(files.missing(["notes.pdf"], [el]), ["notes.pdf"]);
 });
 
+test("GIF animé (Giphy) : montré comme une image, mais il ne prouve l'envoi d'aucun fichier", () => {
+  const el = parse(
+    '<div><div data-tid="chat-pane-message"><div id="content-1"><span>' +
+      '<img aria-hidden="true" class="ui-image" src="https://media3.giphy.com/media/v1.Y2lkPWV4YW1wbGU/abcDEF123/giphy.gif">' +
+      "</span></div></div></div>"
+  ).childNodes.find((c): c is MiniElement => c.nodeType === 1)!;
+  assert.equal(files.imagesOf(el).length, 1);
+  assert.deepEqual(files.filesOf(el), []);
+  assert.deepEqual(files.missing(["capture.png"], [el]), ["capture.png"]);
+});
+
+test("une <img> d'un autre site dans le corps n'est pas une image du message", () => {
+  const el = parse('<div><div data-tid="chat-pane-message"><img src="https://cdn.example.com/x.gif"></div></div>').childNodes.find(
+    (c): c is MiniElement => c.nodeType === 1
+  )!;
+  assert.equal(files.imagesOf(el).length, 0);
+});
+
 test("aucun message apparu : rien n'est prouvé", () => {
   assert.deepEqual(files.missing(["capture.png"], []), ["capture.png"]);
 });
