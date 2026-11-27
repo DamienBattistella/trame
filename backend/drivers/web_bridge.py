@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import presence as presencemod
 from drivers import rail_label
-from drivers.base import DeleteUncertain, NeedsView, ReactUncertain, SendUncertain, TeamsDriver
+from drivers.base import DeleteUncertain, EditUncertain, NeedsView, ReactUncertain, SendUncertain, TeamsDriver
 from drivers.preview_watch import PreviewWatcher
 from models import (DELETED_TEXT, REACTIONS, CardRef, FileRef, ImageRef, IncomingMessage, LinkRef, MessageRef, QuoteRef, Surface,
                     WatchEntity)
@@ -143,6 +143,7 @@ class WebBridgeDriver(TeamsDriver):
     supports_reply = True
     supports_mentions = True
     supports_delete = True
+    supports_edit = True
     supports_teams_favorites = True
     POLL_WAIT = 20.0
 
@@ -672,6 +673,22 @@ class WebBridgeDriver(TeamsDriver):
             raise DeleteUncertain(res.get("error") or "suppression non confirmée")
         if not (res and res.get("ok")):
             raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'suppression refusée'}")
+        return True
+
+    def _edit_in_active(self, thread_id: str, target: MessageRef, text: str) -> bool:
+        # Same checks as delete (Teams offers « Modifier » on own messages only), then the
+        # text is replaced in the editor Teams opens and confirmed once shown in the thread.
+        try:
+            res = self._rpc("edit", name=self._name(thread_id), message=self._ref(target), text=text,
+                            timeout=self.GESTURE_TIMEOUT)
+        except BridgeUnavailable as e:
+            if "pas de réponse" in str(e):
+                raise EditUncertain(str(e)) from e
+            raise
+        if res and res.get("uncertain"):
+            raise EditUncertain(res.get("error") or "modification non confirmée")
+        if not (res and res.get("ok")):
+            raise BridgeUnavailable(f"Teams intégré : {(res or {}).get('error') or 'modification refusée'}")
         return True
 
     def _type_with_mentions(self, thread_id: str, text: str, send: bool, mentions: list[str],

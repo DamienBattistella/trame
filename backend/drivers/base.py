@@ -25,6 +25,10 @@ class DeleteUncertain(RuntimeError):
     """« Supprimer » was clicked but Teams did not show the message as deleted."""
 
 
+class EditUncertain(RuntimeError):
+    """The edit was sent but Teams did not show the new text: it may or may not be there."""
+
+
 class NeedsView(RuntimeError):
     """The page can do it only once Teams has shown the item (e.g. a file's preview)."""
 
@@ -66,6 +70,9 @@ class TeamsDriver(ABC):
     # Supprimer un de ses propres messages (jamais celui d'un autre).
     supports_delete: bool = False
     delete_unsupported: str = "Ce pilote Teams ne sait pas supprimer un message."
+    # Modifier le texte d'un de ses propres messages (jamais celui d'un autre).
+    supports_edit: bool = False
+    edit_unsupported: str = "Ce pilote Teams ne sait pas modifier un message."
     """Abstraction over the Teams client. Implemented by MockTeamsDriver (any OS,
     for development) and WindowsUIADriver (real UIA driving, Windows only)."""
 
@@ -527,6 +534,28 @@ class TeamsDriver(ABC):
     def _delete_in_active(self, thread_id: str, target: MessageRef) -> bool:
         """Delete target in the active conversation (still thread_id)."""
         raise NotSupported(self.delete_unsupported)
+
+    def edit_focused(self, thread_id: str, target: MessageRef, text: str, restore: bool = True) -> Focus:
+        """Open thread_id, then replace the text of target, one of the user's own messages.
+        `ok` only once Teams shows the new text. Same checks as delete: on any doubt,
+        nothing is changed."""
+        if not self.supports_edit:
+            raise NotSupported(self.edit_unsupported)
+        with self.focused(thread_id, restore=restore) as focus:
+            if focus.ok:
+                try:
+                    focus.ok = bool(self._edit_in_active(thread_id, target, text))
+                    if not focus.ok:
+                        focus.reason = "message non modifié dans Teams"
+                except EditUncertain:
+                    raise
+                except Exception as e:
+                    focus.ok, focus.reason = False, str(e)
+        return focus
+
+    def _edit_in_active(self, thread_id: str, target: MessageRef, text: str) -> bool:
+        """Replace the text of target in the active conversation (still thread_id)."""
+        raise NotSupported(self.edit_unsupported)
 
     @abstractmethod
     def list_unread(self, thread_ids: Optional[Iterable[str]] = None) -> list[IncomingMessage]:

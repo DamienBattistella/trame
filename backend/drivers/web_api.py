@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable, Optional
 
-from drivers.base import DeleteUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
+from drivers.base import DeleteUncertain, EditUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
@@ -121,13 +121,13 @@ class _ChatState:
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
-           "search_messages", "mark_read", "react", "delete", "set_status", "set_note",
+           "search_messages", "mark_read", "react", "delete", "edit", "set_status", "set_note",
            "send", "start_chat", "meetings", "transcript")
 
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
-    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "send"})
+    API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send"})
     # Écart toléré entre l'horloge du poste et celle de Teams pour dater un message « nouveau ».
     CLOCK_SKEW = 120
     PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
@@ -429,6 +429,14 @@ class WebApiDriver:
             return self._inner.delete_focused(thread_id, target, restore=restore)
         if res.get("uncertain"):
             raise DeleteUncertain(res.get("error") or "suppression non confirmée")
+        return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
+
+    def edit_focused(self, thread_id: str, target: MessageRef, text: str, restore: bool = True) -> Focus:
+        res = self._gesture("edit", "edit", thread_id, message=self._inner._ref(target), text=text)
+        if res is None:
+            return self._inner.edit_focused(thread_id, target, text, restore=restore)
+        if res.get("uncertain"):
+            raise EditUncertain(res.get("error") or "modification non confirmée")
         return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))
 
     def type_focused(self, thread_id: str, text: str, send: bool, restore: bool,

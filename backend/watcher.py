@@ -36,7 +36,7 @@ from github import publish as ghpublish
 from models import (DELETED_TEXT, REACTIONS, AppState, Archived, Brief, BriefSources, Capabilities, CardRef, Claim, Draft, FactCheck,
                     FactCheckSources, FollowUp, IncomingMessage, LinkRef, LogItem, MessageRef, Notice, QueuedSend, QuoteRef, Surface,
                     UndoableSend, WatchEntity, AutoSent, brain_text)
-from drivers.base import DeleteUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
+from drivers.base import DeleteUncertain, EditUncertain, Focus, NeedsView, NotSupported, ReactUncertain, SendUncertain, TeamsDriver, same_message
 from attachments import Attachment
 from brain.base import Brain
 from brain.brief import BriefParseError, build_brief_prompt, parse_brief
@@ -119,7 +119,8 @@ class Watcher:
                                       reply=bool(getattr(driver, "supports_reply", False)),
                                       mentions=bool(getattr(driver, "supports_mentions", False)),
                                       own_status=bool(getattr(driver, "can_set_status", False)),
-                                      delete=bool(getattr(driver, "supports_delete", False))),
+                                      delete=bool(getattr(driver, "supports_delete", False)),
+                                      edit=bool(getattr(driver, "supports_edit", False))),
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -1157,6 +1158,9 @@ class Watcher:
         if gesture == "delete" and not caps.delete:
             raise ActionError(501, getattr(self.driver, "delete_unsupported", "")
                               or "Supprimer un message n'est pas possible avec ce pilote Teams.")
+        if gesture == "edit" and not caps.edit:
+            raise ActionError(501, getattr(self.driver, "edit_unsupported", "")
+                              or "Modifier un message n'est pas possible avec ce pilote Teams.")
         if gesture == "mentions" and not caps.mentions:
             raise ActionError(501, "Mentionner quelqu'un n'est pas possible avec ce pilote Teams.")
 
@@ -1791,6 +1795,70 @@ class Watcher:
                     break
         self._history.pop(thread_id, None)
         self.log("info", f"Message supprimé dans « {entity.display_name} » : {excerpt}")
+
+    MAX_EDIT = 28000
+
+    def edit_message(self, thread_id: str, target: MessageRef, text: str) -> None:
+        """Replace the text of one of the user's own messages in Teams, on their explicit
+        request from the discussion view. Never called by the Auto mode, the brain or the
+        MCP tools. Same guards as delete; plain-text messages only (rewriting a quote, a
+        mention, an attachment or a preview card as plain text would lose it). Success only
+        once Teams shows the new text: never a false « fait »."""
+        entity = self._conversation(thread_id)
+        self._require("edit")
+        new = (text or "").strip()
+        if not new:
+            raise ActionError(422, "Le nouveau texte est vide : pour retirer le message, supprime-le.")
+        if len(new) > self.MAX_EDIT:
+            raise ActionError(422, "Le nouveau texte est trop long.")
+        if not target.sender.strip() or not self._is_mine(target.sender):
+            self.log("warn", f"Modification refusée dans « {entity.display_name} » : message d'une autre personne")
+            raise ActionError(403, "Seuls tes propres messages peuvent être modifiés.")
+        with self._lock:
+            cached = self._thread_cache.get(thread_id)
+            seen = next((m for m in reversed(cached[1] if cached else []) if target.id and m.get("id") == target.id), None)
+        if seen is not None:
+            if seen.get("deleted"):
+                raise ActionError(409, "Ce message est supprimé.")
+            if not self._is_mine(seen["sender"]):
+                raise ActionError(403, "Seuls tes propres messages peuvent être modifiés.")
+            if any(seen.get(k) for k in ("quote", "mentions", "files", "images", "cards")):
+                raise ActionError(409, "Ce message a une citation, une mention, une pièce jointe ou un aperçu : "
+                                       "modifie-le dans Teams.")
+            if " ".join(seen.get("text", "").split()) == " ".join(new.split()):
+                return
+        self._typing_allowed()
+        excerpt = f"« {target.text[:60]}{'…' if len(target.text) > 60 else ''} »"
+        with self._ui_lock:
+            if self._screen_share_guarded():
+                self.state.screen_sharing = True
+                raise ActionError(409, "Partage d'écran en cours : aucune action dans Teams.")
+            try:
+                with telemetry.span("teams.edit", conversation=thread_id) as sp:
+                    focus = self.driver.edit_focused(thread_id, target, new, restore=True)
+                    telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
+            except EditUncertain as e:
+                self._thread_cache.pop(thread_id, None)
+                self.log("warn", f"Modification non confirmée dans « {entity.display_name} » : {excerpt} ({e})")
+                raise ActionError(409, f"Modification non confirmée : vérifie dans Teams avant de recommencer. ({e})")
+            except NotSupported as e:
+                raise ActionError(501, str(e))
+            except Exception as e:
+                self.log("warn", f"Modification impossible dans « {entity.display_name} » : {e}")
+                raise ActionError(409, f"Rien n'a été modifié. Raison : {e}.")
+        self._warn_if_not_restored(focus)
+        if not focus.ok:
+            reason = focus.reason or "conversation non confirmée dans Teams"
+            self.log("warn", f"Modification refusée dans « {entity.display_name} » : {reason}")
+            raise ActionError(409, f"Rien n'a été modifié. Raison : {reason}.")
+        with self._lock:
+            cached = self._thread_cache.get(thread_id)
+            for m in reversed(cached[1] if cached else []):
+                if (m.get("id") == target.id) if target.id else same_message(target, m["sender"], m["text"]):
+                    m.update(text=new, edited=True, links=[])
+                    break
+        self._history.pop(thread_id, None)
+        self.log("info", f"Message modifié dans « {entity.display_name} » : {excerpt}")
 
     @contextmanager
     def _reflect(self, action: str, thread_id: Optional[str] = None) -> Iterator[reflection.Run]:
