@@ -185,6 +185,12 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
   - les **non-lus** : dernier message d'un autre plus récent que l'horizon de lecture ;
   - les **nouveaux messages** : changement du dernier message, avec texte complet, id et auteur
     exact ; jamais les miens ni les événements, jamais de rafale au démarrage.
+- **Liste complétée** : la page ne dessine que les lignes qu'elle a chargées. Trame y ajoute, depuis
+  le service, les groupes nommés et les tête-à-tête (nom porté par une seule conversation) actifs
+  depuis 30 jours que la page n'a pas montrés, 150 au plus, sous les ids que la page leur
+  donnerait (`title-19:…`, `name:…`) : rien à migrer quand la page les montre ensuite. Ils sont
+  reliés par construction (lecture, nouveaux messages, gestes par le service). Groupes sans sujet
+  (la page les nomme par leurs membres), conversations masquées, vides ou plus anciennes : non.
 - Les conversations non reliées gardent la détection par aperçu de la page. Si le service refuse,
   tout repasse par la page (aperçus suivis en continu : pas de rafale), puis la synchro repart
   d'une liste complète.
@@ -284,5 +290,6 @@ Jamais un texte, un nom ou une valeur.
 3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
 4. ~~Écritures simples~~ (#128), ~~réponse citée~~ (#138), ~~mentions~~.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
-   ~~nouvelle conversation~~ (#142, #144), ~~recherche dans les fils récents~~.
+   ~~nouvelle conversation~~ (#142, #144), ~~recherche dans les fils récents~~ (#146), ~~liste
+   complétée par le service~~.
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
