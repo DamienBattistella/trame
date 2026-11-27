@@ -64,15 +64,21 @@ function HitRow({ h, onOpen }: { h: MessageHit; onOpen: (hit: MessageHit) => voi
   );
 }
 
-type TeamsSearch = { status: "idle" } | { status: "loading" } | { status: "done"; results: MessageHit[] } | { status: "error"; error: string };
+type TeamsSearch =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "done"; results: MessageHit[]; scope: "recent" | "teams" }
+  | { status: "error"; error: string };
 
-/** Recherche dans le contenu des messages : d'abord ce que Trame a déjà lu, puis, à la
- *  demande, la recherche de Teams pour les messages plus anciens. */
+/** Recherche dans le contenu des messages : d'abord ce que Trame a déjà lu ; puis, à la
+ *  demande, les conversations récentes de Teams (service de chat, rien d'ouvert) ; puis, à la
+ *  demande encore, la recherche de Teams sur tout l'historique (par la fenêtre Teams). */
 export function MessageSearchResults({ trame, query, onOpen }: { trame: Trame; query: string; onOpen: (hit: MessageHit) => void }) {
   const [results, setResults] = useState<MessageHit[] | null>(null);
   const [scope, setScope] = useState<SearchScope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [teams, setTeams] = useState<TeamsSearch>({ status: "idle" });
+  const [history, setHistory] = useState<TeamsSearch>({ status: "idle" });
   const q = query.trim();
   const live = useRef(q);
   live.current = q;
@@ -82,6 +88,7 @@ export function MessageSearchResults({ trame, query, onOpen }: { trame: Trame; q
     setResults(null);
     setError(null);
     setTeams({ status: "idle" });
+    setHistory({ status: "idle" });
     if (tooShort) return;
     let current = true;
     const timer = setTimeout(async () => {
@@ -97,19 +104,60 @@ export function MessageSearchResults({ trame, query, onOpen }: { trame: Trame; q
     };
   }, [q]);
 
-  const searchTeams = async () => {
+  const run = async (deep: boolean) => {
     const asked = q;
-    setTeams({ status: "loading" });
-    const res = await trame.searchTeams(asked);
+    const set = deep ? setHistory : setTeams;
+    set({ status: "loading" });
+    const res = await trame.searchTeams(asked, deep);
     if (live.current !== asked) return;
-    setTeams(res.ok ? { status: "done", results: res.results } : { status: "error", error: res.error });
+    set(res.ok ? { status: "done", results: res.results, scope: res.scope } : { status: "error", error: res.error });
   };
 
   if (tooShort) return null;
 
-  // Un message que Trame a déjà lu n'est montré qu'une fois.
-  const known = new Set((results ?? []).map((h) => `${h.threadId}|${fold(h.text)}`));
-  const older = teams.status === "done" ? teams.results.filter((h) => !known.has(`${h.threadId}|${fold(h.text)}`)) : [];
+  // Un message n'est montré qu'une fois : déjà lu, puis récent, puis historique.
+  const key = (h: MessageHit) => `${h.threadId}|${fold(h.text)}`;
+  const known = new Set((results ?? []).map(key));
+  const fresh = teams.status === "done" ? teams.results.filter((h) => !known.has(key(h))) : [];
+  for (const h of fresh) known.add(key(h));
+  const older = history.status === "done" ? history.results.filter((h) => !known.has(key(h))) : [];
+  // Le service manquait : la première étape a déjà été la recherche de Teams.
+  const firstWasTeams = teams.status === "done" && teams.scope === "teams";
+  const WINDOW = "Recherche dans Teams… quelques secondes, dans la fenêtre Teams de Trame.";
+
+  const block = (state: TeamsSearch, items: MessageHit[], label: string, loading: string, none: string, prefix: string) =>
+    state.status === "idle" ? null : (
+      <div className="mt-2 flex flex-col gap-1">
+        <Heading icon={History} label={label} count={state.status === "loading" ? null : items.length} />
+        {state.status === "loading" && <p className="px-3 py-1 text-xs text-muted-foreground">{loading}</p>}
+        {state.status === "error" && <p className="px-3 py-1 text-xs text-muted-foreground">{state.error}</p>}
+        {state.status === "done" && (
+          <ul className="flex flex-col">
+            {items.map((h, i) => (
+              <HitRow key={`${prefix}-${i}`} h={h} onOpen={onOpen} />
+            ))}
+            {items.length === 0 && (
+              <li className="px-3 py-1 text-xs text-muted-foreground">{state.results.length ? "Rien de plus que les messages déjà montrés." : none}</li>
+            )}
+          </ul>
+        )}
+      </div>
+    );
+  const button = (label: string, onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mx-2 mt-2 flex items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium text-link transition-colors hover:bg-accent/60"
+    >
+      <Search className="size-3.5" /> {label}
+    </button>
+  );
+  const hint =
+    teams.status === "idle"
+      ? "D'abord les derniers messages de tes conversations récentes, sans rien ouvrir dans Teams."
+      : teams.status === "done" && !firstWasTeams && history.status === "idle"
+        ? "Cherché dans les derniers messages des conversations récentes. Tout l'historique passe par la recherche de Teams : sa fenêtre s'ouvre quelques secondes, puis rouvre la conversation affichée."
+        : "Recherche de Teams : tout l'historique que Teams garde, ses premiers résultats seulement (25 au plus).";
 
   return (
     <section aria-label="Messages trouvés" className="flex flex-col gap-1">
@@ -135,40 +183,19 @@ export function MessageSearchResults({ trame, query, onOpen }: { trame: Trame; q
         </p>
       )}
 
-      {teams.status === "idle" ? (
-        <button
-          type="button"
-          onClick={searchTeams}
-          className="mx-2 mt-2 flex items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium text-link transition-colors hover:bg-accent/60"
-        >
-          <Search className="size-3.5" /> Chercher aussi dans Teams
-        </button>
-      ) : (
-        <div className="mt-2 flex flex-col gap-1">
-          <Heading icon={History} label="Dans Teams, plus anciens" count={teams.status === "loading" ? null : older.length} />
-          {teams.status === "loading" && (
-            <p className="px-3 py-1 text-xs text-muted-foreground">Recherche dans Teams… quelques secondes, dans la fenêtre Teams de Trame.</p>
+      {teams.status === "idle"
+        ? button("Chercher aussi dans Teams", () => run(false))
+        : block(
+            teams,
+            fresh,
+            firstWasTeams ? "Dans Teams, tout l'historique" : "Dans Teams, conversations récentes",
+            firstWasTeams ? WINDOW : "Recherche dans les conversations récentes…",
+            firstWasTeams ? `Teams ne trouve aucun message contenant « ${q} ».` : `Aucun message récent ne contient « ${q} ».`,
+            "teams",
           )}
-          {teams.status === "error" && <p className="px-3 py-1 text-xs text-muted-foreground">{teams.error}</p>}
-          {teams.status === "done" && (
-            <ul className="flex flex-col">
-              {older.map((h, i) => (
-                <HitRow key={`teams-${i}`} h={h} onOpen={onOpen} />
-              ))}
-              {older.length === 0 && (
-                <li className="px-3 py-1 text-xs text-muted-foreground">
-                  {teams.results.length ? "Rien de plus que les messages déjà lus." : `Teams ne trouve aucun message contenant « ${q} ».`}
-                </li>
-              )}
-            </ul>
-          )}
-        </div>
-      )}
-      <p className="px-3 pt-1 text-xs text-muted-foreground">
-        {teams.status === "idle"
-          ? "La recherche de Teams couvre tout l'historique que Teams garde. Elle passe par la fenêtre Teams de Trame quelques secondes, puis y rouvre la conversation affichée."
-          : "Recherche de Teams : tout l'historique que Teams garde, ses premiers résultats seulement (25 au plus)."}
-      </p>
+      {teams.status === "done" && !firstWasTeams && history.status === "idle" && button("Chercher dans tout l'historique de Teams", () => run(true))}
+      {block(history, older, "Dans Teams, tout l'historique", WINDOW, `Teams ne trouve aucun message contenant « ${q} ».`, "history")}
+      <p className="px-3 pt-1 text-xs text-muted-foreground">{hint}</p>
     </section>
   );
 }

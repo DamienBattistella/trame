@@ -1590,42 +1590,64 @@ class Watcher:
         who = f"{ref.sender} : " if ref.sender else ""
         return f", en réponse à « {who}{ref.text[:40]} »"
 
-    def search_teams(self, query: str, limit: int = 25) -> dict:
-        """Teams' own search, for what Trame has not read: every conversation, the whole
-        history Teams keeps. Teams' results page shows for a few seconds in Trame's Teams
-        window, then the chat list comes back. Nothing is typed anywhere else."""
+    def search_teams(self, query: str, limit: int = 25, deep: bool = False) -> dict:
+        """Teams, for what Trame has not read, in two steps. First (deep=False), when the driver
+        can: the last messages of the most recent conversations, read on Teams' chat service,
+        nothing opened in Trame's Teams window (scope « recent »). Then, on demand (deep=True),
+        Teams' own search: every conversation, the whole history Teams keeps; its results page
+        shows for a few seconds in Trame's Teams window (scope « teams »)."""
         q = " ".join((query or "").split())
         if len(searchmod.fold(q)) < 2:
             raise ActionError(422, "Tape au moins deux caractères.")
-        if not self.driver.can_search_messages:
-            raise ActionError(501, f"Recherche dans Teams impossible : {self.driver.search_messages_unsupported}.")
-        with self._ui_lock:
-            if self._screen_share_guarded():
-                self.state.screen_sharing = True
-                raise ActionError(409, "Partage d'écran en cours : Trame ne lance pas de recherche dans Teams.")
+        found: Optional[list[dict]] = None
+        scope = "teams"
+        recent = getattr(self.driver, "search_recent", None)
+        if not deep and callable(recent) and getattr(self.driver, "can_search_recent", False):
+            # Nothing is shown in Teams' window: no UI lock, no screen-share refusal.
             try:
-                with telemetry.span("teams.search", limit=limit) as sp:
-                    found = self.driver.search_messages(q, limit)
+                with telemetry.span("teams.search", limit=limit, scope="recent") as sp:
+                    found = recent(q, limit)
                     telemetry.set_attrs(sp, results=len(found))
+                scope = "recent"
             except Exception as e:
-                self.log("warn", f"Recherche dans Teams impossible : {e}")
-                raise ActionError(502, f"Recherche dans Teams impossible : {e}")
+                self.log("warn", f"Recherche dans les conversations récentes impossible ({e}) : recherche de Teams")
+                found = None
+        if found is None:
+            if not self.driver.can_search_messages:
+                raise ActionError(501, f"Recherche dans Teams impossible : {self.driver.search_messages_unsupported}.")
+            with self._ui_lock:
+                if self._screen_share_guarded():
+                    self.state.screen_sharing = True
+                    raise ActionError(409, "Partage d'écran en cours : Trame ne lance pas de recherche dans Teams.")
+                try:
+                    with telemetry.span("teams.search", limit=limit, scope="teams") as sp:
+                        found = self.driver.search_messages(q, limit)
+                        telemetry.set_attrs(sp, results=len(found))
+                except Exception as e:
+                    self.log("warn", f"Recherche dans Teams impossible : {e}")
+                    raise ActionError(502, f"Recherche dans Teams impossible : {e}")
+        known = {w.thread_id: w for w in self.state.watchlist}
         results = []
         for r in found:
             name = r.get("conversation") or ""
-            entity = next((w for w in self.state.watchlist if name and rail_label.same_name(w.display_name, name)), None)
+            # The chat service names the conversation by its id: no guess on the name.
+            entity = known.get(r.get("thread_id") or "")
+            if entity is None:
+                entity = next((w for w in self.state.watchlist if name and rail_label.same_name(w.display_name, name)), None)
             if entity is None and not name:
                 # Your own message in a private chat: Teams does not name the other person,
                 # but Trame may have read that very message already.
                 tid = self.archive.thread_of(r.get("text") or "")
-                entity = next((w for w in self.state.watchlist if w.thread_id == tid), None)
-                name = entity.display_name if entity else ""
+                entity = known.get(tid or "")
+            if entity is not None:
+                name = entity.display_name
             results.append(searchmod.hit(entity.thread_id if entity else None, name or "Conversation privée",
                                          r.get("sender") or "", r.get("at") or "", bool(r.get("mine")),
                                          r.get("text") or "", q))
-        self.log("info", f"Recherche dans Teams : {len(results)} message{'s' if len(results) > 1 else ''} trouvé"
+        where = "les conversations récentes" if scope == "recent" else "Teams"
+        self.log("info", f"Recherche dans {where} : {len(results)} message{'s' if len(results) > 1 else ''} trouvé"
                          f"{'s' if len(results) > 1 else ''}")
-        return {"results": results}
+        return {"results": results, "scope": scope}
 
     def _attach_allowed(self, files: Sequence[Attachment], mentions: Optional[Sequence[str]] = None) -> None:
         if files and not self.driver.can_attach:

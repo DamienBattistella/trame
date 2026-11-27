@@ -1713,16 +1713,18 @@ export function useTrame() {
     if (!connectedRef.current) return demo(300, { directory: DEMO_TRANSCRIPTS_DIR });
     return request("POST", `/api/reports/${encodeURIComponent(id)}/open-folder`);
   };
-  /** Recherche native de Teams : tout l'historique, y compris ce que Trame n'a pas lu. */
-  const searchTeams = async (q: string): Promise<Result<{ results: MessageHit[] }>> => {
+  /** Recherche dans Teams, pour ce que Trame n'a pas lu. deep=false : les conversations
+   *  récentes, lues sur le service de chat sans rien ouvrir (scope « recent », ou « teams » si
+   *  le service manque) ; deep=true : la recherche de Teams, tout l'historique, par la page. */
+  const searchTeams = async (q: string, deep = false): Promise<Result<{ results: MessageHit[]; scope: "recent" | "teams" }>> => {
     if (!connectedRef.current) {
       if (!demoRef.current) return { ok: false, error: OFFLINE };
-      await wait(1800);
-      return { ok: true, results: demoTeamsSearch(q, stateRef.current.watchlist) };
+      await wait(deep ? 1800 : 600);
+      return { ok: true, results: demoTeamsSearch(q, stateRef.current.watchlist), scope: deep ? "teams" : "recent" };
     }
-    const res = await request<{ results: any[] }>("POST", "/api/search/teams", { q });
+    const res = await request<{ results: any[]; scope?: string }>("POST", "/api/search/teams", { q, deep });
     if (!res.ok) return res;
-    return { ok: true, results: res.results.map(mapHit) };
+    return { ok: true, results: res.results.map(mapHit), scope: res.scope === "recent" ? "recent" : "teams" };
   };
   /** Envoi à la main, avec les fichiers choisis par l'utilisateur (jamais en mode Auto). */
   /** `queued` : Teams n'était pas prêt, le message attend dans la file d'envoi et partira seul. */

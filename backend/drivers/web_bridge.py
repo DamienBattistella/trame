@@ -546,8 +546,10 @@ class WebBridgeDriver(TeamsDriver):
         for r in res.get("results") or []:
             text = (r.get("text") or "").strip() if isinstance(r, dict) else ""
             if text:
+                thread = str(r.get("thread") or "")
                 out.append({"conversation": _one_line(r.get("conversation"), 200), "sender": _one_line(r.get("sender"), 200),
-                            "mine": bool(r.get("mine")), "at": _one_line(r.get("at"), 40), "text": text[:4000]})
+                            "mine": bool(r.get("mine")), "at": _one_line(r.get("at"), 40), "text": text[:4000],
+                            "teams_id": thread if CHAT_ID.fullmatch(thread) else None})
         return out[:limit]
 
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:

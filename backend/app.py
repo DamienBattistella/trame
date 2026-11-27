@@ -266,6 +266,9 @@ class StartBody(BaseModel):
 class SearchBody(BaseModel):
     q: str = Field(max_length=200)
     limit: int = Field(default=25, ge=1, le=50)
+    # False : d'abord les conversations récentes sur le service de chat (rien d'ouvert) ;
+    # True : la recherche de Teams, tout l'historique, par la fenêtre Teams de Trame.
+    deep: bool = False
 
 
 class StatusBody(BaseModel):
@@ -515,7 +518,7 @@ def create_app(
 
     @app.post("/api/search/teams")
     def search_teams(body: SearchBody):
-        return {"ok": True, **watcher.search_teams(body.q, body.limit)}
+        return {"ok": True, **watcher.search_teams(body.q, body.limit, body.deep)}
 
     @app.get("/api/me/status")
     def get_my_status():
