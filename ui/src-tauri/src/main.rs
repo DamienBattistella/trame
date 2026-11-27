@@ -392,6 +392,20 @@ fn teams_web_hide(app: AppHandle) {
     }
 }
 
+/// Whether the user can see the Teams window: on screen, or minimized to the
+/// taskbar. A parked window is "shown" for Windows but sits off-screen.
+#[tauri::command]
+fn teams_web_visible(app: AppHandle) -> bool {
+    let Some(w) = app.get_webview_window(TEAMS_WEB) else { return false };
+    if !w.is_visible().unwrap_or(false) {
+        return false;
+    }
+    if w.is_minimized().unwrap_or(false) {
+        return true;
+    }
+    w.outer_position().map(|p| p.x > -30000).unwrap_or(false)
+}
+
 /// Teams intégré turned off: close the signed-in Teams web session too.
 #[tauri::command]
 fn teams_web_close(app: AppHandle) {
@@ -499,6 +513,7 @@ fn main() {
             set_update_check_minutes,
             teams_web_open,
             teams_web_hide,
+            teams_web_visible,
             teams_web_close,
             teams_web_eval,
             teams_bridge_reply,
