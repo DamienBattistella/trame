@@ -789,7 +789,7 @@ const DEMO_TEAMS_API: TeamsApiStatus = {
     ["list", "read", "watch", "unread", "presence", "my_status", "search_people", "search_messages", "meetings", "transcript",
       "send", "start_chat", "react", "mark_read", "delete", "set_status", "set_note"].map((k) => [
       k,
-      ["list", "read", "presence"].includes(k)
+      k === "read"
         ? { via: "api" as const, reason: null, at: "10:02:11" }
         : { via: "page" as const, reason: "via la page Teams", at: "10:02:12" },
     ]),

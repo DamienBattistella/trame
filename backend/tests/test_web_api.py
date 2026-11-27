@@ -31,11 +31,42 @@ def test_webapi_delegates_everything_to_the_page_driver():
     assert inner.last_error == "oops"
 
 
-def test_webapi_routes_lists_actions_all_via_page_for_now():
+def test_webapi_routes_lists_every_action_read_on_the_chat_service():
     d = WebApiDriver(FakeInner())
     routes = d.routes()
     assert set(routes) == set(ACTIONS)
-    assert all(r["via"] == "page" for r in routes.values())
+    assert routes["read"]["via"] == "api"
+    assert all(r["via"] == "page" for a, r in routes.items() if a != "read")
+
+
+class ApiReader(FakeInner):
+    def __init__(self, fail=None):
+        super().__init__()
+        self.fail = fail
+        self.calls = []
+
+    def read_history_api(self, thread_id, last_n, since=None):
+        self.calls.append((thread_id, last_n, since))
+        if self.fail:
+            raise RuntimeError(self.fail)
+        return (["m1", "m2"], True)
+
+
+def test_read_history_direct_uses_the_chat_service_and_reports_the_route():
+    inner = ApiReader()
+    d = WebApiDriver(inner)
+    assert d.read_history_direct("19:a@thread.v2", 30) == (["m1", "m2"], True)
+    assert inner.calls == [("19:a@thread.v2", 30, None)]
+    assert d.routes()["read"]["via"] == "api" and d.routes()["read"]["reason"] is None
+
+
+def test_read_history_direct_falls_back_to_the_page_with_the_reason():
+    d = WebApiDriver(ApiReader(fail="service de chat refusé (HTTP 403)"))
+    assert d.read_history_direct("19:a@thread.v2", 30) is None
+    route = d.routes()["read"]
+    assert route["via"] == "page" and "HTTP 403" in route["reason"]
+    # Pilote de page sans lecture API : None, jamais d'exception.
+    assert WebApiDriver(FakeInner()).read_history_direct("19:a@thread.v2", 30) is None
 
 
 def test_webapi_diagnose_adds_signing_health_from_the_bridge_selftest():

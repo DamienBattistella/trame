@@ -2555,7 +2555,11 @@ class Watcher:
     def _read_history_focused(self, thread_id: str, name: str, last_n: int, purpose: str = "Résumé",
                               since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
         """Open the conversation just long enough to read it, then reopen the previous one.
-        Also tells whether the start of the conversation was reached."""
+        Also tells whether the start of the conversation was reached. A driver that can read
+        a thread without opening it (service de chat de Teams) is tried first."""
+        direct = self._read_direct(thread_id, name, last_n, purpose, since)
+        if direct is not None:
+            return direct
         with self._ui_lock:
             if self.driver._current() != thread_id and self._screen_share_guarded():
                 self.state.screen_sharing = True
@@ -2578,6 +2582,24 @@ class Watcher:
         if not focus.ok:
             self.log("warn", f"{purpose} impossible pour {name} : {focus.reason or 'conversation non confirmée dans Teams'}")
             raise ActionError(409, f"Impossible d'ouvrir la conversation « {name} » dans Teams.")
+        return msgs, top
+
+    def _read_direct(self, thread_id: str, name: str, last_n: int, purpose: str,
+                     since: Optional[datetime] = None) -> Optional[tuple[list[IncomingMessage], bool]]:
+        """The thread read without opening it in Teams (so neither the user's view nor the
+        conversation's read state change). None when the driver cannot: read the page then."""
+        read = getattr(self.driver, "read_history_direct", None)
+        if not callable(read):
+            return None
+        with telemetry.span("teams.read", conversation=name, purpose=purpose, last_n=last_n, via="api") as sp:
+            out = read(thread_id, last_n, since)
+            if out is None:
+                telemetry.set_attrs(sp, fallback=True)
+                return None
+            msgs, top = out
+            self.archive.add(thread_id, msgs)
+            self._track(thread_id, msgs)
+            telemetry.set_attrs(sp, confirmed=True, messages=len(msgs), top=top)
         return msgs, top
 
     def cached_brief(self, thread_id: str) -> Optional[Brief]:
@@ -3143,6 +3165,21 @@ class Watcher:
     # --- helpers ---
     HISTORY_TTL = 120.0
 
+    def _read_context_focused(self, thread_id: str, last_n: int) -> Optional[list[IncomingMessage]]:
+        """The last messages read in the page: the conversation is opened just long enough,
+        then the previous one reopened. None during a screen share (nothing is opened)."""
+        with self._ui_lock:
+            if self.driver._current() == thread_id:
+                return self.driver.read_context(thread_id, last_n)
+            if self._screen_share_guarded():
+                return None
+            msgs: list[IncomingMessage] = []
+            with self.driver.focused(thread_id, restore=True) as focus:
+                if focus.ok:
+                    msgs = self.driver.read_context(thread_id, last_n)
+            self._warn_if_not_restored(focus)
+            return msgs
+
     def _summary(self, thread_id: str, last_n: int) -> str:
         """History for drafting. Opens the conversation just long enough to read it
         and reopens the previous one; reused for HISTORY_TTL so a burst of messages
@@ -3151,17 +3188,16 @@ class Watcher:
         if cached and time.monotonic() - cached[0] < self.HISTORY_TTL:
             return cached[1]
         msgs: list[IncomingMessage] = []
+        read = getattr(self.driver, "read_history_direct", None)
         try:
-            with self._ui_lock:
-                if self.driver._current() == thread_id:
-                    msgs = self.driver.read_context(thread_id, last_n)
-                elif self._screen_share_guarded():
+            # Lu sans ouvrir la conversation quand le pilote le peut, sinon par la page.
+            direct = read(thread_id, last_n) if callable(read) else None
+            if direct is not None:
+                msgs = direct[0]
+            else:
+                msgs = self._read_context_focused(thread_id, last_n)
+                if msgs is None:
                     return ""
-                else:
-                    with self.driver.focused(thread_id, restore=True) as focus:
-                        if focus.ok:
-                            msgs = self.driver.read_context(thread_id, last_n)
-                    self._warn_if_not_restored(focus)
         except Exception:
             return ""
         self.archive.add(thread_id, msgs)

@@ -42,6 +42,8 @@ AUTH_HEADER = re.compile(r"^(authorization|authentication|cookie|x-skypetoken|x-
 CHAT_PATHS = re.compile(r"/v1/users/ME/conversations(/(?!\.{1,2}(/|$))(?![^/]*%(2[fF]|5[cC]))[A-Za-z0-9%._~-]+"
                         r"(/messages(/\d{1,20})?)?)?")
 CHAT_QUERY_KEYS = frozenset({"view", "pageSize", "startTime", "targetType", "syncState"})
+# Id d'une conversation Teams (groupe, réunion, tête-à-tête) : « 19:…@thread.v2 », « 19:…@unq.gbl.spaces ».
+CHAT_ID = re.compile(r"19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)")
 
 
 def _files(raw: Any) -> list[FileRef]:
@@ -481,7 +483,6 @@ class WebBridgeDriver(TeamsDriver):
 
     def read_history(self, thread_id: str, last_n: int,
                      since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
-        surface = self._kinds.get(thread_id, Surface.dm)
         # Going back in the history scrolls Teams up until enough messages were seen, or
         # until a message older than `since` (epoch ms, read from each message's date).
         args: dict[str, Any] = {"last": last_n}
@@ -491,8 +492,41 @@ class WebBridgeDriver(TeamsDriver):
         raw, top = res.get("messages") or [], bool(res.get("top"))
         # A meeting chat: the page gives the meeting's join link, checked before keeping it.
         self._note_meeting(thread_id, res.get("meeting"))
+        return self._messages(thread_id, raw), top
+
+    def read_history_api(self, thread_id: str, last_n: int,
+                         since: Optional[datetime] = None) -> tuple[list[IncomingMessage], bool]:
+        """Le fil lu sur le service de chat de Teams, DANS la page, sans ouvrir la conversation
+        (donc sans la marquer comme lue). Même forme que read_history. Lève ApiError si la
+        conversation n'a pas d'id Teams ou si le service refuse : l'appelant lit alors la page."""
+        chat = self.chat_id(thread_id)
+        if not chat:
+            raise self.ApiError("conversation sans identifiant Teams")
+        args: dict[str, Any] = {"thread": chat, "last": last_n}
+        if since is not None:
+            args["since"] = int(since.timestamp() * 1000)
+        res = self._rpc("chatread", timeout=40, **args)
+        if not isinstance(res, dict):
+            raise self.ApiError("réponse illisible de la page")
+        if not res.get("ok"):
+            raise self.ApiError(res.get("error") or "lecture refusée par le service de chat", status=res.get("status"))
+        return self._messages(thread_id, res.get("messages") or []), bool(res.get("top"))
+
+    @staticmethod
+    def chat_id(thread_id: str) -> Optional[str]:
+        """L'id de la conversation pour le service de chat (« 19:…@thread.v2 »). Les lignes de
+        la liste de Teams le préfixent (« title-19:… ») ; une conversation repérée seulement par
+        son nom (« name:… », un tête-à-tête dont la page ne montre pas l'id) n'en a pas : None."""
+        tid = str(thread_id or "")
+        tid = tid[len("title-"):] if tid.startswith("title-") else tid
+        return tid if CHAT_ID.fullmatch(tid) else None
+
+    def _messages(self, thread_id: str, raw: list) -> list[IncomingMessage]:
+        """Messages bruts de la page (lecture DOM ou service de chat) vers le modèle."""
+        surface = self._kinds.get(thread_id, Surface.dm)
         msgs = []
         for m in raw:
+            m = m if isinstance(m, dict) else {}
             text = (m.get("text") or "").strip()
             files, images = _files(m.get("files")), _images(m.get("images"))
             links, cards = _links(m.get("links")), _cards(m.get("cards"))
@@ -505,7 +539,7 @@ class WebBridgeDriver(TeamsDriver):
                                         reactions=[r for r in (m.get("reactions") or []) if r in REACTIONS],
                                         files=files, images=images, seen=_seen(m.get("status")), deleted=deleted,
                                         links=[] if deleted else links, cards=[] if deleted else cards))
-        return msgs, top
+        return msgs
 
     @staticmethod
     def _ref(target: MessageRef) -> dict:
