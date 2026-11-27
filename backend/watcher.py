@@ -167,6 +167,8 @@ class Watcher:
         self._check_lock = threading.Lock()
         self._landmark_marks: dict[str, dict] = {}
         driver.on_page_failure = self._check_wake.set
+        # Favoris : ceux de Teams (section « Favoris »), relus à chaque coup d'œil à la liste.
+        driver.on_favorites = self._sync_teams_favorites
         # Relances : tes questions restées sans réponse (suivi gardé sur disque).
         self.follow_ups = followmod.Tracker(cfgmod.HOME / "follow_ups.json")
         self._follow_up_failed: dict[str, float] = {}
@@ -2006,8 +2008,30 @@ class Watcher:
         self._persist_watchlist()
 
     # --- favoris : épinglés en haut de la liste, dans l'ordre choisi ---
+    def _sync_teams_favorites(self, teams: list[str]) -> None:
+        """Les favoris de Trame sont ceux de Teams : on retire ceux que Teams n'a plus, on
+        ajoute à la suite ceux qu'il a en plus (dans son ordre). L'ordre choisi dans Trame
+        est gardé pour les autres."""
+        with self._lock:
+            current = self.state.favorites
+            wanted = set(teams)
+            merged = [t for t in current if t in wanted] + [t for t in _unique(teams) if t not in current]
+            if merged == current:
+                return
+            self.state.favorites = merged
+        self._persist_favorites()
+        self.log("info", f"Favoris alignés sur Teams ({len(merged)})")
+
     def set_favorite(self, thread_id: str, favorite: bool) -> list[str]:
-        """Ajoute (en dernier) ou retire un favori. Rien à voir avec « Suivie » ni le mode."""
+        """Ajoute (en dernier) ou retire un favori. Rien à voir avec « Suivie » ni le mode.
+        Avec Teams intégré, le favori est d'abord posé (ou retiré) dans Teams : refusé là-bas,
+        rien ne change ici, sinon la synchro le déferait au prochain coup d'œil."""
+        if favorite:
+            with self._lock:
+                self._entity(thread_id)
+        if getattr(self.driver, "supports_teams_favorites", False):
+            if not self.driver.set_teams_favorite(thread_id, favorite):
+                raise ActionError(502, getattr(self.driver, "last_error", None) or "Teams a refusé le favori.")
         with self._lock:
             if favorite:
                 self._entity(thread_id)

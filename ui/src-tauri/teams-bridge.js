@@ -579,6 +579,9 @@
     ["search_tab", "menu", '[data-tid="messages-tab"]'],
     ["attach_menu", "menu", ''],
     ["discard_confirm", "menu", '[data-tid="messagedraft-discard-confirm"]'],
+    ["fav_move", "menu", '[data-tid="move-to-menu-item"], [data-testid="move-to-menu-item"]'],
+    ["fav_section", "menu", '[data-tid="move-to-sub-menu-item"], [data-testid="move-to-sub-menu-item"]'],
+    ["fav_remove", "menu", '[data-tid="remove-item-from-section-menu-item"], [data-testid="remove-item-from-section-menu-item"]'],
   ];
   const LM = Object.fromEntries(LANDMARKS.map(([key, , sel]) => [key, sel]));
   // Ce que les opérations ont constaté en cherchant un repère de menu : vrai trouvé, faux
@@ -642,13 +645,23 @@
     const last = icons[icons.length - 1];
     return last ? statusOf(last.closest(MSGS) || last.parentElement) : "";
   };
+  // Section « Favoris » de Teams : un dossier de la liste dont la valeur finit par
+  // « ~Favorites », quelle que soit la langue ; ses conversations portent « ~Favorites/ ».
+  const FAV_FOLDER = '[role="treeitem"][data-conversation-folder="true"][data-fui-tree-item-value$="~Favorites"]';
+  const isFolder = (el) => el.getAttribute("data-conversation-folder") === "true";
+  const inFavorites = (el) => (el.getAttribute("data-fui-tree-item-value") || "").includes("~Favorites/");
+  const favFolderName = () =>
+    label(document.querySelector(`${FAV_FOLDER} [data-testid="conversation-folder-header"]`)) || "";
   const railItems = () => {
     const open = titleName();
     const openEl = open ? findItem(open) : null;
     return items().map((el) => ({
       label: label(el),
       aria: el.getAttribute("aria-expanded") === "true" ? "expanded=true" : "",
-      id: el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
+      // Un dossier contient ses conversations : jamais l'identifiant de la première.
+      id: isFolder(el) ? "" : el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : ""),
+      ...(isFolder(el) ? { folder: el.matches(FAV_FOLDER) ? "favorites" : "section" } : {}),
+      ...(inFavorites(el) ? { fav: true } : {}),
       presence: presenceOf(el),
       typing: Boolean(el.querySelector(TYPING_ROW)),
       // La conversation ouverte dans cette fenêtre : ce que montre son fil.
@@ -2324,6 +2337,55 @@
       entry().click();
       if (await waitFor(() => !unread(), 3000)) return { ok: true };
       return { ok: false, error: "toujours non lue après le clic" };
+    },
+    // Favori Teams : « Déplacer vers la section › Favoris » pour l'ajouter, « Supprimer de la
+    // section » pour le retirer, depuis le menu contextuel de la ligne. Réussi seulement si
+    // la ligne est ensuite (ou n'est plus) dans le dossier Favoris.
+    favorite: async ({ name, favorite }) => {
+      const want = Boolean(favorite);
+      const row = () => {
+        const el = findItem(name);
+        return el && !el.querySelector('[role="treeitem"]') ? el : null;
+      };
+      if (!row()) return { ok: false, error: `« ${name} » absente de la liste` };
+      if (inFavorites(row()) === want) return { ok: true, already: true };
+      const close = () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+      const fail = (error) => {
+        close();
+        close();
+        return { ok: false, error };
+      };
+      const item = row();
+      item.scrollIntoView({ block: "nearest" });
+      const r = item.getBoundingClientRect();
+      item.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, view: window, button: 2, clientX: r.x + 20, clientY: r.y + 10 })
+      );
+      const inMenu = (sel) => Array.from(document.querySelectorAll(`[role="menu"] :is(${sel})`)).find(visible) || null;
+      if (want) {
+        if (!seen("fav_move", await waitFor(() => inMenu(LM.fav_move), 2000))) return fail("entrée « Déplacer vers la section » introuvable");
+        const folder = norm(favFolderName());
+        if (!folder) return fail("section Favoris absente de la liste Teams");
+        const move = inMenu(LM.fav_move);
+        const section = () => Array.from(document.querySelectorAll(`[role="menu"] :is(${LM.fav_section})`)).find((el) => norm(label(el)) === folder) || null;
+        // Le sous-menu s'ouvre au survol ou au clic, selon la version de Teams.
+        for (const act of [
+          () => move.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, view: window })),
+          () => move.click(),
+          () => move.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", keyCode: 39, bubbles: true })),
+        ]) {
+          if (section()) break;
+          act();
+          await waitFor(section, 1200);
+        }
+        if (!seen("fav_section", section())) return fail(`entrée « ${favFolderName()} » introuvable dans « Déplacer vers la section »`);
+        section().click();
+      } else {
+        if (!seen("fav_remove", await waitFor(() => inMenu(LM.fav_remove), 2000))) return fail("entrée « Supprimer de la section » introuvable");
+        inMenu(LM.fav_remove).click();
+      }
+      if (await waitFor(() => Boolean(row()) && inFavorites(row()) === want, 4000)) return { ok: true };
+      return { ok: false, error: want ? "toujours hors des Favoris après le clic" : "toujours dans les Favoris après le clic" };
     },
     // Teams ne dessine que les derniers messages, et retire du DOM ceux qui sortent de
     // l'écran. Pour remonter plus loin, on fait défiler le fil vers le haut en cumulant

@@ -112,6 +112,7 @@ class WebBridgeDriver(TeamsDriver):
     supports_reply = True
     supports_mentions = True
     supports_delete = True
+    supports_teams_favorites = True
     POLL_WAIT = 20.0
 
     """« Teams intégré » (expérimental) : Teams web (teams.microsoft.com) in a hidden
@@ -135,6 +136,7 @@ class WebBridgeDriver(TeamsDriver):
         self._kinds: dict[str, Surface] = {}
         self._title: Optional[str] = None
         self._previews = PreviewWatcher()
+        self._favorites: Optional[list[str]] = None
 
     # --- relay side (HTTP endpoints) ---
     def next_command(self, wait: float = 20.0) -> Optional[dict]:
@@ -222,9 +224,13 @@ class WebBridgeDriver(TeamsDriver):
         out = []
         seen: set[str] = set()
         raw = self._rpc("list", timeout=20, deep=True) if deep else self._rpc("list")
+        # Section Favoris : son en-tête dit si elle est dépliée ; repliée, ses conversations
+        # ne sont pas dessinées et la liste lue ne dit rien des favoris.
+        folder = next((f for f in raw or [] if f.get("folder") == "favorites"), None)
+        favorites: Optional[list[str]] = [] if folder and "expanded=true" in (folder.get("aria") or "") else None
         for it in raw or []:
             label = rail_label.parse(it.get("label") or "")
-            if not label.name or rail_label.is_structural(label.name, it.get("aria") or ""):
+            if it.get("folder") or not label.name or rail_label.is_structural(label.name, it.get("aria") or ""):
                 continue
             thread_id = rail_label.stable_id(it.get("id") or "") or f"name:{label.name}"
             if thread_id in seen:
@@ -244,7 +250,39 @@ class WebBridgeDriver(TeamsDriver):
             out.append({**it, "thread_id": thread_id, "parsed": label})
             self._names[thread_id] = label.name
             self._kinds[thread_id] = label.surface
+            if favorites is not None and it.get("fav"):
+                favorites.append(thread_id)
+        if favorites is not None:
+            self._note_favorites(favorites)
         return out
+
+    def _note_favorites(self, favorites: list[str]) -> None:
+        changed = favorites != self._favorites
+        self._favorites = favorites
+        hook = self.on_favorites
+        if changed and hook is not None:
+            try:
+                hook(list(favorites))
+            except Exception:
+                pass
+
+    def teams_favorites(self) -> Optional[list[str]]:
+        return list(self._favorites) if self._favorites is not None else None
+
+    def set_teams_favorite(self, thread_id: str, favorite: bool) -> bool:
+        try:
+            res = self._rpc("favorite", name=self._name(thread_id), favorite=bool(favorite), timeout=12) or {}
+        except Exception as e:
+            self.last_error = str(e)
+            return False
+        if not res.get("ok"):
+            self.last_error = f"Teams intégré : {res.get('error') or 'favori refusé'}"
+            return False
+        try:
+            self._items()  # relit la section Favoris : le moteur s'aligne tout de suite
+        except Exception:
+            pass
+        return True
 
     def list_all_conversations(self) -> list[WatchEntity]:
         """The whole chat list: Teams only draws its beginning until it is scrolled."""
