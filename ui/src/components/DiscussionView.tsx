@@ -432,7 +432,8 @@ export function DiscussionView({
     setFresher(null);
     setReview(null);
     setUndo(null);
-    setReplyTo(null);
+    // Une réponse préparée pour un message précis arrive avec sa citation (retirable).
+    setReplyTo(caps.reply && draft?.replyTo ? draft.replyTo : null);
     setCheck(null);
     setReacting(null);
     setEdge(null);

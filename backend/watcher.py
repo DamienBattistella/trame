@@ -1082,7 +1082,8 @@ class Watcher:
             pass
         return self.state.my_presence == "presenting"
 
-    def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None) -> None:
+    def _queue_draft(self, msg: IncomingMessage, proposal: str, mode: str, gh_ref: str | None,
+                     reply_to: Optional[MessageRef] = None) -> None:
         with self._lock:
             # One pending draft per thread: the latest message supersedes the older proposal.
             # It keeps the previous draft's id so a card being edited in the UI is updated in
@@ -1095,7 +1096,7 @@ class Watcher:
                 id=draft_id, thread_id=msg.thread_id, **{"from": msg.sender},
                 surface=msg.surface, incoming=msg.text, proposal=proposal,
                 received_at=msg.received_at, mode=mode,  # type: ignore[arg-type]
-                used_github=gh_ref, sender_label=self._sender_label(msg.sender),
+                used_github=gh_ref, sender_label=self._sender_label(msg.sender), reply_to=reply_to,
             ))
             self.state.drafts = drafts
             live = {d.id for d in drafts}
@@ -1880,16 +1881,22 @@ class Watcher:
             raise ActionError(502, f"Le cerveau n'a pas pu corriger le message : {e}. Ton message n'a pas changé.")
         return fixed
 
-    def propose_external_reply(self, thread_id: str, text: str) -> Draft:
+    def propose_external_reply(self, thread_id: str, text: str, target: Optional[MessageRef] = None,
+                               quote: bool = False) -> Draft:
         """A reply prepared by an outside assistant (MCP): it waits in « À relire »,
-        never sent without the user's click."""
+        never sent without the user's click. target: the message it answers (shown on the
+        card); quote: also quote that message in Teams when the reply is sent."""
         entity = self._conversation(thread_id)
         body = text.strip()
         if not body:
             raise ActionError(422, "La réponse proposée est vide.")
-        msg = IncomingMessage(thread_id=thread_id, sender=entity.display_name, received_at=datetime.now().strftime("%H:%M"),
-                              text="Réponse préparée par un assistant externe (MCP).", surface=entity.surface)
-        self._queue_draft(msg, body[:4000], "draft", None)
+        if quote and target is not None:
+            self._require("reply")
+        msg = IncomingMessage(thread_id=thread_id, sender=target.sender if target and target.sender else entity.display_name,
+                              received_at=target.at if target and target.at else datetime.now().strftime("%H:%M"),
+                              text=target.text if target else "Réponse préparée par un assistant externe (MCP).",
+                              surface=entity.surface)
+        self._queue_draft(msg, body[:4000], "draft", None, target if quote else None)
         self.log("draft", f"Réponse proposée via MCP pour {entity.display_name}")
         return next(d for d in self.state.drafts if d.thread_id == thread_id)
 

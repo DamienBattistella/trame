@@ -150,6 +150,8 @@ class Draft(BaseModel):
     mode: Mode
     used_github: Optional[str] = None
     sender_label: Optional[str] = None
+    # Le message auquel cette réponse répond (citation dans Teams), quand il est connu.
+    reply_to: Optional[MessageRef] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
