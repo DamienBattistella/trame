@@ -1,5 +1,12 @@
 # Trame et Microsoft Graph
 
+> **Obsolète.** Cette voie (Microsoft Graph + enregistrement par la DSI) a été remplacée par
+> l'approche « API Teams web » : Trame s'appuie sur la session Teams web déjà authentifiée de
+> l'utilisateur, en signant les appels **dans la page** (le jeton ne la quitte jamais). Voir
+> [`teams-web-api.md`](teams-web-api.md). La carte « Microsoft Graph » des réglages est remplacée
+> par « API Teams web » (`WebApiDriver`). Le code Graph restant (`backend/drivers/graph.py`,
+> `backend/msgraph/`, endpoints `/api/graph`) n'est plus utilisé par défaut et sera retiré.
+
 Trame pilote aujourd'hui Teams web dans une fenêtre cachée : il lit et clique dans la page
 (« Teams intégré »). Ça marche, mais chaque changement de la page de Teams casse un geste
 (« Répondre » introuvable, pièce jointe non confirmée, repères absents).
