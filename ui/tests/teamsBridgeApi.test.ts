@@ -1162,3 +1162,29 @@ test("chatdm : identifiant inattendu, soi-même ou création refusée → la pag
   assert.equal(refused.attempted, false);
   assert.match(refused.error, /403/);
 });
+
+test("meetingshapes : structure des conversations de réunion seulement, jamais de texte", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_abc@thread.v2";
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`))
+      return fakeResponse(JSON.stringify({ messages: [
+        { id: "1795777000001", messagetype: "Event/Call", content: '<partlist type="ended"><part identity="x"><name>Ana Secret</name></part></partlist>', properties: { callId: "c1" } },
+        { id: "1795777000002", messagetype: "RichText/Html", content: "<p>texte secret</p>", properties: {} },
+      ] }));
+    if (url.includes("/v1/users/ME/conversations"))
+      return fakeResponse(JSON.stringify({ conversations: [
+        { id: MEET, threadProperties: { productThreadType: "Meeting", topic: "Sujet secret", meeting: JSON.stringify({ subject: "Sujet secret", organizerId: "o" }) } },
+        { id: "19:grp@thread.v2", threadProperties: { topic: "Groupe" } },
+      ] }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("meetingshapes", {})).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.chats.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].messages[0])), { id: "1795777000001", type: "Event/Call", root: "partlist", tags: ["partlist", "part", "name"], props: ["callId"] });
+  assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].meetingKeys)), ["subject", "organizerId"]);
+  assert.ok(!/secret/i.test(JSON.stringify(r)));
+});

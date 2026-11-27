@@ -70,7 +70,10 @@ TOOLS: list[dict] = [
            "name": {"type": "string", "description": "Ne garder que les spans dont le nom contient ce texte"},
            "errors_only": {"type": "boolean", "default": False}}),
     _tool("diagnose_teams", "Diagnostic Teams",
-          "Structure de la page Teams vue par Trame (liste, zone de saisie, bouton Envoyer, focus). Aucun texte de message."),
+          "Structure de la page Teams vue par Trame (liste, zone de saisie, bouton Envoyer, focus). Aucun texte de message. "
+          "meetings=true ajoute la structure des conversations de réunion récentes sur le service de chat (types de "
+          "messages, balises, noms de propriétés, ids des cartes de récapitulatif affichées), jamais leur contenu.",
+          {"meetings": {"type": "boolean", "default": False}}),
     _tool("get_settings", "Réglages", "Réglages de Trame (cerveau, sécurité, résumé, GitHub, télémétrie). Sans le jeton MCP."),
     # --- lecture ---
     _tool("list_conversations", "Discussions",
@@ -281,13 +284,20 @@ def make_router(watcher: Watcher) -> APIRouter:
                 break
         return {"records": out}
 
-    def tool_diagnose(_args: dict) -> Any:
+    def tool_diagnose(args: dict) -> Any:
         with watcher._ui_lock:
             report = watcher.driver.diagnose(None)
         page = report.get("diagnose")
         if isinstance(page, dict):
             page = {k: v for k, v in page.items() if k != "sample"}
-        return {**{k: v for k, v in report.items() if k not in ("diagnose", "rail_sample")}, "page": page}
+        out = {**{k: v for k, v in report.items() if k not in ("diagnose", "rail_sample")}, "page": page}
+        if args.get("meetings"):
+            probe = getattr(watcher.driver, "meeting_shapes", None)
+            try:
+                out["meeting_shapes"] = probe() if callable(probe) else {"ok": False, "error": "pilote sans service de chat"}
+            except Exception as e:
+                out["meeting_shapes"] = {"ok": False, "error": str(e)}
+        return out
 
     def tool_settings(_args: dict) -> Any:
         out = watcher.get_settings().model_dump()

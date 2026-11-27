@@ -264,6 +264,15 @@ y est refusé).
 - La **recherche de messages** reste sur la page : elle passe par `substrate.office.com`, dont la
   page n'expose pas le jeton.
 
+### 8. Sonde des conversations de réunion — op `meetingshapes`
+
+Pour câbler les réunions sur le service de chat, il faut savoir quel message porte la carte
+« La réunion est terminée » de la page (son `data-mid`). Le code de Teams ne suffit pas à le dire :
+l'outil MCP `diagnose_teams` avec `meetings=true` rend la **structure** des 3 conversations de réunion
+les plus récentes (id et type de chaque message, balise racine et balises du contenu, noms des
+propriétés, clés de `threadProperties.meeting`) et les ids des cartes de récapitulatif affichées.
+Jamais un texte, un nom ou une valeur.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).

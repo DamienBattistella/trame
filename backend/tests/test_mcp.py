@@ -229,3 +229,18 @@ def test_mcp_meeting_errors(make_client, transcripts_dir):
     err, msg = _mcp(client, token, "get_meeting_transcript",
                     {"meeting_id": "19:meeting_mock1@thread.v2#1700000001", "save": False, "include_content": False})
     assert err and "rien à rendre" in msg
+
+
+def test_diagnose_meetings_adds_the_structure_probe_only_when_asked(make_client):
+    client, _watcher, driver = make_client()
+    token = _enable(client)
+    calls = []
+    driver.meeting_shapes = lambda: calls.append(1) or {"ok": True, "chats": [], "page_recap_mids": []}
+
+    def diag(args):
+        r = _call(client, token, "tools/call", {"name": "diagnose_teams", "arguments": args}).json()
+        return json.loads(r["result"]["content"][0]["text"])
+
+    assert "meeting_shapes" not in diag({})
+    assert diag({"meetings": True})["meeting_shapes"] == {"ok": True, "chats": [], "page_recap_mids": []}
+    assert calls == [1]
