@@ -2852,7 +2852,9 @@
     // pour 09:00 à Paris) ; lus sinon comme heure locale, avec une heure d'écart.
     const dateOf = (v) => {
       if (!v) return null;
-      const s = /^\d{10,16}$/.test(v) ? Number(v) : /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(v) ? `${v}Z` : v;
+      // Sans fuseau (ni « Z » ni « +01:00 ») : UTC, quel que soit le format.
+      const zoned = /(Z|[+-]\d{2}:?\d{2})$/i.test(v);
+      const s = /^\d{10,16}$/.test(v) ? Number(v) : zoned ? v : /T\d{2}:\d{2}/.test(v) ? `${v}Z` : `${v} UTC`;
       const d = new Date(s);
       return Number.isNaN(d.getTime()) ? null : d;
     };
@@ -2932,11 +2934,18 @@
     const convs = ((list.json && list.json.conversations) || []).filter(isMeeting).slice(0, Math.max(1, Math.min(5, Number(chats) || 3)));
     for (const c of convs) {
       const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${enc(c.id)}/messages`, query: { view: "msnp24Equivalent", pageSize: Math.max(10, Math.min(200, Number(per) || 60)) } });
+      // Forme des heures prévues d'un début d'appel : chiffres masqués (« 99/99/9999 99:99:99 »),
+      // jamais une valeur.
+      const shapeOf = (html, name) => {
+        const m = new RegExp(`<${name}>([^<]{1,60})</${name}>`, "i").exec(String(html || ""));
+        return m ? m[1].replace(/\d/g, "9") : "";
+      };
       const msgs = ((r.ok && r.json && r.json.messages) || []).map((m) => ({
         id: String(m.id || ""),
         type: String(m.messagetype || ""),
         ...tagsOf(m.content),
         props: Object.keys(m.properties || {}).slice(0, 25),
+        ...(m.messagetype === "Event/Call" ? { startShape: shapeOf(m.content, "starttime"), endShape: shapeOf(m.content, "endtime") } : {}),
       }));
       const tp = c.threadProperties || {};
       out.push({ chat: String(c.id), threadKeys: Object.keys(tp).slice(0, 40), meetingKeys: (() => { try { return Object.keys(JSON.parse(tp.meeting || "{}")).slice(0, 40); } catch { return []; } })(), messages: msgs });
