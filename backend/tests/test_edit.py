@@ -16,7 +16,7 @@ from models import MessageRef
 DM = "19:aa11@thread.v2"
 DM_URL = "/api/threads/19%3Aaa11%40thread.v2"
 # Deuxième message du fil de démo de Sofia : écrit par l'utilisateur (id m1).
-MINE = {"id": "m1", "sender": "Damien Battistella", "text": "Je regarde. C'est le job de tests d'intégration HL7 ?", "at": "08:54"}
+MINE = {"id": "m1", "sender": MockTeamsDriver.ME, "text": "Je regarde. C'est le job de tests d'intégration HL7 ?", "at": "08:54"}
 # Troisième message : écrit par Sofia (id m2).
 THEIRS = {"id": "m2", "sender": "Sofia Marino", "text": "Oui, le test du parseur OBX tombe en timeout sur le runner Windows."}
 NEW = "Je regarde. C'est bien le job d'intégration HL7 ?"
@@ -54,14 +54,14 @@ def test_edit_refuses_someone_elses_message(make_client):
 def test_edit_refuses_a_message_claimed_mine_but_read_as_someone_elses(make_client):
     client, _watcher, driver = make_client()
     client.get(f"{DM_URL}/messages")
-    r = client.post(f"{DM_URL}/edit", json={"message": {**THEIRS, "sender": "Damien Battistella"}, "text": "x"})
+    r = client.post(f"{DM_URL}/edit", json={"message": {**THEIRS, "sender": MockTeamsDriver.ME}, "text": "x"})
     assert r.status_code == 403 and driver.edited == {}
 
 
 def test_edit_driver_refuses_another_authors_message(make_client):
     # Sans fil en cache, le pilote ne retrouve pas ce message sous cet auteur : rien.
     client, _watcher, driver = make_client()
-    r = client.post(f"{DM_URL}/edit", json={"message": {**THEIRS, "id": None, "sender": "Damien Battistella"}, "text": "x"})
+    r = client.post(f"{DM_URL}/edit", json={"message": {**THEIRS, "id": None, "sender": MockTeamsDriver.ME}, "text": "x"})
     assert r.status_code == 409 and "Rien n'a été modifié" in r.json()["error"]
     assert driver.edited == {}
 

@@ -768,14 +768,14 @@ test("chatgesture edit : seulement un de MES messages, nouveau texte prouvé et 
   await withTeamsBearer(p);
   const messages: any = {
     "1795777000001": msgRaw("1795777000001"),
-    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Damien B", content: "<p>Je regarde</p>" }),
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Je regarde</p>" }),
   };
   const writes = chatServer(p, messages);
   const theirs = { id: "1795777000001", sender: "Ana Martin", text: "Bonjour" };
   const notMine = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: theirs, text: "Salut" })).result;
   assert.equal(notMine.ok, false);
   assert.equal(writes.length, 0);
-  const ref = { id: "1795777000002", sender: "Damien B", text: "Je regarde" };
+  const ref = { id: "1795777000002", sender: "Alex Moreau", text: "Je regarde" };
   const mine = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: "Je regarde <ça>\nhttps://ex.test/a" })).result;
   assert.equal(mine.ok, true);
   assert.equal(writes.length, 1);
@@ -795,10 +795,10 @@ test("chatgesture edit : message riche ou texte vide refusés pour de bon, sans 
   await withTeamsBearer(p);
   const files = JSON.stringify([{ fileName: "plan.pdf", objectUrl: "https://ex.sharepoint.com/plan.pdf" }]);
   const messages: any = {
-    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Damien B", content: "<p>Le plan</p>", properties: { files } }),
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Le plan</p>", properties: { files } }),
   };
   const writes = chatServer(p, messages);
-  const ref = { id: "1795777000002", sender: "Damien B", text: "Le plan" };
+  const ref = { id: "1795777000002", sender: "Alex Moreau", text: "Le plan" };
   const rich = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: "Le nouveau plan" })).result;
   assert.equal(rich.ok, false);
   assert.equal(rich.attempted, true);
@@ -813,10 +813,10 @@ test("chatgesture edit : accepté mais pas relu modifié → incertain, jamais r
   const p = teamsPage();
   await withTeamsBearer(p);
   const messages: any = {
-    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Damien B", content: "<p>Je regarde</p>" }),
+    "1795777000002": msgRaw("1795777000002", { from: MY_MRI, imdisplayname: "Alex Moreau", content: "<p>Je regarde</p>" }),
   };
   const writes = chatServer(p, messages, { ignoreEdits: true });
-  const r = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: { id: "1795777000002", sender: "Damien B", text: "Je regarde" }, text: "Vu" })).result;
+  const r = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: { id: "1795777000002", sender: "Alex Moreau", text: "Je regarde" }, text: "Vu" })).result;
   assert.equal(r.ok, false);
   assert.equal(r.uncertain, true);
   assert.equal(writes.length, 1);
