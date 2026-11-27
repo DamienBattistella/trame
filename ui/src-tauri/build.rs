@@ -4,6 +4,7 @@ fn main() {
             "restart_backend",
             "check_update",
             "install_update",
+            "set_update_check_minutes",
             "teams_web_open",
             "teams_web_hide",
             "teams_web_close",

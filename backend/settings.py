@@ -151,11 +151,15 @@ class TeamsWebSettings(BaseModel):
 
 
 ConversationSort = Literal["watched", "recent", "alpha"]
+# Minutes between two looks for a new release while the app runs (0: at launch only).
+UpdateCheckMinutes = Literal[0, 5, 15, 60, 360]
+UPDATE_CHECK_CHOICES = (0, 5, 15, 60, 360)
 
 
 class UiSettings(BaseModel):
     """Interface preferences, kept in config.json (in %APPDATA%) so updates keep them."""
     conversation_sort: ConversationSort = "watched"
+    update_check_minutes: UpdateCheckMinutes = 15
 
 
 class Settings(BaseModel):
@@ -249,6 +253,7 @@ class TeamsWebPatch(_Patch):
 
 class UiPatch(_Patch):
     conversation_sort: Optional[ConversationSort] = None
+    update_check_minutes: Optional[UpdateCheckMinutes] = None
 
 
 class SettingsPatch(_Patch):
@@ -348,8 +353,12 @@ def _github_write(w: dict) -> GithubWriteSettings:
 
 
 def _ui(u: dict) -> UiSettings:
-    sort = u.get("conversation_sort") if isinstance(u, dict) else None
-    return UiSettings(conversation_sort=sort) if sort in ("watched", "recent", "alpha") else UiSettings()
+    u = u if isinstance(u, dict) else {}
+    sort, every = u.get("conversation_sort"), u.get("update_check_minutes")
+    return UiSettings(
+        conversation_sort=sort if sort in ("watched", "recent", "alpha") else "watched",
+        update_check_minutes=every if type(every) is int and every in UPDATE_CHECK_CHOICES else 15,
+    )
 
 
 def _telemetry(t: dict) -> TelemetrySettings:
@@ -402,12 +411,9 @@ def apply(cfg: dict, patch: SettingsPatch) -> tuple[dict, Settings]:
     safety["mark_auto_replies"] = merged.safety.mark_auto_replies
     for key in ("auto_max_per_hour", "auto_quiet_hours", "auto_quiet_from", "auto_quiet_to", "auto_weekends"):
         safety[key] = getattr(merged.safety, key)
-    out["brief"] = {**out.get("brief", {}), **merged.brief.model_dump()}
-    out["follow_ups"] = merged.follow_ups.model_dump()
-    out["archive"] = merged.archive.model_dump()
-    out["telemetry"] = merged.telemetry.model_dump()
-    out["mcp"] = merged.mcp.model_dump()
-    out["teams_web"] = merged.teams_web.model_dump()
-    ui = out.get("ui")
-    out["ui"] = {**(ui if isinstance(ui, dict) else {}), **merged.ui.model_dump()}
+    # Merge, never replace: keys this version does not know (hand-edited, or written by
+    # another version) must survive a settings save, so an update never drops an option.
+    for name in ("brief", "follow_ups", "archive", "telemetry", "mcp", "teams_web", "ui"):
+        section = out.get(name)
+        out[name] = {**(section if isinstance(section, dict) else {}), **getattr(merged, name).model_dump()}
     return out, merged

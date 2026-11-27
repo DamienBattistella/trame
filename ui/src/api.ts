@@ -9,6 +9,8 @@ import {
   DraftItem,
   Effort,
   ConversationSort,
+  UPDATE_CHECK_CHOICES,
+  UpdateCheckMinutes,
   GithubLogin,
   GithubStatus,
   ClaudeStatus,
@@ -47,7 +49,7 @@ import {
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
-import { isDesktop, notificationsEnabled, notify } from "@/desktop";
+import { isDesktop, notificationsEnabled, notify, setUpdateCheckMinutes as setDesktopUpdateCheckMinutes } from "@/desktop";
 import { loadPrefs, toasts } from "@/lib/notifyPrefs";
 import { DemoArchive, demoTeamsSearch } from "@/lib/textSearch";
 import type { GithubRef } from "@/lib/linkify";
@@ -355,10 +357,12 @@ function mapSettings(s: any): Settings {
     },
     mcp: { enabled: Boolean(s?.mcp?.enabled), token: String(s?.mcp?.token ?? ""), allowSend: Boolean(s?.mcp?.allow_send) },
     teamsWeb: { enabled: Boolean(s?.teams_web?.enabled) },
-    ui: { conversationSort: toSort(s?.ui?.conversation_sort) },
+    ui: { conversationSort: toSort(s?.ui?.conversation_sort), updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes) },
   };
 }
 const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
+const toCheckMinutes = (v: unknown): UpdateCheckMinutes =>
+  UPDATE_CHECK_CHOICES.includes(v as UpdateCheckMinutes) ? (v as UpdateCheckMinutes) : 15;
 function mapCheck(c: any): FactCheck {
   return {
     threadId: c.thread_id,
@@ -584,7 +588,12 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     out.mcp = m;
   }
   if (p.teamsWeb?.enabled !== undefined) out.teams_web = { enabled: p.teamsWeb.enabled };
-  if (p.ui?.conversationSort !== undefined) out.ui = { conversation_sort: p.ui.conversationSort };
+  if (p.ui) {
+    const u: Record<string, unknown> = {};
+    if (p.ui.conversationSort !== undefined) u.conversation_sort = p.ui.conversationSort;
+    if (p.ui.updateCheckMinutes !== undefined) u.update_check_minutes = p.ui.updateCheckMinutes;
+    out.ui = u;
+  }
   return out;
 }
 export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
@@ -667,7 +676,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched" },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15 },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -864,9 +873,13 @@ export function useTrame() {
   const [briefPrefs, setBriefPrefs] = useState<BriefPrefs>(prefsOf(localSettings));
   // Tri de la liste des conversations, enregistré dans config.json.
   const [conversationSort, setConversationSortState] = useState<ConversationSort>(localSettings.ui.conversationSort);
+  // Fréquence de recherche des mises à jour, enregistrée dans config.json et transmise à l'application.
+  const [updateCheckMinutes, setUpdateCheckMinutesState] = useState<UpdateCheckMinutes>(localSettings.ui.updateCheckMinutes);
   const applyPrefs = (s: Settings) => {
     setBriefPrefs(prefsOf(s));
     setConversationSortState(s.ui.conversationSort);
+    setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
+    void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
   };
   // Dernier état connu de la connexion GitHub (null tant qu'il n'a pas été vérifié).
   const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
@@ -1140,6 +1153,13 @@ export function useTrame() {
   const setConversationSort = (sort: ConversationSort) => {
     setConversationSortState(sort);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { conversationSort: sort } });
+  };
+
+  /** Optimiste, comme le tri : l'application applique la fréquence tout de suite, le moteur l'enregistre. */
+  const setUpdateCheckMinutes = (minutes: UpdateCheckMinutes) => {
+    setUpdateCheckMinutesState(minutes);
+    void setDesktopUpdateCheckMinutes(minutes);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { updateCheckMinutes: minutes } });
   };
 
   /** Relit la liste des conversations dans Teams ; l'état arrive ensuite par le flux habituel. */
@@ -2191,6 +2211,8 @@ export function useTrame() {
     briefPrefs,
     conversationSort,
     setConversationSort,
+    updateCheckMinutes,
+    setUpdateCheckMinutes,
     getBrief,
     generateBrief,
     githubStatus,

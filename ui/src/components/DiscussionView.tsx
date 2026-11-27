@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { InitialsAvatar, PRESENCE, Segment, shake } from "@/components/kit";
+import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
 import { LinkCards } from "@/components/LinkCards";
 import { MessageText } from "@/components/MessageText";
@@ -847,9 +847,9 @@ export function DiscussionView({
           <AnimatePresence initial={false}>
             {c.watch && (
               <motion.div key="mode" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
-                <Segment
-                  label={`Mode pour ${c.displayName}`}
-                  value={c.mode}
+                <AutoToggle
+                  name={c.displayName}
+                  mode={c.mode}
                   onChange={(v) => trame.setMode(c.threadId, v).then((r) => !r.ok && toast.error("Modification impossible", { description: r.error }))}
                 />
               </motion.div>

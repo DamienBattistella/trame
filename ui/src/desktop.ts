@@ -49,6 +49,15 @@ export function subscribeAvailableUpdate(cb: () => void): () => void {
   return () => updateListeners.delete(cb);
 }
 
+/** Fréquence de recherche des mises à jour (minutes, 0 : au lancement seulement), appliquée sans redémarrer. */
+export async function setUpdateCheckMinutes(minutes: number): Promise<void> {
+  try {
+    await tauri()?.core?.invoke("set_update_check_minutes", { minutes });
+  } catch {
+    // Hors application, ou application plus ancienne : la boucle garde sa fréquence.
+  }
+}
+
 /** Télécharge, installe et redémarre Trame. Ne revient qu'en cas d'échec. */
 export async function installUpdate(): Promise<string | null> {
   try {
