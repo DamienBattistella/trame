@@ -106,3 +106,70 @@ def test_hit_without_the_words_shows_the_beginning():
     assert h["match"] == [4, 9]
     h = search.hit(None, "Hexaflux", "Hugo", "02/01", False, "On a compilé hier soir", "compilation")
     assert h["match"] is None and h["excerpt"] == "On a compilé hier soir"
+
+
+# --- deux étapes : conversations récentes sur le service, puis tout l'historique ---
+
+class RecentSearch(MockTeamsDriver):
+    """Un pilote avec la recherche des conversations récentes (service de chat)."""
+
+    can_search_recent = True
+
+    def __init__(self, *a, recent=None, fail=None, sharing=False, **kw):
+        super().__init__(*a, **kw)
+        self.recent_answer = recent if recent is not None else []
+        self.recent_fail = fail
+        self.sharing = sharing
+        self.recent_calls: list[str] = []
+        self.deep_calls: list[str] = []
+
+    def search_recent(self, query, limit=25):
+        self.recent_calls.append(query)
+        if self.recent_fail:
+            raise RuntimeError(self.recent_fail)
+        return [dict(r) for r in self.recent_answer]
+
+    def search_messages(self, query, limit=25):
+        self.deep_calls.append(query)
+        return [{"conversation": "", "sender": "Marc", "mine": False, "at": "12/03/2026", "text": "vieux budget 2025"}]
+
+    def is_screen_sharing(self):
+        return self.sharing
+
+
+def test_first_step_searches_recent_conversations_without_teams_window_then_history_on_demand(make_client):
+    recent = [{"conversation": "Homonyme", "thread_id": None, "sender": "Ana", "mine": False, "at": "10:00", "text": "budget validé"}]
+    driver = RecentSearch(interval=9999, recent=recent)
+    client, watcher, _ = make_client(driver=driver)
+    target = watcher.state.watchlist[0]
+    driver.recent_answer = [{**recent[0], "thread_id": target.thread_id}]
+    first = client.post("/api/search/teams", json={"q": "budget"}).json()
+    assert first["scope"] == "recent" and driver.deep_calls == []
+    # La conversation vient de l'id donné par le service, jamais d'un nom deviné.
+    assert first["results"][0]["thread_id"] == target.thread_id
+    assert first["results"][0]["conversation"] == target.display_name
+    deep = client.post("/api/search/teams", json={"q": "budget", "deep": True}).json()
+    assert deep["scope"] == "teams" and driver.deep_calls == ["budget"]
+
+
+def test_recent_search_runs_during_screen_share_but_history_does_not(make_client):
+    driver = RecentSearch(interval=9999, sharing=True)
+    client, _w, _ = make_client(driver=driver)
+    assert client.post("/api/search/teams", json={"q": "budget"}).json()["scope"] == "recent"
+    assert client.post("/api/search/teams", json={"q": "budget", "deep": True}).status_code == 409
+
+
+def test_recent_search_failure_falls_back_to_teams_search(make_client):
+    driver = RecentSearch(interval=9999, fail="service de chat indisponible")
+    client, _w, _ = make_client(driver=driver)
+    res = client.post("/api/search/teams", json={"q": "budget"}).json()
+    assert res["scope"] == "teams" and driver.deep_calls == ["budget"]
+
+
+def test_words_apart_are_still_highlighted():
+    from search import hit
+    h = hit(None, "x", "Ana", "10:00", False, "Le budget de la PR 214 est validé", "budget validé")
+    assert h["match"] is not None
+    assert h["excerpt"][h["match"][0]:h["match"][1]] == "budget"  # longueurs égales : l'ordre de la requête
+    h = hit(None, "x", "Ana", "10:00", False, "Le budget de la PR 214 est validé", "pr validé")
+    assert h["excerpt"][h["match"][0]:h["match"][1]] == "validé"  # le plus long d'abord

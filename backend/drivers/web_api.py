@@ -582,23 +582,38 @@ class WebApiDriver:
             kwargs["files"] = files
         return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
 
-    # --- Recherche de messages : les fils récents sur le service, puis la page -----------
-    def search_messages(self, query: str, limit: int = 25) -> list[dict]:
-        """Les derniers messages des conversations récentes, cherchés sur le service de chat sans
-        ouvrir la recherche de Teams. Rien trouvé là (ou service indisponible) : la recherche de
-        Teams dans la page, qui couvre tout l'historique."""
-        api = getattr(self._inner, "search_messages_api", None)
-        if callable(api):
-            try:
-                found = api(query, limit)
-            except Exception as e:
-                self._route("search_messages", "page", f"repli sur la page : {e}")
-            else:
-                if found:
-                    self._route("search_messages", "api")
-                    return found
-                self._route("search_messages", "page", "repli sur la page : rien dans les fils récents, recherche de Teams")
-        return self._inner.search_messages(query, limit)
+    # --- Recherche de messages : les fils récents sur le service --------------------------
+    # Première étape de « Chercher aussi dans Teams » : les derniers messages des conversations
+    # récentes, sur le service de chat, sans rien ouvrir dans la page. La recherche de Teams
+    # (tout l'historique, par la page) reste une seconde étape, à la demande : search_messages.
+    @property
+    def can_search_recent(self) -> bool:
+        return callable(getattr(self._inner, "search_messages_api", None))
+
+    def search_recent(self, query: str, limit: int = 25) -> list[dict]:
+        """Résultats du service, chacun avec le thread_id de Trame de sa conversation quand il
+        est connu (même id que la page : « title-19:… », « name:… »). Lève si le service refuse."""
+        try:
+            found = self._inner.search_messages_api(query, limit)
+        except Exception as e:
+            self._route("search_messages", "page", f"service indisponible : {e}")
+            raise
+        self._route("search_messages", "api")
+        st = self._chat
+        by_cid = {c: t for t, c in st.mapped.items()}
+        for r in found:
+            cid = r.pop("teams_id", None)
+            tid = by_cid.get(cid) if cid else None
+            if tid is None and cid:
+                row = st.rows.get(cid) or {}
+                if cid == "48:notes":
+                    tid = next((t for t, c in st.mapped.items() if c == "48:notes"), None)
+                elif row.get("kind") == "dm" or cid.endswith("@unq.gbl.spaces"):
+                    tid = f"name:{r['conversation']}" if r.get("conversation") else None
+                else:
+                    tid = f"title-{cid}"
+            r["thread_id"] = tid
+        return found
 
     # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
     def start_chat(self, name: str) -> Optional[WatchEntity]:

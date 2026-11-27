@@ -270,11 +270,13 @@ y est refusé).
   message n'est envoyé ; rien n'est ouvert dans la page. La conversation reste reliée au service
   (lecture et écriture) même si la page ne la montre pas. Tout échec : la page, comme avant.
 - **Recherche de messages** : la recherche de Teams passe par `substrate.office.com`, depuis un Web
-  Worker, avec un jeton que la page n'expose pas. Trame cherche donc lui-même sur le service de
-  chat (op `chatsearch`) : les 200 derniers messages des 40 conversations les plus récentes, chaque
-  mot de la requête présent (casse et accents ignorés), au plus 8 lectures par seconde. Rien
-  trouvé, ou service indisponible : la recherche de Teams dans la page, qui couvre tout
-  l'historique.
+  Worker, avec un jeton que la page n'expose pas. « Chercher aussi dans Teams » se fait donc en
+  deux étapes : d'abord Trame cherche lui-même sur le service de chat (op `chatsearch`) dans les
+  200 derniers messages des 40 conversations les plus récentes, chaque mot de la requête présent
+  (casse et accents ignorés), au plus 8 lectures par seconde, rien d'ouvert dans la page (donc
+  aussi pendant un partage d'écran) ; chaque résultat porte l'id de sa conversation. Puis, à la
+  demande, « Chercher dans tout l'historique de Teams » lance la recherche de Teams par la page.
+  Service indisponible : la recherche de Teams directement.
 
 ### 8. Sonde des conversations de réunion — op `meetingshapes`
 

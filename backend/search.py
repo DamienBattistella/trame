@@ -60,21 +60,26 @@ def excerpt(flat: str, start: int, end: int, width: int = 140) -> tuple[str, int
 
 
 def locate(flat: str, query: str) -> Optional[tuple[int, int]]:
-    """Position [start, end) of the folded query in `flat`, None if absent."""
+    """Position [start, end) of the folded query in `flat`; when the words are not side by
+    side (Teams and the chat service match each word), the first word of the query found,
+    longest first. None if nothing of it is there."""
     q = fold(query)
     if len(q) < 2:
         return None
     folded, origin = fold_map(flat)
-    pos = folded.find(q)
-    if pos == -1:
-        return None
-    return origin[pos], origin[pos + len(q) - 1] + 1
+    words = list(dict.fromkeys(w for w in q.split(" ") if len(w) >= 2 and w != q))
+    # Longest first; equal lengths keep the query's order (sorted is stable).
+    for part in [q, *sorted(words, key=len, reverse=True)]:
+        pos = folded.find(part)
+        if pos != -1:
+            return origin[pos], origin[pos + len(part) - 1] + 1
+    return None
 
 
 def hit(thread_id: Optional[str], conversation: str, sender: str, at: str, mine: bool, text: str,
         query: str, links: Optional[list[dict]] = None, cards: Optional[list[dict]] = None) -> dict:
-    """One search result. `match` is None when the text itself does not contain the
-    query (Teams' search also matches word forms): the excerpt is then its beginning."""
+    """One search result. `match` is None when the text contains none of the query's words
+    (Teams' search also matches word forms): the excerpt is then its beginning."""
     flat = " ".join((text or "").split())
     where = locate(flat, query)
     if where is None:
