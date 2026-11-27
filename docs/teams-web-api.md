@@ -191,13 +191,39 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
 - Diagnostic (`teams_web.chat_map`) : comptes par sorte, conversations reliées, non-lus (ids et
   horizon seulement).
 
+### 6. Gestes — op `chatgesture`
+
+Requêtes relevées dans le code de Teams, faites dans la page avec la session du chat :
+
+| Geste | Requête |
+|---|---|
+| marquer comme lu | `PUT …/conversations/{id}/properties?name=consumptionhorizon` `{"consumptionhorizon": "<arrivée du dernier>;<maintenant>;<clientmessageid ou id>"}` |
+| réaction | `PUT …/messages/{mid}/properties?name=emotions` `{"emotions": {"key": "like", "value": <maintenant>}}` |
+| suppression | `DELETE …/messages/{mid}?behavior=softDelete` |
+| envoi | `POST …/conversations/{id}/messages` (`RichText/Html`, `clientmessageid` de 19 chiffres) |
+
+- **Avant d'écrire**, la page vérifie la cible : message retrouvé par son id, même auteur et
+  même début de texte que ce que l'utilisateur a vu ; pour supprimer, un de SES messages.
+- **Après**, elle prouve le geste en relisant le service (horizon, réaction, `deletetime`, message
+  retrouvé par son `clientmessageid`). Une seule tentative, sur une seule adresse du service :
+  jamais rejouée.
+- Réponses : `ok` prouvé ; `attempted: false` rien n'est parti, la page fait le geste comme avant ;
+  `uncertain` parti sans preuve, remonté comme `SendUncertain` / `ReactUncertain` /
+  `DeleteUncertain` et jamais refait (les garde-fous du moteur s'appliquent : anti-doublon,
+  « vérifie dans Teams avant de renvoyer »).
+- Passent par le service : l'envoi d'un texte simple, la réaction, la suppression, le marquage
+  comme lu. Restent sur la page : la saisie sans envoi (brouillon), la réponse citée, les
+  mentions, les pièces jointes.
+- **Écrire exige une correspondance forte** : id Teams contenu dans l'id de la page (groupes),
+  conversation avec soi-même, ou tête-à-tête relié par son nom ET par le même début de texte ou
+  la même heure à la minute. Relié au jour près seulement : lecture par le service, gestes par la
+  page.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
 2. ~~Session chatsvc dans la page~~ (#121).
-3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (cette PR).
-4. **Écritures prouvées par relecture** : marquer comme lu (`consumptionhorizon`), réactions
-   (`properties?name=emotions`), envoi (relu par `clientmessageid`), réponse citée, suppression,
-   avec tous les garde-fous de `backend/safety.py`.
+3. ~~Lectures~~ : lecture d'un fil (#122), liste, non-lus et nouveaux messages (#127).
+4. ~~Écritures simples~~ (cette PR) ; restent la réponse citée et les mentions par le service.
 5. Présence et statut, note, recherche (personnes, messages), nouvelle conversation.
 6. **Contrôle des repères** : ne vérifier que les repères des actions restées sur la page.
