@@ -1188,3 +1188,41 @@ test("meetingshapes : structure des conversations de réunion seulement, jamais 
   assert.deepEqual(JSON.parse(JSON.stringify(r.chats[0].meetingKeys)), ["subject", "organizerId"]);
   assert.ok(!/secret/i.test(JSON.stringify(r)));
 });
+
+test("chatsearch : chaque mot présent (casse et accents ignorés), fils récents d'abord, sans jeton", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const DM = `19:${ME_GUID}_${OTHER_GUID}@unq.gbl.spaces`;
+  const GRP = "19:grp@thread.v2";
+  const msgs: Record<string, any[]> = {
+    [GRP]: [
+      { id: "1795777000003", messagetype: "RichText/Html", imdisplayname: "Ana Martin", from: "https://x/v1/users/ME/contacts/8:orgid:ana", originalarrivaltime: new Date(1795777000003).toISOString(), content: "<p>La PR #214 est prête pour la RÉVISION</p>", properties: {} },
+      { id: "1795777000002", messagetype: "RichText/Html", imdisplayname: "Ana Martin", from: "https://x/v1/users/ME/contacts/8:orgid:ana", originalarrivaltime: new Date(1795777000002).toISOString(), content: "<p>Supprimé</p>", properties: { deletetime: "1" } },
+      { id: "1795777000001", messagetype: "Event/Call", content: "<partlist/>", properties: {} },
+    ],
+    [DM]: [
+      { id: "1795777000005", messagetype: "RichText/Html", imdisplayname: "Damien B", from: `https://x/v1/users/ME/contacts/8:orgid:${ME_GUID}`, originalarrivaltime: new Date(1795777000005).toISOString(), content: "<p>Je fais la revision de la PR ce soir</p>", properties: {} },
+    ],
+  };
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes("fetchShortProfile")) return fakeResponse(JSON.stringify({ value: [{ mri: `8:orgid:${OTHER_GUID}`, displayName: "Marc Petit" }] }));
+    for (const id of Object.keys(msgs)) if (url.includes(`/conversations/${encodeURIComponent(id)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs[id] }));
+    if (url.includes("/v1/users/ME/conversations"))
+      return fakeResponse(JSON.stringify({ conversations: [
+        { id: GRP, threadProperties: { topic: "Équipe Interop" }, lastMessage: { id: "1795777000003", originalarrivaltime: new Date(1795777000003).toISOString() } },
+        { id: DM, threadProperties: {}, lastMessage: { id: "1795777000005", originalarrivaltime: new Date(1795777000005).toISOString() } },
+      ] }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatsearch", { query: "pr revision" })).result;
+  assert.equal(r.ok, true);
+  assert.equal(r.scanned, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.results.map((h: any) => [h.conversation, h.sender, h.mine, h.text]))), [
+    ["Marc Petit", "Damien B", true, "Je fais la revision de la PR ce soir"],
+    ["Équipe Interop", "Ana Martin", false, "La PR #214 est prête pour la RÉVISION"],
+  ]);
+  assert.ok(!/MT-SECRET|skypetoken/i.test(JSON.stringify(r)));
+  const short = (await p.run("chatsearch", { query: "a" })).result;
+  assert.equal(short.ok, false);
+});

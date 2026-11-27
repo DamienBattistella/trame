@@ -2711,6 +2711,61 @@
       return { ok: false, attempted: false, error: w.ok ? "tête-à-tête créé mais pas encore relu" : `création refusée (HTTP ${w.status || "?"})` };
     };
   })();
+  // --- Recherche dans les fils récents, par le service de chat ---
+  // La recherche de Teams passe par un service dont la page n'expose pas le jeton. Trame cherche
+  // donc lui-même, sur le service de chat, dans les conversations les plus récentes (dernier
+  // message d'abord) : leurs derniers messages, chaque mot de la requête présent (casse et
+  // accents ignorés). Lecture seule ; au plus 8 lectures par seconde (Teams en tolère 9).
+  const chatSearch = async ({ query, limit = 25, chats = 40 } = {}) => {
+    const fold = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const words = fold(query).split(/\s+/).filter((w) => w.length > 0);
+    if (!words.length || words.join("").length < 2) return { ok: false, error: "requête trop courte" };
+    const want = Math.max(1, Math.min(100, Number(limit) || 25));
+    const list = await chatsvc.get({ path: "/v1/users/ME/conversations", query: { view: "msnp24Equivalent", pageSize: 100 } });
+    if (!list.ok) return { ok: false, error: list.error || "liste refusée par le service de chat" };
+    const me = chatsvc.me();
+    const convs = ((list.json && list.json.conversations) || [])
+      .filter((c) => c && c.id && c.lastMessage && c.lastMessage.id && /^(19:|48:notes)/.test(String(c.id)))
+      .sort((a, b) => Date.parse(b.lastMessage.originalarrivaltime || 0) - Date.parse(a.lastMessage.originalarrivaltime || 0))
+      .slice(0, Math.max(1, Math.min(80, Number(chats) || 40)));
+    const others = convs
+      .map((c) => /^19:([0-9a-f-]{36})_([0-9a-f-]{36})@unq\.gbl\.spaces$/i.exec(c.id))
+      .filter(Boolean)
+      .map((m) => `8:orgid:${m[1].toLowerCase() === String(me).split(":").pop().toLowerCase() ? m[2] : m[1]}`);
+    const names = others.length ? await chatsvc.people(others) : {};
+    const nameOf = (c) => {
+      if (c.id === "48:notes") return "";
+      const one = /^19:([0-9a-f-]{36})_([0-9a-f-]{36})@unq\.gbl\.spaces$/i.exec(c.id);
+      if (one) {
+        const mine = String(me).split(":").pop().toLowerCase();
+        return names[`8:orgid:${one[1].toLowerCase() === mine ? one[2] : one[1]}`] || "";
+      }
+      return String((c.threadProperties && c.threadProperties.topic) || "").trim();
+    };
+    const hits = [];
+    let scanned = 0;
+    for (const c of convs) {
+      const started = Date.now();
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(c.id)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
+      scanned++;
+      for (const raw of (r.ok && r.json && r.json.messages) || []) {
+        if (!chatMessage.isUser(raw) || (raw.properties || {}).deletetime) continue;
+        const m = chatMessage.convert(raw, me, chatMessage.parseHtml, messageParts);
+        const hay = fold(m.text);
+        if (!m.text || !words.every((w) => hay.includes(w))) continue;
+        hits.push({ conversation: nameOf(c), thread: String(c.id), self: c.id === "48:notes", sender: m.sender, mine: Boolean(me) && mriOfFrom(raw.from) === me, at: m.at, text: m.text.slice(0, 4000), ts: m.ts || 0 });
+      }
+      const spent = Date.now() - started;
+      if (spent < 125) await sleep(125 - spent);
+    }
+    hits.sort((a, b) => b.ts - a.ts);
+    return { ok: true, scanned, results: hits.slice(0, want).map(({ ts, ...h }) => h) };
+  };
+  const mriOfFrom = (from) => {
+    const m = /\/contacts\/([^/?#]+)$/.exec(String(from || ""));
+    return m ? decodeURIComponent(m[1]) : String(from || "");
+  };
+
   // --- Sonde des conversations de réunion (découverte, lecture seule) ---
   // Pour câbler les réunions sur le service de chat, il faut savoir quel message porte la carte
   // « La réunion est terminée » de la page. La sonde ne rend que de la STRUCTURE : id et type de
@@ -3484,6 +3539,7 @@
     chatgesture: (args) => chatGestures(args || {}),
     chatdm: (args) => chatDm(args || {}),
     meetingshapes: (args) => meetingShapes(args || {}),
+    chatsearch: (args) => chatSearch(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.

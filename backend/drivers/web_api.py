@@ -142,7 +142,8 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
-                             "presence", "my_status", "set_status", "set_note", "search_people", "start_chat"})
+                             "presence", "my_status", "set_status", "set_note", "search_people", "start_chat",
+                             "search_messages"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -492,6 +493,24 @@ class WebApiDriver:
         if files:
             kwargs["files"] = files
         return self._inner.type_focused(thread_id, text, send, restore, **kwargs)
+
+    # --- Recherche de messages : les fils récents sur le service, puis la page -----------
+    def search_messages(self, query: str, limit: int = 25) -> list[dict]:
+        """Les derniers messages des conversations récentes, cherchés sur le service de chat sans
+        ouvrir la recherche de Teams. Rien trouvé là (ou service indisponible) : la recherche de
+        Teams dans la page, qui couvre tout l'historique."""
+        api = getattr(self._inner, "search_messages_api", None)
+        if callable(api):
+            try:
+                found = api(query, limit)
+            except Exception as e:
+                self._route("search_messages", "page", f"repli sur la page : {e}")
+            else:
+                if found:
+                    self._route("search_messages", "api")
+                    return found
+                self._route("search_messages", "page", "repli sur la page : rien dans les fils récents, recherche de Teams")
+        return self._inner.search_messages(query, limit)
 
     # --- Nouvelle conversation : un tête-à-tête qui existe sur le service --------------
     def start_chat(self, name: str) -> Optional[WatchEntity]:

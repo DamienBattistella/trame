@@ -535,6 +535,21 @@ class WebBridgeDriver(TeamsDriver):
                             "mine": bool(r.get("mine")), "at": (r.get("at") or "").strip(), "text": text})
         return out[:limit]
 
+    def search_messages_api(self, query: str, limit: int = 25, chats: int = 40) -> list[dict]:
+        """Recherche faite DANS la page sur le service de chat : les derniers messages des
+        conversations les plus récentes, sans ouvrir la recherche de Teams. Même forme que
+        search_messages. Lève ApiError si le service refuse."""
+        res = self._rpc("chatsearch", query=" ".join((query or "").split()), limit=limit, chats=chats, timeout=40)
+        if not isinstance(res, dict) or not res.get("ok"):
+            raise self.ApiError((res or {}).get("error") if isinstance(res, dict) else "réponse illisible de la page")
+        out = []
+        for r in res.get("results") or []:
+            text = (r.get("text") or "").strip() if isinstance(r, dict) else ""
+            if text:
+                out.append({"conversation": _one_line(r.get("conversation"), 200), "sender": _one_line(r.get("sender"), 200),
+                            "mine": bool(r.get("mine")), "at": _one_line(r.get("at"), 40), "text": text[:4000]})
+        return out[:limit]
+
     def read_context(self, thread_id: str, last_n: int) -> list[IncomingMessage]:
         return self.read_history(thread_id, last_n)[0]
 
