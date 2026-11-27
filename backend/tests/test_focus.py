@@ -311,3 +311,42 @@ def test_teams_web_is_the_default_driver_on_windows(monkeypatch):
     d = appmod.make_driver()
     # « API Teams web » devant (session Teams signée dans la page), pilote de la page dessous.
     assert type(d).__name__ == "WebApiDriver" and isinstance(d.inner, WebBridgeDriver)
+
+
+class DirectReader(MockTeamsDriver):
+    """Lit un fil sur le service de chat sans ouvrir la conversation ; `refuse` simule un repli."""
+
+    def __init__(self, *a, refuse=False, **kw):
+        super().__init__(*a, **kw)
+        self.refuse = refuse
+        self.direct: list[str] = []
+
+    def read_history_direct(self, thread_id, last_n, since=None):
+        self.direct.append(thread_id)
+        if self.refuse:
+            return None
+        msgs = [IncomingMessage(thread_id=thread_id, sender="Ana", text=f"API {i}", received_at="10:00",
+                                surface=Surface.dm, id=str(1700000000000 + i)) for i in range(3)]
+        return msgs, True
+
+
+def test_thread_read_on_the_chat_service_never_opens_the_conversation(make_client):
+    client, _watcher, driver = make_client(driver=_looking_at(DirectReader(interval=9999)))
+    msgs = client.get(f"/api/threads/19%3Abb22%40thread.v2/messages").json()["messages"]
+    assert [m["text"] for m in msgs] == ["API 0", "API 1", "API 2"]
+    assert driver.direct == [DM_DRAFT]
+    # Ni ouverture ni retour : la vue de l'utilisateur et l'état lu de la conversation restent.
+    assert driver.opened == [] and driver.active_thread() == USER_VIEW
+
+
+def test_thread_read_falls_back_to_opening_the_conversation(make_client):
+    client, _watcher, driver = make_client(driver=_looking_at(DirectReader(interval=9999, refuse=True)))
+    msgs = client.get(f"/api/threads/19%3Abb22%40thread.v2/messages").json()["messages"]
+    assert msgs and driver.direct == [DM_DRAFT]
+    assert driver.opened == [DM_DRAFT, USER_VIEW]  # lu par la page, vue rendue ensuite
+
+
+def test_draft_context_is_read_without_opening_the_conversation(make_client):
+    _client, watcher, driver = make_client(driver=_looking_at(DirectReader(interval=9999)))
+    text = watcher._summary(DM_DRAFT, 10)
+    assert "Ana: API 2" in text and driver.opened == []

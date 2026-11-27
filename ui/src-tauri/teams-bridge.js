@@ -534,8 +534,20 @@
         throw e;
       }
       const ttl = Number(body.tokens.expiresIn) > 0 ? Number(body.tokens.expiresIn) * 1000 : 60 * 60 * 1000;
-      session = { token, exp: Date.now() + ttl, bases, region: String(body.region || "") };
+      session = { token, exp: Date.now() + ttl, bases, region: String(body.region || ""), me: meOf(token) };
       return session;
+    };
+    // Identifiant Teams (mri « 8:orgid:… ») de l'utilisateur, lu dans la charge du jeton du chat
+    // (champ skypeid). Seul l'identifiant sert, pour reconnaître SES réactions ; le jeton reste ici.
+    const meOf = (token) => {
+      try {
+        const part = String(token).split(".")[1] || "";
+        const json = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")));
+        const id = String(json.skypeid || "");
+        return id ? (id.startsWith("8:") ? id : "8:" + id) : "";
+      } catch {
+        return "";
+      }
     };
     const ensure = async (force) => {
       if (!force && session && session.exp - Date.now() > RENEW_MS) return session;
@@ -598,7 +610,35 @@
       if (!r.ok && r.error) lastTest.error = r.error;
       return lastTest;
     };
-    return { get, selftest, last: () => lastTest };
+    // Image d'un message servie par le stockage de Teams (AMS : *.asm.skype.com, ou asyncgw),
+    // demandée DANS la page : jeton du chat pour AMS, auth que Teams a posée pour asyncgw.
+    const IMAGE_HOSTS = /(^|\.)(asm\.skype\.com|asyncgw\.teams\.microsoft\.com)$/i;
+    const image = async (raw) => {
+      let u;
+      try {
+        u = new URL(String(raw || ""));
+      } catch {
+        return null;
+      }
+      if (u.protocol !== "https:" || !IMAGE_HOSTS.test(u.hostname)) return null;
+      try {
+        const headers = {};
+        if (/asm\.skype\.com$/i.test(u.hostname)) {
+          const s = await ensure(false);
+          headers.Authorization = `skype_token ${s.token}`;
+        } else {
+          const c = apiCapture.credsFor(u.toString());
+          if (c && c.authorization) headers.Authorization = c.authorization;
+          if (c && c.xSkypetoken) headers["X-Skypetoken"] = c.xSkypetoken;
+        }
+        const res = await fetch(u.toString(), { credentials: "omit", headers });
+        const blob = res.ok ? await res.blob() : null;
+        return blob && /^image\//.test(blob.type || "") ? blob : null;
+      } catch {
+        return null;
+      }
+    };
+    return { get, selftest, image, me: () => (session ? session.me : ""), last: () => lastTest };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -1745,6 +1785,243 @@
     }
   };
 
+  // --- Lecture d'un fil par le service de chat (sans ouvrir la conversation) ---
+  // Rend exactement la forme de l'op `read` (expéditeur, texte, heure telle que Teams
+  // l'affiche, id, réactions, fichiers, images, liens, cartes) : le moteur garde une seule
+  // conversion. Le corps HTML d'un message passe par les mêmes extracteurs que la page.
+  // Conversion d'un message du service de chat vers la forme de l'op `read`. N'utilise que
+  // nodeType / tagName / childNodes / getAttribute sur le corps HTML (parsé par l'appelant) :
+  // ui/tests/chatMessage.test.ts l'exécute tel quel avec messageParts.
+  // >>> chat-message
+  const chatMessage = (() => {
+    // Messages écrits par quelqu'un ; les événements (ajout de membre, appel…) sont ignorés.
+    const USER_TYPES = /^(Text|RichText(\/Html|\/Media_Card|\/Media_GenericFile|\/UriObject)?)$/i;
+    const EMOTIONS = { like: "like", heart: "heart", laugh: "laugh", surprised: "surprised" };
+    const parseJson = (v) => {
+      if (Array.isArray(v) || (v && typeof v === "object")) return v;
+      try {
+        return v ? JSON.parse(v) : null;
+      } catch {
+        return null;
+      }
+    };
+    const pad = (n) => String(n).padStart(2, "0");
+    const DAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+    // L'heure comme Teams l'affiche dans le fil : « 14:32 », « Hier 09:10 », « mardi 10:36 »
+    // (cette semaine), « 25/11 16:05 ».
+    const shown = (ts, now = new Date()) => {
+      if (!Number.isFinite(ts)) return "";
+      const d = new Date(ts);
+      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const diff = Math.round((day(now) - day(d)) / 86400000);
+      if (diff === 0) return hm;
+      if (diff === 1) return `Hier ${hm}`;
+      if (diff > 1 && diff < 7) return `${DAYS[d.getDay()]} ${hm}`;
+      const dm = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+      return d.getFullYear() === now.getFullYear() ? `${dm} ${hm}` : `${dm}/${d.getFullYear()} ${hm}`;
+    };
+    const attr = (el, k) => (el && el.getAttribute && el.getAttribute(k)) || "";
+    const all = (el, test, out = []) => {
+      for (const c of (el && el.childNodes) || []) {
+        if (c.nodeType !== 1) continue;
+        if (test(c)) out.push(c);
+        all(c, test, out);
+      }
+      return out;
+    };
+    // Images collées dans le corps : servies par le stockage de Teams (AMS).
+    const amsImages = (root) =>
+      all(root, (el) => String(el.tagName || "").toUpperCase() === "IMG" && /AMSImage/i.test(attr(el, "itemtype"))).map((el) => attr(el, "src"));
+    const filesFrom = (props) =>
+      (parseJson(props && props.files) || [])
+        .map((f) => ({ name: String((f && (f.fileName || f.title)) || "").trim(), url: String((f && (f.objectUrl || (f.fileInfo && f.fileInfo.shareUrl))) || "") }))
+        .filter((f) => f.name);
+    const cardsFrom = (props) =>
+      (parseJson(props && props.links) || [])
+        .map((l) => {
+          const url = String((l && l.url) || "");
+          const p = (l && l.previewenabled !== false && l.preview) || {};
+          let source = "";
+          try {
+            source = url ? new URL(url).hostname.replace(/^www\./, "") : "";
+          } catch {}
+          return { source, title: String(p.title || "").slice(0, 200), url, fields: [] };
+        })
+        .filter((c) => c.title && c.url)
+        .slice(0, 5);
+    const mineIn = (props, me) => {
+      if (!me) return [];
+      const out = new Set();
+      for (const e of parseJson(props && props.emotions) || []) {
+        const key = EMOTIONS[e && e.key];
+        if (key && ((e && e.users) || []).some((u) => u && u.mri === me)) out.add(key);
+      }
+      return Array.from(out);
+    };
+    const isUser = (raw) => USER_TYPES.test(String((raw && raw.messagetype) || ""));
+    // Analyse du corps HTML d'un message SANS le DOM de la page : Teams impose les Trusted
+    // Types (DOMParser / innerHTML refusés sans TrustedHTML), et un arbre inerte ne charge ni
+    // image ni script. Donne juste ce que lisent messageParts et amsImages : nodeType, tagName,
+    // childNodes, getAttribute.
+    const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+    const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
+    const decode = (s) =>
+      s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
+        if (e[0] === "#") {
+          const n = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : m;
+        }
+        return ENTITIES[e.toLowerCase()] ?? m;
+      });
+    const element = (tagName, attributes) => ({
+      nodeType: 1,
+      tagName: tagName.toUpperCase(),
+      attributes,
+      childNodes: [],
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+      },
+    });
+    const parseHtml = (html) => {
+      const root = element("div", {});
+      const stack = [root];
+      const re = /<!--[\s\S]*?-->|<\/([a-zA-Z0-9-]+)\s*>|<([a-zA-Z0-9-]+)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>|([^<]+)|</g;
+      for (const m of String(html || "").replace(/\r\n?/g, "\n").matchAll(re)) {
+        const top = stack[stack.length - 1];
+        if (m[1]) {
+          const at = stack.map((e) => e.tagName).lastIndexOf(m[1].toUpperCase());
+          if (at > 0) stack.length = at;
+        } else if (m[2]) {
+          const attrs = {};
+          for (const a of (m[3] || "").matchAll(/([^\s=>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g))
+            attrs[a[1].toLowerCase()] = decode(a[2] ?? a[3] ?? a[4] ?? "");
+          const el = element(m[2], attrs);
+          top.childNodes.push(el);
+          if (!m[4] && !VOID.has(m[2].toLowerCase()) && stack.length < 64) stack.push(el);
+        } else if (m[5] || m[0] === "<") {
+          top.childNodes.push({ nodeType: 3, data: decode(m[5] || "<") });
+        }
+      }
+      return root;
+    };
+    // Citation (« Répondre ») : le HTML ne porte l'heure du message cité que dans l'itemid d'un
+    // <span itemprop="time"> vide ; la page l'affiche sur sa ligne (« 05/11/2026 14:02 »).
+    const quoteTimes = (root) => {
+      for (const el of all(root, (x) => attr(x, "itemprop") === "time" && /^\d{10,16}$/.test(attr(x, "itemid")))) {
+        const d = new Date(Number(attr(el, "itemid")));
+        if (Number.isNaN(d.getTime())) continue;
+        el.tagName = "DIV";
+        el.childNodes = [{ nodeType: 3, data: `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}` }];
+      }
+      return root;
+    };
+    // raw : message du service de chat ; me : mri de l'utilisateur ; parse(html) → élément racine.
+    const convert = (raw, me, parse, parts, now) => {
+      const props = raw.properties || {};
+      const ts = Date.parse(raw.originalarrivaltime || raw.composetime || "");
+      const deleted = Boolean(props.deletetime);
+      const root = deleted ? null : quoteTimes(parse(String(raw.content || "")));
+      const p = root ? parts(root) : { text: "", links: [], cards: [] };
+      return {
+        sender: String(raw.imdisplayname || "").trim(),
+        text: deleted ? "Ce message a été supprimé." : String(p.text || "").replace(/\s+\n/g, "\n").trim(),
+        at: shown(ts, now),
+        id: String(raw.id || ""),
+        status: null,
+        reactions: deleted ? [] : mineIn(props, me),
+        files: deleted ? [] : filesFrom(props),
+        images: root ? amsImages(root) : [],
+        links: deleted ? [] : p.links || [],
+        cards: deleted ? [] : [...(p.cards || []), ...cardsFrom(props)].slice(0, 5),
+        ts: Number.isFinite(ts) ? ts : null,
+      };
+    };
+    return { convert, isUser, shown, parseHtml };
+  })();
+  // <<< chat-message
+
+  const chatThread = (() => {
+    const PAGE = 50;
+    const MAX_PAGES = 12;
+    const convert = (raw, me) => chatMessage.convert(raw, me, chatMessage.parseHtml, messageParts);
+    // Miniatures des images, les plus récentes d'abord, dans les mêmes limites que la page.
+    const pictures = async (messages) => {
+      let count = 0;
+      let weight = 0;
+      for (const m of [...messages].reverse()) {
+        const out = [];
+        for (const src of m.images) {
+          let shot = null;
+          if (count < THUMBS.max && weight < THUMBS.budget) {
+            try {
+              const blob = await chatsvc.image(src);
+              if (blob) {
+                const bitmap = await createImageBitmap(blob);
+                const scale = Math.min(1, THUMBS.width / bitmap.width);
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(bitmap.width * scale);
+                canvas.height = Math.round(bitmap.height * scale);
+                canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                shot = { data: canvas.toDataURL("image/jpeg", 0.8), width: canvas.width, height: canvas.height };
+              }
+            } catch {}
+          }
+          if (shot) {
+            count++;
+            weight += shot.data.length;
+          }
+          out.push(shot || { data: null, width: 0, height: 0 });
+        }
+        m.images = out;
+      }
+    };
+    // Les `last` derniers messages (au plus), ou ceux plus récents que `since` (epoch ms).
+    // `top` : le début de la conversation est atteint (plus rien d'ancien à lire).
+    return async ({ thread, last = 30, since = null }) => {
+      const path = "/v1/users/ME/conversations/" + encodeURIComponent(String(thread || "")) + "/messages";
+      let query = { view: "msnp24Equivalent", pageSize: PAGE };
+      const acc = new Map();
+      let top = false;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const r = await chatsvc.get({ path, query });
+        if (!r.ok) return { ok: false, stage: r.stage, status: r.status || 0, error: r.error || "lecture refusée par le service de chat" };
+        const me = chatsvc.me();
+        const list = (r.json && r.json.messages) || [];
+        let oldest = Infinity;
+        for (const raw of list) {
+          if (!raw || !raw.id) continue;
+          const t = Date.parse(raw.originalarrivaltime || raw.composetime || "");
+          if (Number.isFinite(t)) oldest = Math.min(oldest, t);
+          if (!chatMessage.isUser(raw)) continue;
+          if (!acc.has(raw.id)) acc.set(raw.id, convert(raw, me));
+        }
+        const back = r.json && r.json._metadata && r.json._metadata.backwardLink;
+        if (!list.length || !back) {
+          top = true;
+          break;
+        }
+        const kept = Array.from(acc.values()).filter((m) => m.text || m.files.length || m.images.length || m.cards.length);
+        if (since != null ? oldest < since : kept.length >= last) break;
+        // Page précédente : seuls les paramètres permis du lien de Teams sont repris.
+        try {
+          const q = new URL(back).searchParams;
+          query = {};
+          for (const k of ["view", "pageSize", "startTime", "syncState"]) if (q.get(k)) query[k] = q.get(k);
+        } catch {
+          break;
+        }
+      }
+      const ordered = Array.from(acc.values())
+        .filter((m) => m.text || m.files.length || m.images.length || m.cards.length)
+        .filter((m) => since == null || m.ts == null || m.ts >= since)
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0) || Number(a.id) - Number(b.id));
+      const shownMsgs = ordered.slice(-last);
+      await pictures(shownMsgs);
+      return { ok: true, messages: shownMsgs.map(({ ts, ...m }) => m), top: top && shownMsgs.length === ordered.length };
+    };
+  })();
+
   // --- Mentions (@quelqu'un) ---
   // Teams n'ouvre ses suggestions de mention que sur une vraie frappe : les événements
   // fabriqués par un script sont ignorés. Trame tape « @Nom » par l'application
@@ -2337,6 +2614,8 @@
     // Lecture sur le service de chat de Teams, dans la page (voir `chatsvc`). Le moteur ne
     // donne qu'un chemin permis et des paramètres permis ; il ne reçoit que le corps métier.
     chatsvc: ({ path, query }) => chatsvc.get({ path, query }),
+    // Un fil lu sur le service de chat, sans ouvrir la conversation : même forme que `read`.
+    chatread: (args) => chatThread(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.

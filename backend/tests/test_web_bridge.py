@@ -308,3 +308,70 @@ def test_chat_get_raises_with_status_so_caller_falls_back_to_dom():
         assert False, "un échec doit lever ApiError"
     except WebBridgeDriver.ApiError as e:
         assert e.status == 401 and "authsvc" in str(e)
+
+
+# --- Lecture d'un fil sur le service de chat (sans ouvrir la conversation) ------------
+
+def test_read_history_api_asks_the_page_and_converts_like_the_dom_read():
+    from datetime import datetime
+    d = WebBridgeDriver()
+    calls = []
+
+    def rpc(op, **kw):
+        calls.append((op, kw))
+        return {"ok": True, "top": True, "messages": [
+            {"sender": "Ana", "text": "Bonjour", "at": "10:02", "id": "1700000000001", "reactions": ["like", "inconnue"],
+             "files": [{"name": "plan.pdf", "url": "https://dedalus.sharepoint.com/x"}], "images": [], "links": [], "cards": []},
+            {"sender": "Ana", "text": "Ce message a été supprimé.", "at": "10:03", "id": "1700000000002",
+             "reactions": [], "files": [], "images": [], "links": [], "cards": []},
+            {"sender": "Ana", "text": "", "at": "10:04", "id": "1700000000003", "reactions": [], "files": [],
+             "images": [], "links": [], "cards": []},
+        ]}
+
+    d._rpc = rpc
+    msgs, top = d.read_history_api("19:abc@thread.v2", 20, since=datetime(2026, 11, 27, 9, 0))
+    assert top is True and [m.id for m in msgs] == ["1700000000001", "1700000000002"]  # vide ignoré
+    assert msgs[0].reactions == ["like"] and msgs[0].files[0].name == "plan.pdf"
+    assert msgs[1].deleted and msgs[1].text == "Ce message a été supprimé."
+    op, kw = calls[0]
+    assert op == "chatread" and kw["thread"] == "19:abc@thread.v2" and kw["last"] == 20
+    assert kw["since"] == int(datetime(2026, 11, 27, 9, 0).timestamp() * 1000)
+
+
+def test_read_history_api_refuses_a_conversation_without_teams_id_without_calling_the_page():
+    d = WebBridgeDriver()
+    calls = []
+    d._rpc = lambda op, **kw: calls.append(op)
+    try:
+        d.read_history_api("name:Ana Martin", 20)
+        assert False, "une conversation sans id Teams doit être lue par la page"
+    except WebBridgeDriver.ApiError:
+        pass
+    assert calls == []
+
+
+def test_read_history_api_raises_on_refusal_so_the_page_is_read():
+    d = WebBridgeDriver()
+    d._rpc = lambda op, **kw: {"ok": False, "status": 403, "error": "service de chat refusé (HTTP 403)"}
+    try:
+        d.read_history_api("19:abc@thread.v2", 20)
+        assert False
+    except WebBridgeDriver.ApiError as e:
+        assert e.status == 403
+
+
+def test_chat_id_strips_the_list_prefix_and_refuses_name_only_conversations():
+    cid = WebBridgeDriver.chat_id
+    assert cid("title-19:abc123@thread.v2") == "19:abc123@thread.v2"
+    assert cid("19:abc123@thread.v2") == "19:abc123@thread.v2"
+    assert cid("19:aaa_bbb@unq.gbl.spaces") == "19:aaa_bbb@unq.gbl.spaces"
+    for bad in ("name:Ana Martin", "", "title-", "19:x@thread.v2/../y", "8:orgid:abc", "19:x@evil.com"):
+        assert cid(bad) is None, bad
+
+
+def test_read_history_api_sends_the_teams_id_without_the_list_prefix():
+    d = WebBridgeDriver()
+    sent = {}
+    d._rpc = lambda op, **kw: sent.update(kw) or {"ok": True, "messages": [], "top": True}
+    d.read_history_api("title-19:abc123@thread.v2", 10)
+    assert sent["thread"] == "19:abc123@thread.v2"

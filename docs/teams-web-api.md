@@ -153,13 +153,28 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
   atteinte : `bearer` → `authz` → `chatsvc` → `ok`), au plus toutes les 5 minutes. Visible dans
   la carte « API Teams web » (ligne « Service de chat ») et dans `/api/teams-web`.
 
+### 4. Lecture d'un fil sans ouvrir la conversation — op `chatread`
+
+- La page lit `…/conversations/{id}/messages` page par page (lien `backwardLink`, paramètres
+  permis seulement), jusqu'à `last` messages ou au-delà de `since`, puis convertit chaque message
+  **dans la page** vers la forme de l'op `read` (DOM) : même extracteur de texte, liens et cartes
+  (`message-parts`, rejoué sur le HTML du message), heure affichée comme dans Teams, réactions de
+  l'utilisateur (son identifiant est lu dans le jeton du chat, qui reste dans la page), fichiers
+  (`properties.files`), aperçus de liens (`properties.links`), images AMS en miniatures. Les
+  événements du fil (ajout de membre, appel) sont ignorés.
+- Côté moteur : `WebBridgeDriver.read_history_api`, puis `WebApiDriver.read_history_direct`, qui
+  note la voie suivie (`routes()["read"]`). Le moteur l'essaie **avant** d'ouvrir la conversation
+  (historique d'un fil, contexte des brouillons) ; s'il échoue, ou pour une conversation sans id
+  Teams, il lit la page comme avant.
+- Effet : lire un fil ne change plus la conversation affichée dans la fenêtre Teams et ne la
+  marque plus comme lue.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
-2. **Session chatsvc dans la page** : cette PR.
-3. **Lectures** : liste et non-lus, lecture d'un fil, surveillance (sondage `syncState`),
-   converties vers `backend/models.py` ; `routes()` passe à « api » action par action, repli DOM
-   sur échec.
+2. ~~Session chatsvc dans la page~~ (#121).
+3. **Lectures** : lecture d'un fil (cette PR) ; puis liste et non-lus, surveillance des nouveaux
+   messages (sondage `syncState`), repli DOM par action.
 4. **Écritures prouvées par relecture** : marquer comme lu (`consumptionhorizon`), réactions
    (`properties?name=emotions`), envoi (relu par `clientmessageid`), réponse citée, suppression,
    avec tous les garde-fous de `backend/safety.py`.

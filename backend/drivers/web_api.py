@@ -15,13 +15,16 @@ est exposée pour l'écran Réglages.
 Enveloppe transparente : tout ce qui n'est pas défini ici est délégué au pilote de la page.
 """
 from __future__ import annotations
+import threading
 import time
+from datetime import datetime
 from typing import Any, Optional
 
 from drivers.base import TeamsDriver
+from models import IncomingMessage
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
-_OWN = {"_inner"}
+_OWN = {"_inner", "_routes", "_routes_lock"}
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -30,8 +33,14 @@ ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_p
 
 
 class WebApiDriver:
+    # Actions déjà câblées sur le service de chat (les autres restent sur la page).
+    API_ACTIONS = frozenset({"read"})
+    PAGE_REASON = "via la page Teams (pas encore câblé sur le service de chat)"
+
     def __init__(self, inner: TeamsDriver) -> None:
         object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_routes", {})
+        object.__setattr__(self, "_routes_lock", threading.Lock())
 
     @property
     def inner(self) -> TeamsDriver:
@@ -47,11 +56,42 @@ class WebApiDriver:
             setattr(self._inner, name, value)
 
     def routes(self) -> dict[str, dict]:
-        """Voie suivie par action. Tout passe par la page aujourd'hui ; la structure est celle
-        du GraphDriver (« via » + « reason ») pour que l'écran Réglages la montre pareil."""
+        """Voie suivie par action, telle que constatée au dernier essai : « api » quand le
+        service de chat a répondu, « page » sinon (pas encore câblé, ou repli sur la page avec
+        la raison de l'échec)."""
         at = time.strftime("%H:%M:%S")
-        reason = "lu/écrit via la page Teams (messages par le canal temps réel)"
-        return {a: {"via": "page", "reason": reason, "at": at} for a in ACTIONS}
+        with self._routes_lock:
+            seen = dict(self._routes)
+        out = {}
+        for a in ACTIONS:
+            if a in seen:
+                out[a] = dict(seen[a])
+            elif a in self.API_ACTIONS:
+                out[a] = {"via": "api", "reason": "service de chat de Teams (pas encore utilisé)", "at": at}
+            else:
+                out[a] = {"via": "page", "reason": self.PAGE_REASON, "at": at}
+        return out
+
+    def _route(self, action: str, via: str, reason: Optional[str] = None) -> None:
+        with self._routes_lock:
+            self._routes[action] = {"via": via, "reason": reason, "at": time.strftime("%H:%M:%S")}
+
+    # --- Lecture d'un fil par le service de chat, sans ouvrir la conversation ---
+    def read_history_direct(self, thread_id: str, last_n: int,
+                            since: Optional[datetime] = None) -> Optional[tuple[list[IncomingMessage], bool]]:
+        """Le fil lu sur le service de chat de Teams sans ouvrir la conversation (elle n'est
+        donc pas marquée comme lue). None quand ce n'est pas possible : l'appelant lit alors
+        la page, comme avant (ouverture de la conversation)."""
+        read = getattr(self._inner, "read_history_api", None)
+        if not callable(read):
+            return None
+        try:
+            out = read(thread_id, last_n, since)
+        except Exception as e:
+            self._route("read", "page", f"repli sur la page : {e}")
+            return None
+        self._route("read", "api")
+        return out
 
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont

@@ -60,6 +60,12 @@ const teamsPage = () => {
     document: doc,
     URL,
     URLSearchParams,
+    // Comme la vraie page Teams (Trusted Types) : DOMParser refuse une chaîne HTML brute.
+    DOMParser: class {
+      parseFromString() {
+        throw new TypeError("This document requires 'TrustedHTML' assignment.");
+      }
+    },
     setTimeout: (fn: Function, ms?: number) => setTimeout(fn as any, ms),
     clearTimeout: (id: any) => clearTimeout(id),
     addEventListener: () => {},
@@ -395,4 +401,65 @@ test("chatsvc : authz refusé remonte l'étape et le statut, sans corps", async 
   assert.equal(r.result.stage, "authz");
   assert.equal(r.result.status, 403);
   assert.ok(!/SECRET-DETAIL/.test(JSON.stringify(r)));
+});
+
+
+// --- Lecture d'un fil par le service de chat (op chatread) -----------------------------
+const msg = (id: number, text: string, extra: any = {}) => ({
+  id: String(id),
+  messagetype: "RichText/Html",
+  imdisplayname: "Ana Martin",
+  originalarrivaltime: new Date(id).toISOString(),
+  content: `<p>${text}</p>`,
+  properties: {},
+  ...extra,
+});
+
+test("chatread lit le fil page par page, du plus ancien au plus récent, sans jeton dans la réponse", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const T = Date.UTC(2026, 10, 27, 9, 0);
+  const pages = [
+    { messages: [msg(T + 5000, "cinq"), msg(T + 4000, "quatre"), msg(T + 3500, "", { messagetype: "ThreadActivity/AddMember" })],
+      _metadata: { backwardLink: "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19%3Aa%40thread.v2/messages?startTime=1&syncState=abc&pageSize=50&view=msnp24Equivalent&evil=1" } },
+    { messages: [msg(T + 3000, "trois"), msg(T + 2000, "deux")], _metadata: {} },
+  ];
+  let n = 0;
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse(JSON.stringify(pages[n++]))));
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatread", { thread: "19:a@thread.v2", last: 3 });
+  assert.equal(r.result.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.result.messages.map((m: any) => m.text))), ["trois", "quatre", "cinq"]);
+  assert.equal(r.result.top, false); // « deux » existe encore plus haut
+  const urls = p.fetchCalls.slice(before).map((c) => c.url).filter((u) => !u.includes("/authsvc/"));
+  assert.equal(urls.length, 2);
+  // Page précédente : seuls les paramètres permis du lien de Teams sont repris.
+  assert.ok(urls[1].includes("syncState=abc") && !urls[1].includes("evil"), urls[1]);
+  assert.ok(!/SKYPE-CHAT-SECRET|MT-SECRET/.test(JSON.stringify(r)));
+});
+
+test("chatread avec since : s'arrête au premier message plus ancien et ne garde que les plus récents", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const T = Date.UTC(2026, 10, 27, 9, 0);
+  const page = { messages: [msg(T + 3000, "après"), msg(T + 1000, "avant")],
+    _metadata: { backwardLink: "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/x/messages?syncState=z" } };
+  let chatCalls = 0;
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_BODY);
+    chatCalls++;
+    return fakeResponse(JSON.stringify(page));
+  });
+  const r = await p.run("chatread", { thread: "19:a@thread.v2", last: 30, since: T + 2000 });
+  assert.deepEqual(JSON.parse(JSON.stringify(r.result.messages.map((m: any) => m.text))), ["après"]);
+  assert.equal(chatCalls, 1); // pas besoin de remonter plus loin
+});
+
+test("chatread remonte l'échec du service pour que le moteur lise la page", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse("{}", { status: 403 })));
+  const r = await p.run("chatread", { thread: "19:a@thread.v2", last: 10 });
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.status, 403);
 });
