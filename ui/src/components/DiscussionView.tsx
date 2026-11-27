@@ -212,9 +212,9 @@ function MessageActions({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label={`Réagir : ${r.label}`}
+                aria-label={mine.includes(r.key) ? `Retirer la réaction : ${r.label}` : `Réagir : ${r.label}`}
                 aria-pressed={mine.includes(r.key)}
-                disabled={Boolean(pending) || mine.includes(r.key)}
+                disabled={Boolean(pending)}
                 onClick={() => onReact(r.key)}
                 className={cn(
                   "grid size-7 place-items-center rounded-full text-base leading-none transition-transform hover:scale-125 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:hover:scale-100",
@@ -224,7 +224,7 @@ function MessageActions({
                 {pending === r.key ? <Loader2 className="size-3.5 animate-spin" /> : r.emoji}
               </button>
             </TooltipTrigger>
-            <TooltipContent>{mine.includes(r.key) ? `${r.label} · déjà mis` : r.label}</TooltipContent>
+            <TooltipContent>{mine.includes(r.key) ? `${r.label} · cliquer pour retirer` : r.label}</TooltipContent>
           </Tooltip>
         ))}
       {canReply && (
@@ -643,16 +643,22 @@ export function DiscussionView({
     base.current = "";
   };
 
+  // Un clic sur une réaction déjà mise la retire (comme dans Teams) ; l'état voulu est
+  // envoyé explicitement au moteur, qui ne bascule jamais à l'aveugle.
   const react = async (m: ThreadMessage, index: number, reaction: Reaction) => {
     if (reacting) return;
+    const remove = (m.reactions ?? []).includes(reaction);
     setReacting({ index, reaction });
-    const res = await trame.reactInThread(c.threadId, refOf(m), reaction);
+    const res = await trame.reactInThread(c.threadId, refOf(m), reaction, remove);
     setReacting(null);
-    if (!res.ok) return toast.error(`Réaction ${EMOJI[reaction]} impossible`, { description: res.error });
+    if (!res.ok) return toast.error(`${remove ? "Retrait de la réaction" : "Réaction"} ${EMOJI[reaction]} impossible`, { description: res.error });
     setMessages((list) =>
-      (list ?? []).map((x, i) =>
-        i === index && x.text === m.text && !(x.reactions ?? []).includes(reaction) ? { ...x, reactions: [...(x.reactions ?? []), reaction] } : x
-      )
+      (list ?? []).map((x, i) => {
+        if (i !== index || x.text !== m.text) return x;
+        const had = x.reactions ?? [];
+        if (remove) return { ...x, reactions: had.filter((r) => r !== reaction) };
+        return had.includes(reaction) ? x : { ...x, reactions: [...had, reaction] };
+      })
     );
   };
 
@@ -953,18 +959,26 @@ export function DiscussionView({
                 const reactions = (m.reactions?.length ?? 0) > 0 && (
                   <div className={cn("flex items-center gap-1", m.mine && "justify-end")}>
                     <AnimatePresence initial={false}>
-                      {(m.reactions ?? []).map((r) => (
-                        <motion.span
-                          key={r}
-                          initial={{ scale: 0.4, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          transition={{ type: "spring", stiffness: 500, damping: 22 }}
-                          title={`Tu as réagi : ${REACTIONS.find((x) => x.key === r)?.label ?? r}`}
-                          className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5"
-                        >
-                          {EMOJI[r]}
-                        </motion.span>
-                      ))}
+                      {(m.reactions ?? []).map((r) => {
+                        const label = REACTIONS.find((x) => x.key === r)?.label ?? r;
+                        return (
+                          <motion.button
+                            key={r}
+                            type="button"
+                            initial={{ scale: 0.4, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.4, opacity: 0 }}
+                            transition={{ type: "spring", stiffness: 500, damping: 22 }}
+                            title={canReact ? `Tu as réagi : ${label} · cliquer pour retirer` : `Tu as réagi : ${label}`}
+                            aria-label={`Retirer la réaction : ${label}`}
+                            disabled={!canReact || Boolean(reacting)}
+                            onClick={() => react(m, i, r)}
+                            className="rounded-full border border-primary/30 bg-primary/10 px-1.5 text-xs leading-5 enabled:hover:border-primary/60 enabled:hover:bg-primary/20 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
+                          >
+                            {pending === r ? <Loader2 className="inline size-3 animate-spin" /> : EMOJI[r]}
+                          </motion.button>
+                        );
+                      })}
                     </AnimatePresence>
                   </div>
                 );

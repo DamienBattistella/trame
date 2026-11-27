@@ -1688,23 +1688,25 @@ class Watcher:
         quoted = f" : « {body[:60]} »" if body else ""
         self.log("sent", f"Envoyé à {entity.display_name}{self._in_reply(reply_to)}{quoted}{self._joined(files)}")
 
-    def react(self, thread_id: str, target: MessageRef, reaction: str) -> None:
-        """One click reaction on a precise message. Same guards as typing: screen share,
-        UI lock, conversation confirmed by its title, message checked by author and text.
-        Success only once Teams shows the reaction: never a false « fait »."""
+    def react(self, thread_id: str, target: MessageRef, reaction: str, remove: bool = False) -> None:
+        """One click reaction on a precise message, or taking one's own off (`remove`).
+        Same guards as typing: screen share, UI lock, conversation confirmed by its title,
+        message checked by author and text. Success only once Teams shows the reaction
+        there (or gone): never a false « fait »."""
         entity = self._conversation(thread_id)
         if reaction not in REACTIONS:
             raise ActionError(422, "Réaction inconnue.")
         self._require("react")
         self._typing_allowed()
         emoji = REACTIONS[reaction]
+        none = "Aucune réaction retirée" if remove else "Aucune réaction posée"
         with self._ui_lock:
             if self._screen_share_guarded():
                 self.state.screen_sharing = True
                 raise ActionError(409, "Partage d'écran en cours : aucune action dans Teams.")
             try:
-                with telemetry.span("teams.react", conversation=thread_id, reaction=reaction) as sp:
-                    focus = self.driver.react_focused(thread_id, target, reaction, restore=True)
+                with telemetry.span("teams.react", conversation=thread_id, reaction=reaction, remove=remove) as sp:
+                    focus = self.driver.react_focused(thread_id, target, reaction, restore=True, remove=remove)
                     telemetry.set_attrs(sp, confirmed=focus.ok, restored=focus.restored)
             except ReactUncertain as e:
                 self.log("warn", f"Réaction {emoji} non confirmée dans « {entity.display_name} » : {e}")
@@ -1713,21 +1715,25 @@ class Watcher:
                 raise ActionError(501, str(e))
             except Exception as e:
                 self.log("warn", f"Réaction impossible dans « {entity.display_name} » : {e}")
-                raise ActionError(409, f"Aucune réaction posée. Raison : {e}.")
+                raise ActionError(409, f"{none}. Raison : {e}.")
         self._warn_if_not_restored(focus)
         if not focus.ok:
             reason = focus.reason or "conversation non confirmée dans Teams"
             self.log("warn", f"Réaction refusée dans « {entity.display_name} » : {reason}")
-            raise ActionError(409, f"Aucune réaction posée. Raison : {reason}.")
+            raise ActionError(409, f"{none}. Raison : {reason}.")
         with self._lock:
             cached = self._thread_cache.get(thread_id)
             for m in reversed(cached[1] if cached else []):
                 if (m.get("id") == target.id) if target.id else same_message(target, m["sender"], m["text"]):
-                    if reaction not in m.setdefault("reactions", []):
-                        m["reactions"].append(reaction)
+                    mine = m.setdefault("reactions", [])
+                    if remove and reaction in mine:
+                        mine.remove(reaction)
+                    elif not remove and reaction not in mine:
+                        mine.append(reaction)
                     break
         who = f" de {target.sender}" if target.sender else ""
-        self.log("info", f"Réaction {emoji} au message{who} dans « {entity.display_name} »")
+        what = "retirée du" if remove else "au"
+        self.log("info", f"Réaction {emoji} {what} message{who} dans « {entity.display_name} »")
 
     def delete_message(self, thread_id: str, target: MessageRef) -> None:
         """Delete one of the user's own messages in Teams, on their explicit request from

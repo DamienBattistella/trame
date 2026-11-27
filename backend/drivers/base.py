@@ -478,26 +478,28 @@ class TeamsDriver(ABC):
         compose box is cleared and nothing is sent."""
         raise NotSupported("Ce pilote Teams ne sait pas mentionner quelqu'un.")
 
-    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
-        """Open thread_id, then put `reaction` on target. `ok` only once Teams shows it.
-        A reaction already there is left alone (clicking it again would remove it)."""
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True,
+                      remove: bool = False) -> Focus:
+        """Open thread_id, then put `reaction` on target, or take it off when `remove`.
+        `ok` only once Teams shows it there (or gone). Never a toggle: a reaction already
+        in the wanted state is left alone (clicking it again would flip it)."""
         if not self.supports_reactions:
             raise NotSupported("Ce pilote Teams ne sait pas réagir à un message.")
         with self.focused(thread_id, restore=restore) as focus:
             if focus.ok:
                 try:
-                    focus.ok = bool(self._react_in_active(thread_id, target, reaction))
+                    focus.ok = bool(self._react_in_active(thread_id, target, reaction, remove=remove))
                     if not focus.ok:
-                        focus.reason = "réaction non posée dans Teams"
+                        focus.reason = "réaction non retirée dans Teams" if remove else "réaction non posée dans Teams"
                 except ReactUncertain:
                     raise
                 except Exception as e:
                     focus.ok, focus.reason = False, str(e)
         return focus
 
-    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
-        """Put reaction on target in the active conversation (still thread_id). The
-        driver finds target and checks its sender and text before clicking."""
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str, remove: bool = False) -> bool:
+        """Put reaction on target (or take it off when `remove`) in the active conversation
+        (still thread_id). The driver finds target and checks its sender and text before clicking."""
         raise NotSupported("Ce pilote Teams ne sait pas réagir à un message.")
 
     def delete_focused(self, thread_id: str, target: MessageRef, restore: bool = True) -> Focus:
