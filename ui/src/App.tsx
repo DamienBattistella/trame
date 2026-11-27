@@ -111,7 +111,8 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!trame.connected) return;
-    const t = setTimeout(() => setBooting(false), Math.max(0, 1800 - (Date.now() - mountedAt.current)));
+    // Juste le temps que le logo s'anime, sans retenir une interface déjà prête.
+    const t = setTimeout(() => setBooting(false), Math.max(0, 600 - (Date.now() - mountedAt.current)));
     return () => clearTimeout(t);
   }, [trame.connected]);
 
@@ -307,7 +308,8 @@ function EngineDown() {
 function Splash({ connected }: { connected: boolean }) {
   const [waited, setWaited] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setWaited(true), 2600);
+    // Le moteur peut mettre plusieurs secondes à démarrer : « hors ligne » seulement s'il tarde vraiment.
+    const t = setTimeout(() => setWaited(true), 12000);
     return () => clearTimeout(t);
   }, []);
   const status = connected ? "ok" : waited ? "offline" : "boot";

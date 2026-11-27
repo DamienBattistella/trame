@@ -29,7 +29,7 @@ from drivers.base import DeleteUncertain, EditUncertain, Focus, ReactUncertain, 
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
 
 # Attributs propres au wrapper (les autres sont lus/écrits sur le pilote de la page).
-_OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
+_OWN = {"_inner", "_routes", "_routes_lock", "_chat", "_health_cache"}
 
 
 def _norm(text: Optional[str]) -> str:
@@ -199,6 +199,10 @@ class WebApiDriver:
             object.__setattr__(self, name, value)
         else:
             setattr(self._inner, name, value)
+
+    def chat_ready(self) -> bool:
+        """La dernière lecture de la liste par le service de chat a réussi."""
+        return bool(self._chat.ok)
 
     def routes(self) -> dict[str, dict]:
         """Voie suivie par action, telle que constatée au dernier essai : « api » quand le
@@ -864,6 +868,25 @@ class WebApiDriver:
         leurs repères de page ne servent plus qu'en repli. Un repli sur la page les en retire."""
         routes = self.routes()
         return {f for a, fs in self.CHECK_FEATURES.items() if routes.get(a, {}).get("via") == "api" for f in fs}
+
+    # La carte « API Teams web » se relit toutes les 10 s : un seul diagnostic de la page pour la
+    # signature et la session du service de chat (au lieu de deux), gardé HEALTH_TTL secondes.
+    HEALTH_TTL = 8.0
+
+    def health(self) -> dict:
+        now = time.monotonic()
+        cached = getattr(self, "_health_cache", None)
+        if cached and now - cached[0] < self.HEALTH_TTL:
+            return cached[1]
+        try:
+            page = self._inner.diagnose().get("diagnose")
+        except Exception:
+            page = None
+        page = page if isinstance(page, dict) else {}
+        sign, chat = page.get("sign_selftest"), page.get("chatsvc_selftest")
+        out = {"signing": sign if isinstance(sign, dict) else None, "chatsvc": chat if isinstance(chat, dict) else None}
+        object.__setattr__(self, "_health_cache", (now, out))
+        return out
 
     def signing(self) -> Optional[dict]:
         """Santé de la signature des appels API, telle que mesurée par l'auto-test du pont

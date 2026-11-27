@@ -502,7 +502,18 @@
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, mtBase, summary, safeProbe: () => probeUrl };
+    // Au démarrage, Teams pose son jeton middletier quelques secondes après le chargement de la
+    // page : attendre qu'il arrive (au plus `ms`) plutôt qu'échouer aussitôt. Rendu à la page seulement.
+    const whenMtBearer = async (ms = 6000) => {
+      const until = Date.now() + ms;
+      let b = mtBearer();
+      while (!b && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 200));
+        b = mtBearer();
+      }
+      return b;
+    };
+    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, whenMtBearer, mtBase, summary, safeProbe: () => probeUrl };
   })();
 
   // --- Service de chat de Teams (chatsvc), appelé DANS la page --------------------------
@@ -532,7 +543,7 @@
       }
     };
     const open = async () => {
-      const bearer = apiCapture.mtBearer();
+      const bearer = await apiCapture.whenMtBearer();
       if (!bearer) {
         const e = new Error("aucun jeton Teams observé pour l'instant (ouvre une conversation)");
         e.stage = "bearer";
@@ -2851,7 +2862,7 @@
     const PRESENCE = "https://presence.teams.microsoft.com/v1";
     const MRI = /^8:[A-Za-z0-9:._-]{3,120}$/;
     const call = async (method, url, body) => {
-      const bearer = apiCapture.mtBearer();
+      const bearer = await apiCapture.whenMtBearer();
       if (!bearer) return { ok: false, sent: false, error: "aucun jeton Teams observé pour l'instant" };
       try {
         const res = await fetch(url, {

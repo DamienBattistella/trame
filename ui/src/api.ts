@@ -76,11 +76,15 @@ const SOUL_MAX_BYTES = 64 * 1024;
 export const CANCELLED = "Action annulée.";
 const MAX_REFLECTIONS = 20;
 
+/** Ce qui est prêt dans Teams : « waiting » pendant la connexion, « off » sans Teams intégré. */
+export type Readiness = { page: "waiting" | "ready" | "off"; chat: "waiting" | "ready" | "off"; since: string };
+
 export interface TrameState {
   paused: boolean;
   screenSharing: boolean;
   brain: Brain;
   selftestOk: boolean;
+  readiness: Readiness;
   onboarded: boolean;
   watchlist: WatchEntity[];
   drafts: DraftItem[];
@@ -268,6 +272,11 @@ function mapState(s: any): TrameState {
     screenSharing: s.screen_sharing,
     brain: s.brain,
     selftestOk: s.selftest_ok,
+    readiness: {
+      page: s.readiness?.page ?? (s.selftest_ok ? "ready" : "waiting"),
+      chat: s.readiness?.chat ?? "off",
+      since: s.readiness?.since ?? "",
+    },
     onboarded: Boolean(s.onboarded),
     watchlist: (s.watchlist ?? []).map(mapWatch),
     drafts: (s.drafts ?? []).map(mapDraft),
@@ -652,13 +661,14 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false, edit: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, readiness: { page: "waiting", chat: "off", since: "" }, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false, edit: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
   }
   return {
     paused: false,
     screenSharing: false,
     brain: "claude",
     selftestOk: true,
+    readiness: { page: "ready", chat: "ready", since: "" },
     onboarded: false,
     watchlist: mockConversations.map((c) => ({ ...c })),
     drafts: mockDrafts.map((d) => ({ ...d })),
@@ -958,18 +968,23 @@ export function useTrame() {
       for (const t of toasts(fresh.reverse(), loadPrefs(), new Date(), next.screenSharing)) notify(t.title, t.body, soundRef.current);
     };
 
+    // Le moteur démarre en même temps que l'interface : on réessaie vite au début (250 ms),
+    // puis de plus en plus calmement, jusqu'à 2 s entre deux essais.
+    let delay = 0;
+    const nextDelay = () => (delay = Math.min(2000, delay ? delay * 2 : 250));
     const connect = () => {
       if (closed) return;
       let ws: WebSocket;
       try {
         ws = new WebSocket(WS);
       } catch {
-        retry = setTimeout(connect, 2000);
+        retry = setTimeout(connect, nextDelay());
         return;
       }
       wsRef.current = ws;
       ws.onopen = () => {
         if (closed) return;
+        delay = 0;
         setConnected(true);
         setEverConnected(true);
         // Le moteur renvoie toutes ses actions à chaque connexion ; redémarré, il en recompte les numéros.
@@ -996,7 +1011,7 @@ export function useTrame() {
         lastFrame = "";
         announced = null;
         setConnected(false);
-        retry = setTimeout(connect, 2000); // reconnect if the backend restarts
+        retry = setTimeout(connect, nextDelay()); // reconnect if the backend restarts
       };
       ws.onerror = () => {
         try {

@@ -247,6 +247,7 @@ class Watcher:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         threading.Thread(target=self._presence_loop, daemon=True).start()
+        threading.Thread(target=self._readiness_loop, daemon=True).start()
         threading.Thread(target=self._outbox_loop, daemon=True).start()
         if self.state.selftest_ok:
             self._check_wake.set()
@@ -317,6 +318,37 @@ class Watcher:
     PHOTO_REFRESH = 3600.0
     PHOTO_RETRY = 300.0
     _photo_at: Optional[float] = None
+
+    # Disponibilité de Teams suivie par le moteur lui-même : vite tant que Teams n'est pas prêt
+    # (la page se charge), puis rarement. L'interface n'a plus besoin d'être ouverte, et le
+    # passage à « prêt » ne dépend plus d'un relevé toutes les 20 s.
+    READY_POLL_WAITING = 2.0
+    READY_POLL_READY = 20.0
+
+    def _readiness_loop(self) -> None:
+        status = getattr(self.driver, "status", None)
+        if not callable(status) or not getattr(self.driver, "waits_for_relay", False):
+            self._set_readiness("ready" if self.state.selftest_ok else "waiting")
+            return
+        while True:
+            ready = False
+            try:
+                ready = bool((status() or {}).get("ready"))
+            except Exception:
+                ready = False
+            self.teams_ready(ready)
+            self._set_readiness("ready" if ready else "waiting")
+            if self._stop.wait(self.READY_POLL_READY if ready else self.READY_POLL_WAITING):
+                return
+
+    def _set_readiness(self, page: str) -> None:
+        chat_ready = getattr(self.driver, "chat_ready", None)
+        chat = ("ready" if chat_ready() else "waiting") if callable(chat_ready) else "off"
+        cur = self.state.readiness
+        if cur.page == page and cur.chat == chat and cur.since:
+            return
+        since = cur.since if cur.page == page and cur.since else datetime.now().strftime("%H:%M:%S")
+        self.state.readiness = cur.model_copy(update={"page": page, "chat": chat, "since": since})
 
     def _presence_loop(self) -> None:
         """Copy the drivers' presence onto the conversations every PRESENCE_REFRESH s.
