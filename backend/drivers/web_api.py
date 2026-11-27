@@ -27,6 +27,37 @@ from models import IncomingMessage, Surface, WatchEntity
 _OWN = {"_inner", "_routes", "_routes_lock", "_chat"}
 
 
+def _norm(text: Optional[str]) -> str:
+    t = " ".join(str(text or "").replace("…", " ").replace("...", " ").split()).casefold()
+    return t.strip(" .,;:!?")
+
+
+def _same_message(seen: Optional[tuple], row: dict) -> bool:
+    """Le dernier message que la page affiche est-il celui de cette conversation sur le service de
+    chat ? Oui si l'aperçu (souvent tronqué) est le début de son texte, ou si l'heure affichée est
+    la même à la minute (« 13:44 ») ou le même jour (« 25/11 », « Hier »). Sinon : non (prudence)."""
+    preview, when = seen if isinstance(seen, tuple) else (seen, None)
+    last = row.get("last") or {}
+    p, a = _norm(preview), _norm(last.get("text"))
+    n = min(len(p), len(a), 24)
+    if n >= 3 and p[:n] == a[:n]:
+        return True
+    shown, at = str(when or "").strip().casefold(), str(last.get("at") or "").strip().casefold()
+    if not shown or not at:
+        return False
+    return at == shown if ":" in shown else at.startswith(shown + " ")
+
+
+def _shown_text(last: dict) -> str:
+    """Texte d'un dernier message ; une image ou un fichier seul est dit comme tel."""
+    text = str(last.get("text") or "").strip()
+    if text:
+        return text
+    if last.get("files"):
+        return "(fichier)"
+    return "(image)" if last.get("images") else ""
+
+
 def _newer(lid: str, prev: Optional[str]) -> bool:
     """Ids de messages Teams : des horodatages en ms, croissants. Sans précédent : nouveau."""
     if not prev:
@@ -49,6 +80,7 @@ class _ChatState:
         self.seen_last: dict[str, str] = {}
         self.primed_at: Optional[float] = None
         self.mapped: dict[str, str] = {}  # thread_id de Trame -> id Teams
+        self.refused = 0  # reliées par le nom mais dont l'aperçu ne concorde pas
 
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
@@ -146,29 +178,38 @@ class WebApiDriver:
         st.ok = True
         return True
 
-    def _chat_for(self, entity: WatchEntity, dm_names: dict[str, Optional[str]]) -> Optional[str]:
+    def _chat_for(self, entity: WatchEntity, dm_names: dict[str, Optional[str]], preview: Optional[tuple]) -> Optional[str]:
         rows = self._chat.rows
-        if entity.is_self:
-            return "48:notes" if "48:notes" in rows else None
         chat_id = getattr(self._inner, "chat_id", None)
         cid = chat_id(entity.thread_id) if callable(chat_id) else None
-        if cid:
+        if cid:  # l'id Teams est dans l'id de la page : aucune supposition
             return cid if cid in rows else None
-        if entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
-            return dm_names.get(entity.display_name.casefold())
-        return None
+        # Sans id dans la page, on relie par le nom, puis on le prouve : l'aperçu que la page
+        # affiche doit être le dernier message de cette conversation. Sinon, rien (constaté en
+        # direct : un tête-à-tête relié par son nom à une autre conversation de la même personne).
+        if entity.is_self:
+            cid = "48:notes" if "48:notes" in rows else None
+        elif entity.thread_id.startswith("name:") and entity.surface == Surface.dm:
+            cid = dm_names.get(entity.display_name.casefold())
+        if cid and not _same_message(preview, rows[cid]):
+            self._chat.refused += 1
+            return None
+        return cid
 
-    def _map(self, entities: list[WatchEntity]) -> dict[str, str]:
+    def _map(self, entities: list[WatchEntity], previews: Optional[dict[str, tuple]] = None) -> dict[str, str]:
         """Conversations de la page reliées à leur id Teams. Un tête-à-tête n'est relié que par un
-        nom porté par UNE seule conversation (deux homonymes : rien, la page reste la source)."""
+        nom porté par UNE seule conversation (deux homonymes : rien) et dont le dernier message est
+        celui que la page affiche : sinon la page reste la source."""
+        previews = previews or {}
         dm_names: dict[str, Optional[str]] = {}
         for cid, r in self._chat.rows.items():
             name = str(r.get("name") or "").casefold()
             if r.get("kind") == "dm" and name:
                 dm_names[name] = None if name in dm_names else cid
         mapped = {}
+        self._chat.refused = 0
         for e in entities:
-            cid = self._chat_for(e, dm_names)
+            cid = self._chat_for(e, dm_names, previews.get(e.thread_id))
             if cid:
                 mapped[e.thread_id] = cid
         self._chat.mapped = mapped
@@ -195,7 +236,9 @@ class WebApiDriver:
         items = inner._items()
         entities = inner._entities(items)
         api = self._refresh_chat()
-        mapped = self._map(entities) if api else {}
+        previews = {it["thread_id"]: (getattr(it.get("parsed"), "preview", None), getattr(it.get("parsed"), "last_time", None))
+                    for it in items}
+        mapped = self._map(entities, previews) if api else {}
         st = self._chat
         if api:
             for e in entities:
@@ -234,7 +277,7 @@ class WebApiDriver:
                 continue
             if not last.get("user") or (st.me and last.get("from") == st.me):
                 continue
-            text = str(last.get("text") or "").strip() or ("(pièce jointe)" if last.get("files") or last.get("images") else "")
+            text = _shown_text(last)
             if not text:
                 continue
             e = convs.get(tid)
@@ -266,7 +309,7 @@ class WebApiDriver:
             if (wanted is not None and tid not in wanted) or row is None or not self._unread(row):
                 continue
             last = row["last"]
-            text = str(last.get("text") or "").strip() or "(pièce jointe)"
+            text = _shown_text(last) or "(pièce jointe)"
             out.append(IncomingMessage(thread_id=tid, sender=str(last.get("sender") or ""), text=text,
                                        received_at=str(last.get("at") or ""), id=str(last.get("id")),
                                        surface=kinds.get(tid, Surface.dm)))
@@ -281,6 +324,7 @@ class WebApiDriver:
         return {"ok": st.ok, "conversations": len(st.rows), "by_kind": kinds,
                 "dm_named": sum(1 for r in st.rows.values() if r.get("kind") == "dm" and r.get("name")),
                 "mapped": len(st.mapped), "mapped_by_name": sum(1 for t in st.mapped if t.startswith("name:")),
+                "refused_by_preview": st.refused,
                 # Non-lus selon le service de chat : ids et horizon seulement (aucun texte).
                 "unread": [{"thread": t, "last": (st.rows[c].get("last") or {}).get("id"), "horizon": st.rows[c].get("horizon"),
                             "type_user": (st.rows[c].get("last") or {}).get("user")}

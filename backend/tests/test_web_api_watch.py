@@ -2,6 +2,7 @@
 non-lus, nouveaux messages), avec repli exact sur la page quand le service refuse."""
 from __future__ import annotations
 
+from drivers import rail_label
 from drivers.preview_watch import PreviewWatcher
 from drivers.web_api import WebApiDriver
 from drivers.web_bridge import WebBridgeDriver
@@ -36,7 +37,7 @@ class FakePage:
     chat_id = staticmethod(WebBridgeDriver.chat_id)
 
     def _items(self, deep=False):
-        return [{"thread_id": t, "label": lab} for t, lab in self.labels.items()]
+        return [{"thread_id": t, "label": lab, "parsed": rail_label.parse(lab)} for t, lab in self.labels.items()]
 
     def _entities(self, items):
         out = []
@@ -160,3 +161,50 @@ def test_old_messages_are_never_replayed_when_a_conversation_is_linked_later():
     # Et même si un ancien message remplace un autre ancien message, rien n'est annoncé.
     page.rows = [row(GROUP, "group", "Projet X", 1_731_300_000_000), row(DM, "dm", "Ana Martin", 1_731_200_000_000)]
     assert tick(d) == []
+
+
+def test_one_to_one_linked_by_name_only_when_its_last_message_is_the_one_the_page_shows():
+    # Constaté en direct : « Céline M. » relié par son nom à une AUTRE conversation de la même
+    # personne (dernier message de mardi, alors que la page affichait celui de 13:44).
+    page = FakePage([row(GROUP, "group", "Projet X", 1000), row(DM, "dm", "Ana Martin", 1000, text="Message de mardi")])
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message Tu as deux minutes ? 13:44"
+    d = WebApiDriver(page)
+    tick(d)
+    assert "name:Ana Martin" not in d._chat.mapped and page.chat_aliases == {}
+    # Le fil de ce tête-à-tête est donc lu par la page, et son nouveau message vient de l'aperçu.
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message Tu es là ? 13:46"
+    assert [(m.thread_id, m.text) for m in tick(d)] == [("name:Ana Martin", "Tu es là ?")]
+    # Quand l'aperçu (tronqué par la page) et le dernier message concordent, il est relié.
+    page.rows = [row(GROUP, "group", "Projet X", 1000), row(DM, "dm", "Ana Martin", 1001, text="Tu es là ? Je t'appelle")]
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message Tu es là ? Je t'app… 13:46"
+    tick(d)
+    assert page.chat_aliases == {"name:Ana Martin": DM}
+
+
+def test_image_or_file_alone_is_named_as_such():
+    page = FakePage([row(GROUP, "group", "Projet X", 1000)])
+    d = WebApiDriver(page)
+    tick(d)
+    r = row(GROUP, "group", "Projet X", 9_999_999_999_999, text="")
+    r["last"]["images"] = 1
+    page.rows = [r]
+    assert [m.text for m in tick(d)] == ["(image)"]
+
+
+def test_one_to_one_also_linked_when_the_page_shows_the_same_time_of_last_message():
+    # Aperçu non comparable (« a envoyé une image », emoji…) : la même heure à la minute suffit.
+    page = FakePage([row(GROUP, "group", "Projet X", 1000), row(DM, "dm", "Ana Martin", 1000, text="")])
+    page.rows[1]["last"]["at"] = "13:44"
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message A envoyé une image 13:44"
+    d = WebApiDriver(page)
+    tick(d)
+    assert page.chat_aliases == {"name:Ana Martin": DM}
+    # Autre heure (le cas réel : mardi 11:02 contre 13:44) : jamais relié.
+    page.rows[1]["last"]["at"] = "mardi 11:02"
+    tick(d)
+    assert page.chat_aliases == {}
+    # Une date affichée par la page : même jour côté service de chat.
+    page.rows[1]["last"]["at"] = "25/11 16:05"
+    page.labels["name:Ana Martin"] = "Chat Ana Martin Away Last message A envoyé une image 25/11"
+    tick(d)
+    assert page.chat_aliases == {"name:Ana Martin": DM}
