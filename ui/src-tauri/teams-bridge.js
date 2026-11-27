@@ -184,13 +184,18 @@
     // (le client Teams fait déjà exactement cet appel). Transitoire, en mémoire de la page
     // seulement : jamais renvoyé au moteur, jamais dans `summary`/`diagnose`, jamais journalisé,
     // jamais persisté. Interdiction absolue d'ajouter `creds` à un objet renvoyé.
-    const creds = new Map(); // host -> { authorization?, xSkypetoken?, at }
+    const creds = new Map(); // host -> { authorization?, xSkypetoken?, at } (repli par hôte)
+    // Les jetons de Teams sont par RESSOURCE (audience), pas par hôte : sur teams.cloud.microsoft,
+    // tenantsv2 et me/settings n'ont pas le même bearer. On garde donc aussi l'auth par endpoint
+    // EXACT (hôte + chemin) pour resigner avec le bon jeton. Même règle : privé à la page.
+    const credsByPath = new Map(); // "host\npathname" -> { authorization?, xSkypetoken?, at }
+    const pathKey = (host, pathname) => host + "\n" + pathname;
     // PRIVÉ À LA PAGE. Une URL GET sûre et idempotente que Teams a appelée avec succès (auth),
     // rejouée signée par l'auto-test pour vérifier que la signature en page fonctionne (200 vs
     // 401). Jamais renvoyée au moteur ; seul le STATUT de l'auto-test sort (voir diagnose).
     let probeUrl = "";
     // Endpoints GET sûrs (sans effet, sans id sensible) servant de sonde de signature.
-    const SAFE_PROBE = /\/(users\/tenantsv2|sharepoint\/sites\/validSites|v1\.0\/domains)\b/i;
+    const SAFE_PROBE = /\/(users\/tenantsv2|usersettings\/|me\/settings\/|sharepoint\/sites\/validSites|v1\.0\/domains)\b/i;
     const tmpl = (path) =>
       (path || "/")
         .split("/")
@@ -244,24 +249,56 @@
       } catch {}
       return "";
     };
-    // Retient, PRIVÉ À LA PAGE, l'auth que Teams vient de poser pour un hôte d'API, afin de
-    // resigner un `webfetch` vers ce même hôte. On ne garde que authorization + x-skypetoken.
-    const rememberCreds = (host, headers) => {
+    const storeCreds = (map, key, authorization, xSkypetoken) => {
+      const prev = map.get(key) || {};
+      map.set(key, {
+        authorization: authorization || prev.authorization || "",
+        xSkypetoken: xSkypetoken || prev.xSkypetoken || "",
+        at: Date.now(),
+      });
+    };
+    // Retient, PRIVÉ À LA PAGE, l'auth que Teams vient de poser, par hôte ET par endpoint exact,
+    // afin de resigner un `webfetch` avec le bon jeton. On ne garde que authorization + x-skypetoken.
+    const rememberCreds = (rawUrl, headers) => {
       try {
-        if (!host || !API_HOSTS.test(host) || !headers) return;
+        let u;
+        try {
+          u = new URL(String(rawUrl || ""), location.origin);
+        } catch {
+          return;
+        }
+        if (!API_HOSTS.test(u.hostname) || !headers) return;
         const authorization = headerValue(headers, "authorization");
         const xSkypetoken = headerValue(headers, "x-skypetoken");
         if (!authorization && !xSkypetoken) return;
-        const prev = creds.get(host) || {};
-        creds.set(host, {
-          authorization: authorization || prev.authorization || "",
-          xSkypetoken: xSkypetoken || prev.xSkypetoken || "",
-          at: Date.now(),
-        });
+        storeCreds(creds, u.hostname, authorization, xSkypetoken);
+        if (credsByPath.size >= 80 && !credsByPath.has(pathKey(u.hostname, u.pathname))) {
+          let oldestKey, oldest = Infinity;
+          for (const [k, v] of credsByPath) if ((v.at || 0) < oldest) ((oldest = v.at || 0), (oldestKey = k));
+          if (oldestKey) credsByPath.delete(oldestKey);
+        }
+        storeCreds(credsByPath, pathKey(u.hostname, u.pathname), authorization, xSkypetoken);
       } catch {}
     };
-    // Rendue à `webfetch` UNIQUEMENT (dans la page). Jamais sérialisée vers le moteur.
-    const credsFor = (host) => creds.get(host) || null;
+    // Rendues à `webfetch`/l'auto-test UNIQUEMENT (dans la page). Jamais sérialisées vers le moteur.
+    // Priorité au jeton de l'endpoint exact (bonne audience), repli sur le dernier jeton de l'hôte.
+    const credsFor = (rawUrl) => {
+      try {
+        const u = new URL(String(rawUrl || ""), location.origin);
+        return credsByPath.get(pathKey(u.hostname, u.pathname)) || creds.get(u.hostname) || null;
+      } catch {
+        return creds.get(String(rawUrl)) || null;
+      }
+    };
+    // Source du credential retenu pour une URL (pour l'auto-test) : "path" | "host" | "none".
+    const credsSource = (rawUrl) => {
+      try {
+        const u = new URL(String(rawUrl || ""), location.origin);
+        if (credsByPath.has(pathKey(u.hostname, u.pathname))) return "path";
+        if (creds.has(u.hostname)) return "host";
+      } catch {}
+      return "none";
+    };
     const note = (method, rawUrl, status, authSet, contentType) => {
       let u;
       try {
@@ -364,7 +401,7 @@
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, authNames, rememberCreds, credsFor, summary, safeProbe: () => probeUrl };
+    return { note, noteSocket, authNames, rememberCreds, credsFor, credsSource, summary, safeProbe: () => probeUrl };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -389,7 +426,7 @@
               url = input.url;
               method = input.method || "GET";
               authSet = apiCapture.authNames(input.headers);
-              apiCapture.rememberCreds(hostOf(url), input.headers);
+              apiCapture.rememberCreds(url, input.headers);
             } else {
               url = String(input);
             }
@@ -398,7 +435,7 @@
               if (init.headers) {
                 const h = apiCapture.authNames(init.headers);
                 authSet = authSet ? new Set([...authSet, ...h]) : h;
-                apiCapture.rememberCreds(hostOf(url), init.headers);
+                apiCapture.rememberCreds(url, init.headers);
               }
             }
           } catch {}
@@ -442,7 +479,7 @@
           try {
             const meta = this.__trame;
             if (meta) {
-              apiCapture.rememberCreds(hostOf(meta.url), {
+              apiCapture.rememberCreds(meta.url, {
                 authorization: meta.creds.authorization,
                 "x-skypetoken": meta.creds["x-skypetoken"],
               });
@@ -2050,9 +2087,10 @@
           // Seuls des en-têtes métier : tout en-tête d'auth venant du moteur est ignoré.
           if (!AUTH_HEADER.test(String(k))) init.headers[String(k)] = String(v);
         }
-      // Resigne avec l'auth que Teams a posée pour cet hôte (jamais fournie par le moteur).
+      // Resigne avec l'auth que Teams a posée pour CET endpoint (bonne audience), repli hôte.
+      // Jamais fournie par le moteur.
       if (sign) {
-        const c = apiCapture.credsFor(u.hostname);
+        const c = apiCapture.credsFor(u.toString());
         if (c && c.authorization) init.headers["Authorization"] = c.authorization;
         if (c && c.xSkypetoken) init.headers["X-Skypetoken"] = c.xSkypetoken;
       }
@@ -2842,7 +2880,8 @@
         const url = apiCapture.safeProbe();
         if (url && (!lastSignTest || Date.now() - lastSignTest.at > 60000)) {
           const r = await ops.webfetch({ url, method: "GET", sign: true, json: false });
-          lastSignTest = { ok: Boolean(r && r.ok), status: (r && r.status) || 0, at: Date.now() };
+          // `source` : d'où venait le jeton rejoué (endpoint exact / hôte / aucun). Diagnostic.
+          lastSignTest = { ok: Boolean(r && r.ok), status: (r && r.status) || 0, source: apiCapture.credsSource(url), at: Date.now() };
         }
       } catch (e) {
         lastSignTest = { error: String((e && e.message) || e), at: Date.now() };
