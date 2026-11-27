@@ -185,6 +185,12 @@
     // seulement : jamais renvoyé au moteur, jamais dans `summary`/`diagnose`, jamais journalisé,
     // jamais persisté. Interdiction absolue d'ajouter `creds` à un objet renvoyé.
     const creds = new Map(); // host -> { authorization?, xSkypetoken?, at }
+    // PRIVÉ À LA PAGE. Une URL GET sûre et idempotente que Teams a appelée avec succès (auth),
+    // rejouée signée par l'auto-test pour vérifier que la signature en page fonctionne (200 vs
+    // 401). Jamais renvoyée au moteur ; seul le STATUT de l'auto-test sort (voir diagnose).
+    let probeUrl = "";
+    // Endpoints GET sûrs (sans effet, sans id sensible) servant de sonde de signature.
+    const SAFE_PROBE = /\/(users\/tenantsv2|sharepoint\/sites\/validSites|v1\.0\/domains)\b/i;
     const tmpl = (path) =>
       (path || "/")
         .split("/")
@@ -271,6 +277,10 @@
       const key = `${(method || "GET").toUpperCase()} ${u.hostname} ${path}`;
       const auth = Array.from(authSet || []);
       const now = Date.now();
+      // Retient une sonde de signature : GET authentifié, réussi, sans effet ni id sensible.
+      if ((method || "GET").toUpperCase() === "GET" && status === 200 && auth.includes("authorization") && SAFE_PROBE.test(u.pathname)) {
+        probeUrl = u.origin + u.pathname + u.search;
+      }
       const prev = seen.get(key);
       if (prev) {
         prev.count++;
@@ -354,7 +364,7 @@
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, authNames, rememberCreds, credsFor, summary };
+    return { note, noteSocket, authNames, rememberCreds, credsFor, summary, safeProbe: () => probeUrl };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -2010,6 +2020,9 @@
       post();
     });
 
+  // Dernier auto-test de signature (statut seulement), rafraîchi au plus toutes les 60 s par
+  // `diagnose` : rejoue signée une sonde GET sûre pour vérifier que la signature en page marche.
+  let lastSignTest = null;
   const ops = {
     ping: () => ({ title: document.title, ready: Boolean(rail()) }),
     probe,
@@ -2813,7 +2826,20 @@
         document.querySelector('[role="tab"][data-tid="tab-item-com.microsoft.chattabs.chat"]')?.click();
       }
     },
-    diagnose: () => ({
+    diagnose: async () => {
+      // Auto-test de signature : rejoue signée une sonde GET sûre vers un hôte REST. On ne
+      // garde QUE le statut (jamais le corps) : 200 = la signature en page fonctionne, 401 =
+      // non. Au plus une fois par minute, et seulement si une sonde a été observée.
+      try {
+        const url = apiCapture.safeProbe();
+        if (url && (!lastSignTest || Date.now() - lastSignTest.at > 60000)) {
+          const r = await ops.webfetch({ url, method: "GET", sign: true, json: false });
+          lastSignTest = { ok: Boolean(r && r.ok), status: (r && r.status) || 0, at: Date.now() };
+        }
+      } catch (e) {
+        lastSignTest = { error: String((e && e.message) || e), at: Date.now() };
+      }
+      return {
       url: location.href,
       title: document.title,
       compose: (() => {
@@ -2853,7 +2879,10 @@
       // Empreinte du pont effectivement chargé (posée par l'hôte à l'injection) : permet de
       // voir si une page garde encore un ancien pont après une mise à jour.
       bridge: (typeof globalThis !== "undefined" && globalThis.__trameBridge) || null,
-    }),
+      // Auto-test de signature (statut seulement, jamais de corps) : 200 ⇒ la page signe bien.
+      sign_selftest: lastSignTest,
+      };
+    },
   };
 
   const api = Object.freeze({
