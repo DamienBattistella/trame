@@ -180,6 +180,21 @@ def test_page_fetch_never_forwards_auth_headers_to_the_page():
     assert "Authorization" not in sent["headers"] and "x-skypetoken" not in sent["headers"]
 
 
+def test_page_fetch_passes_sign_flag_and_never_a_credential():
+    """La signature se fait DANS la page (rejeu de l'auth de Teams) ; le moteur ne transmet
+    qu'un booléen `sign`, jamais un credential."""
+    d = WebBridgeDriver()
+    sent = {}
+    d._rpc = lambda op, **kw: sent.update(kw) or {"ok": True, "status": 200, "contentType": "", "text": ""}
+    d.page_fetch("https://teams.cloud.microsoft/api/mt/x")
+    assert sent["sign"] is True  # signé par défaut
+    d.page_fetch("https://teams.cloud.microsoft/api/mt/x", sign=False)
+    assert sent["sign"] is False
+    # Le moteur n'envoie jamais de valeur d'auth à la page.
+    assert sent.get("headers") in (None, {}) or all(
+        not k.lower().startswith(("authorization", "x-skypetoken", "cookie")) for k in sent["headers"])
+
+
 def test_page_fetch_refuses_non_teams_hosts_without_calling_the_page():
     d = WebBridgeDriver()
     calls = []

@@ -130,6 +130,39 @@ test("diagnose rapporte l'empreinte du pont injecté par l'hôte (sinon null)", 
   assert.equal((await p.run("diagnose")).result.bridge, "deadbeefcafe0001");
 });
 
+test("webfetch resigne avec l'auth que Teams a posée — mais ne la renvoie jamais au moteur", async () => {
+  const p = teamsPage();
+  // Teams fait lui-même un appel authentifié vers un hôte d'API (bearer + skypetoken).
+  await p.ctx.window.fetch("https://eu-prod.asyncgw.teams.microsoft.com/v1/objects/abc/views/imgo", {
+    headers: { authorization: "Bearer SECRET-TOK-123", "x-skypetoken": "SKYPE-SECRET-456" },
+  });
+  await new Promise((r) => setImmediate(r));
+  p.setResponse(fakeResponse('{"ok":true}'));
+  const before = p.fetchCalls.length;
+  const r = await p.run("webfetch", { url: "https://eu-prod.asyncgw.teams.microsoft.com/v1/objects/abc/views/imgo" });
+  // L'appel sortant de la page porte l'auth rejouée.
+  const out = p.fetchCalls[before];
+  assert.equal(out.init.headers["Authorization"], "Bearer SECRET-TOK-123");
+  assert.equal(out.init.headers["X-Skypetoken"], "SKYPE-SECRET-456");
+  // Mais la réponse renvoyée au moteur ne contient aucun credential.
+  assert.ok(!/SECRET-TOK-123|SKYPE-SECRET-456/.test(JSON.stringify(r)), JSON.stringify(r));
+  // Et le diagnostic (capture structure) ne contient jamais la valeur du jeton.
+  const diag = await p.run("diagnose");
+  assert.ok(!/SECRET-TOK-123|SKYPE-SECRET-456/.test(JSON.stringify(diag)), "token dans diagnose");
+});
+
+test("webfetch avec sign:false n'attache aucune auth, même si un credential est connu", async () => {
+  const p = teamsPage();
+  await p.ctx.window.fetch("https://eu-prod.asyncgw.teams.microsoft.com/v1/x", {
+    headers: { authorization: "Bearer SECRET-TOK-789" },
+  });
+  await new Promise((r) => setImmediate(r));
+  const before = p.fetchCalls.length;
+  await p.run("webfetch", { url: "https://eu-prod.asyncgw.teams.microsoft.com/v1/x", sign: false });
+  const out = p.fetchCalls[before];
+  assert.ok(!("Authorization" in out.init.headers), "auth posée malgré sign:false");
+});
+
 test("la capture WebSocket ne retient que l'URL de connexion (hôte + chemin masqué)", async () => {
   const p = teamsPage();
   // La page ouvre un canal trouter (où passent les messages en v2).

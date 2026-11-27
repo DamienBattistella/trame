@@ -574,17 +574,20 @@ class WebBridgeDriver(TeamsDriver):
             self.status = status
 
     def page_fetch(self, url: str, method: str = "GET", body: Any = None,
-                   headers: Optional[dict] = None, json: bool = True, timeout: float = 20.0) -> dict:
+                   headers: Optional[dict] = None, json: bool = True, sign: bool = True,
+                   timeout: float = 20.0) -> dict:
         """Un appel authentifié exécuté dans la page. Renvoie {status, contentType, json|text}.
-        Lève ApiError si l'hôte est refusé, si le réseau échoue, ou sur une réponse non 2xx :
-        l'appelant peut alors retomber sur le chemin DOM."""
+        `sign` (défaut vrai) : la PAGE rejoue l'auth que Teams a posée pour cet hôte ; le moteur
+        ne fournit ni ne reçoit jamais de credential. Lève ApiError si l'hôte est refusé, si le
+        réseau échoue, ou sur une réponse non 2xx : l'appelant peut alors retomber sur le DOM."""
         if not str(url or "").lower().startswith("https://"):
             raise self.ApiError("https requis")
         host = str(url)[len("https://"):].split("/")[0].split("?")[0]
         if not API_HOSTS.match(host):
             raise self.ApiError(f"hôte non autorisé : {host or '(vide)'}")
         clean = {k: v for k, v in (headers or {}).items() if not AUTH_HEADER.match(str(k))} or None
-        res = self._rpc("webfetch", url=url, method=method, body=body, headers=clean, json=bool(json), timeout=timeout)
+        res = self._rpc("webfetch", url=url, method=method, body=body, headers=clean, json=bool(json),
+                        sign=bool(sign), timeout=timeout)
         if not isinstance(res, dict):
             raise self.ApiError("réponse illisible de la page")
         status = res.get("status")
