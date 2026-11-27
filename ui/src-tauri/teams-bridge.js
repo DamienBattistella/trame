@@ -375,11 +375,71 @@
         sockets.set(key, { scheme: u.protocol.replace(":", ""), host: u.hostname, path, hasQuery: Boolean(u.search), count: 1, first: now, last: now });
       }
     };
+    // --- Frames WebSocket : STRUCTURE seulement (découverte du protocole trouter) ---------
+    // On n'enregistre JAMAIS le contenu d'une frame : on parse le JSON uniquement pour relever
+    // les NOMS de clés (chemins), en masquant les clés dynamiques (id, guid, nombres). Aucune
+    // valeur, aucun texte de message. Sert à comprendre comment arrivent messages/présence.
+    const frames = new Map(); // "host\ndir\nshape" -> { host, dir, shape, count, minLen, maxLen, last }
+    const maskFrameKey = (k) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(k) ? "{guid}"
+      : /^(19|8|48):/.test(k) || /@thread\.|@unq\.gbl/.test(k) ? "{id}"
+      : /^\d{3,}$/.test(k) ? "{n}"
+      : k.length > 40 ? "{k}"
+      : k;
+    const shapeOf = (data) => {
+      if (typeof data !== "string") return "binary";
+      if (data.length > 200000) return "text(large)";
+      let obj;
+      try {
+        obj = JSON.parse(data);
+      } catch {
+        return "text";
+      }
+      const keys = new Set();
+      const walk = (v, depth, prefix) => {
+        if (keys.size > 60 || depth > 3) return;
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          for (const k of Object.keys(v)) {
+            const p = prefix ? prefix + "." + maskFrameKey(k) : maskFrameKey(k);
+            keys.add(p); // NOM de clé seulement, jamais la valeur
+            walk(v[k], depth + 1, p);
+          }
+        } else if (Array.isArray(v) && v.length) {
+          walk(v[0], depth + 1, prefix + "[]");
+        }
+      };
+      walk(obj, 0, "");
+      return Array.from(keys).sort().join(",").slice(0, 400) || typeof obj;
+    };
+    const noteFrame = (host, dir, data) => {
+      try {
+        const len = typeof data === "string" ? data.length : (data && (data.byteLength || data.size)) || 0;
+        if (!len && dir === "in") return; // ignore les pings vides
+        const shape = shapeOf(data);
+        const key = `${host}\n${dir}\n${shape}`;
+        const now = Date.now();
+        const f = frames.get(key);
+        if (f) {
+          f.count++;
+          f.minLen = Math.min(f.minLen, len);
+          f.maxLen = Math.max(f.maxLen, len);
+          f.last = now;
+        } else {
+          if (frames.size >= 80) {
+            let oldestKey, oldest = Infinity;
+            for (const [k, v] of frames) if (v.last < oldest) ((oldest = v.last), (oldestKey = k));
+            if (oldestKey) frames.delete(oldestKey);
+          }
+          frames.set(key, { host, dir, shape, count: 1, minLen: len, maxLen: len, last: now });
+        }
+      } catch {}
+    };
     const summary = () => {
       const rows = Array.from(seen.values()).sort((a, b) => b.last - a.last);
       const byService = {};
       for (const r of rows) byService[r.service] = (byService[r.service] || 0) + 1;
       const wsRows = Array.from(sockets.values()).sort((a, b) => b.last - a.last);
+      const frameRows = Array.from(frames.values()).sort((a, b) => b.last - a.last);
       return {
         count: rows.length,
         byService,
@@ -395,13 +455,16 @@
           hasQuery: r.hasQuery,
           auth: r.auth.slice(0, 6), // noms d'en-têtes seulement
         })),
-        // WebSockets : URL de connexion seulement (jamais de frame ni de contenu).
+        // WebSockets : URL de connexion seulement (jamais de contenu).
         sockets: wsRows.slice(0, 20).map((s) => ({ scheme: s.scheme, host: s.host, path: s.path, hasQuery: s.hasQuery, count: s.count })),
+        // Frames WebSocket : STRUCTURE seulement (noms de clés masqués, sens, taille, compte) ;
+        // jamais aucune valeur ni contenu de message.
+        frames: frameRows.slice(0, 40).map((f) => ({ host: f.host, dir: f.dir, shape: f.shape, count: f.count, minLen: f.minLen, maxLen: f.maxLen })),
       };
     };
     // credsFor n'est fourni que pour l'usage interne à la page (webfetch). summary ne
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
-    return { note, noteSocket, authNames, rememberCreds, credsFor, credsSource, summary, safeProbe: () => probeUrl };
+    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, summary, safeProbe: () => probeUrl };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -494,15 +557,34 @@
           return oSend.apply(this, arguments);
         };
       }
-      // WebSocket : on note seulement l'URL de connexion (le canal trouter porte les
-      // messages en v2). Jamais une frame. On renvoie une vraie WebSocket inchangée.
+      // WebSocket : on note l'URL de connexion et la STRUCTURE des frames (noms de clés
+      // masqués, sens, taille) pour découvrir le protocole trouter. Jamais le contenu d'une
+      // frame. On renvoie une vraie WebSocket inchangée (on observe, on ne modifie rien).
       const OWS = window.WebSocket;
       if (typeof OWS === "function" && !OWS.__trameWrapped) {
         const WS = function (url, protocols) {
+          let host = "";
           try {
             apiCapture.noteSocket(String(url));
+            host = hostOf(String(url));
           } catch {}
-          return protocols === undefined ? new OWS(url) : new OWS(url, protocols);
+          const sock = protocols === undefined ? new OWS(url) : new OWS(url, protocols);
+          try {
+            const origSend = sock.send;
+            sock.send = function (data) {
+              try {
+                apiCapture.noteFrame(host, "out", data);
+              } catch {}
+              return origSend.apply(this, arguments);
+            };
+            // Écoute passive : un listener de plus, qui n'altère ni n'empêche la frame.
+            sock.addEventListener("message", (ev) => {
+              try {
+                apiCapture.noteFrame(host, "in", ev && ev.data);
+              } catch {}
+            });
+          } catch {}
+          return sock;
         };
         WS.prototype = OWS.prototype;
         WS.__trameWrapped = true;
