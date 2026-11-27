@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import json
 import os
 import shutil
@@ -32,6 +33,26 @@ def _seed() -> None:
         source = BUNDLE / name
         if not target.exists() and source.exists():
             shutil.copyfile(source, target)
+    _refresh_shipped_soul()
+
+
+# SHA-256 (LF line endings) of SOUL.md files shipped by earlier versions. A copy still
+# identical to one of them was never touched by the user: it follows the new default.
+_FORMER_SHIPPED_SOULS = {
+    "6d45f6159cd8b57f973f731855f02946dc623e58f3408b0b21824326a218f1e4",  # written for Damien
+}
+
+
+def _soul_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _refresh_shipped_soul() -> None:
+    source, target = BUNDLE / "SOUL.md", HOME / "SOUL.md"
+    if not (source.exists() and target.exists()) or source.resolve() == target.resolve():
+        return
+    if _soul_digest(target) in _FORMER_SHIPPED_SOULS:
+        shutil.copyfile(source, target)
 
 
 _seed()
