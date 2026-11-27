@@ -39,6 +39,35 @@ def test_react_twice_keeps_a_single_reaction(make_client):
     assert driver.reactions[f"{DM}/m2"] == ["heart"]
 
 
+def test_remove_a_reaction_already_there(make_client):
+    client, watcher, driver = make_client()
+    client.get(f"{DM_URL}/messages")
+    for reaction in ("like", "heart"):
+        assert client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": reaction}).status_code == 200
+    r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "like", "remove": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert driver.reactions == {f"{DM}/m2": ["heart"]}
+    # Le fil en cache ne la montre plus, sans relire Teams.
+    assert client.get(f"{DM_URL}/messages").json()["messages"][2]["reactions"] == ["heart"]
+    assert any("Réaction 👍 retirée du message" in item.text for item in watcher.state.logs)
+
+
+def test_removing_a_reaction_that_is_not_there_changes_nothing(make_client):
+    client, _watcher, driver = make_client()
+    for _ in range(2):  # jamais une bascule : retirer deux fois ne la remet pas
+        assert client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "laugh", "remove": True}).status_code == 200
+    assert driver.reactions.get(f"{DM}/m2", []) == []
+
+
+def test_remove_has_the_same_guards_as_react(make_client):
+    client, _watcher, driver = make_client()
+    client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "like"})
+    other = {**TARGET, "text": "Un autre texte que celui affiché dans Teams."}
+    r = client.post(f"{DM_URL}/react", json={"message": other, "reaction": "like", "remove": True})
+    assert r.status_code == 409 and "Aucune réaction retirée" in r.json()["error"]
+    assert driver.reactions == {f"{DM}/m2": ["like"]}
+
+
 def test_react_refuses_a_message_that_changed(make_client):
     client, _watcher, driver = make_client()
     other = {**TARGET, "text": "Un autre texte que celui affiché dans Teams."}
@@ -207,7 +236,7 @@ def test_bridge_relays_reply_and_reaction(make_client, monkeypatch):
         assert typed[-1]["quote"] == REF and typed[-1]["send"] is True
         assert client.post(f"{URL}/react", json={"message": REF, "reaction": "laugh"}).json() == {"ok": True}
         reacted = [a for op, a in page.commands if op == "react"]
-        assert reacted == [{"name": "Romain CUREAU", "message": REF, "reaction": "laugh"}]
+        assert reacted == [{"name": "Romain CUREAU", "message": REF, "reaction": "laugh", "remove": False}]
     finally:
         page.stop = True
         page.thread.join(timeout=5)

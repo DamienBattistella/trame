@@ -592,6 +592,7 @@
     const WRITES = {
       markread: (c) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/properties`, "?name=consumptionhorizon"],
       react: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}/properties`, "?name=emotions"],
+      unreact: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}/properties`, "?name=emotions"],
       delete: (c, m) => ["DELETE", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, "?behavior=softDelete"],
       send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
     };
@@ -2400,19 +2401,23 @@
       });
       return ok ? { ok: true } : uncertain("lu non confirmé par le service de chat");
     };
-    const react = async ({ thread, message, reaction }) => {
+    // Pose la réaction, ou la retire (remove) : jamais une bascule, l'état voulu est explicite.
+    const react = async ({ thread, message, reaction, remove }) => {
       if (!["like", "heart", "laugh", "surprised"].includes(reaction)) return notSent("réaction inconnue");
+      const off = remove === true;
       const t = await target(thread, message);
       if (t.error) return notSent(t.error);
-      if (t.seen.reactions.includes(reaction)) return { ok: true, already: true }; // déjà là : rien à faire
-      const w = await chatsvc.write("react", thread, t.mid, { emotions: { key: reaction, value: Date.now() } });
+      if (t.seen.reactions.includes(reaction) !== off) return { ok: true, already: true }; // déjà dans l'état voulu
+      const w = off
+        ? await chatsvc.write("unreact", thread, t.mid, { emotions: { key: reaction } })
+        : await chatsvc.write("react", thread, t.mid, { emotions: { key: reaction, value: Date.now() } });
       if (!w.sent) return notSent(w.error);
-      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `réaction refusée (HTTP ${w.status})` };
+      if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `réaction ${off ? "non retirée" : "refusée"} (HTTP ${w.status})` };
       const ok = await proven(async () => {
         const v = await getMsg(thread, t.mid);
-        return v.ok && convertOf(v.json).reactions.includes(reaction);
+        return v.ok && convertOf(v.json).reactions.includes(reaction) !== off;
       });
-      return ok ? { ok: true } : uncertain("réaction non confirmée par le service de chat");
+      return ok ? { ok: true } : uncertain(off ? "retrait de la réaction non confirmé par le service de chat" : "réaction non confirmée par le service de chat");
     };
     const remove = async ({ thread, message }) => {
       const t = await target(thread, message);
@@ -3690,26 +3695,28 @@
       if (box.innerText.trim() || modelText(box)) return fail(`envoi refusé par Teams (${trace})`);
       return { ok: false, uncertain: true, error: `message non visible dans la conversation, vérifie dans Teams (${trace})` };
     },
-    react: async ({ name, message, reaction }) => {
+    react: async ({ name, message, reaction, remove }) => {
       if (!isOpen(name)) return { ok: false, error: "autre conversation ouverte" };
       if (!REACTION_NAMES[reaction]) return { ok: false, error: "réaction inconnue" };
+      const off = remove === true;
       const found = await lookup(message);
       if (!found) return { ok: false, error: "message introuvable ou différent de celui choisi" };
-      // Déjà là : cliquer à nouveau l'enlèverait.
-      if (myReactions(found.el).includes(reaction)) return { ok: true, already: true };
+      // Le bouton de Teams bascule : on ne clique que si la réaction n'est pas déjà dans l'état voulu.
+      if (myReactions(found.el).includes(reaction) !== off) return { ok: true, already: true };
       const btn = await barAction(found.el, `message-actions-${reaction}`, (l) => reactionOf(l) === reaction);
       if (!btn) return { ok: false, error: "bouton de réaction introuvable sur ce message" };
       if (!isOpen(name)) return { ok: false, error: "conversation changée avant la réaction" };
       if (late()) return { ok: false, error: "délai dépassé avant la réaction" };
       press(btn);
       unhover();
-      // Posée seulement si Teams l'affiche sous le message.
+      // Posée (ou retirée) seulement si Teams l'affiche (ou ne l'affiche plus) sous le message.
       const shown = await waitFor(() => {
         const again = findMessage(message);
-        return Boolean(again && myReactions(again.el).includes(reaction));
+        return Boolean(again && myReactions(again.el).includes(reaction) !== off);
       }, 5000);
       toBottom();
-      return shown ? { ok: true } : { ok: false, uncertain: true, error: "réaction non visible sous le message, vérifie dans Teams" };
+      if (shown) return { ok: true };
+      return { ok: false, uncertain: true, error: off ? "réaction toujours visible sous le message, vérifie dans Teams" : "réaction non visible sous le message, vérifie dans Teams" };
     },
     // Réaction 🤖 sur le dernier message de la conversation (best-effort).
     react: async ({ name }) => {

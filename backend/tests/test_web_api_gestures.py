@@ -33,8 +33,8 @@ class FakePage:
         self.page.append(("markread", thread_id))
         return True
 
-    def react_focused(self, thread_id, target, reaction, restore=True):
-        self.page.append(("react", thread_id, reaction))
+    def react_focused(self, thread_id, target, reaction, restore=True, remove=False):
+        self.page.append(("react", thread_id, reaction, remove))
         return Focus(ok=True)
 
     def delete_focused(self, thread_id, target, restore=True):
@@ -59,9 +59,19 @@ def test_proven_gestures_never_touch_the_page():
     assert [c[0] for c in page.calls] == ["markread", "react", "delete", "send"]
     assert page.page == []
     assert page.calls[1][2] == {"message": {"id": "1795777000001", "sender": "Ana Martin", "text": "Bonjour"},
-                                "reaction": "like"}
+                                "reaction": "like", "remove": False}
     assert page.calls[3][2] == {"text": "C'est noté."}
     assert all(d.routes()[a]["via"] == "api" for a in ("mark_read", "react", "delete", "send"))
+
+
+def test_removing_a_reaction_goes_to_the_chat_service_then_the_page_the_same_way():
+    page = FakePage({"ok": True})
+    d = WebApiDriver(page)
+    assert d.react_focused(TID, REF, "heart", remove=True).ok
+    assert page.calls[0][0] == "react" and page.calls[0][2]["remove"] is True and page.page == []
+    fallback = FakePage({"ok": False, "attempted": False, "error": "conversation sans identifiant Teams"})
+    assert WebApiDriver(fallback).react_focused(TID, REF, "heart", remove=True).ok
+    assert fallback.page == [("react", TID, "heart", True)]
 
 
 def test_gesture_not_attempted_falls_back_to_the_page_with_the_reason():

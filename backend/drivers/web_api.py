@@ -422,10 +422,12 @@ class WebApiDriver:
             self._inner.last_error = res.get("error") or "marquer comme lu non confirmé"
         return bool(res.get("ok"))
 
-    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True) -> Focus:
-        res = self._gesture("react", "react", thread_id, message=self._inner._ref(target), reaction=reaction)
+    def react_focused(self, thread_id: str, target: MessageRef, reaction: str, restore: bool = True,
+                      remove: bool = False) -> Focus:
+        res = self._gesture("react", "react", thread_id, message=self._inner._ref(target), reaction=reaction,
+                            remove=remove)
         if res is None:
-            return self._inner.react_focused(thread_id, target, reaction, restore=restore)
+            return self._inner.react_focused(thread_id, target, reaction, restore=restore, remove=remove)
         if res.get("uncertain"):
             raise ReactUncertain(res.get("error") or "réaction non confirmée")
         return Focus(ok=bool(res.get("ok")), reason=None if res.get("ok") else res.get("error"))

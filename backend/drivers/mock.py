@@ -449,13 +449,20 @@ class MockTeamsDriver(TeamsDriver):
             self.mentioned.append((thread_id, text, list(mentions), send))
         return ok
 
-    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str) -> bool:
+    def _react_in_active(self, thread_id: str, target: MessageRef, reaction: str, remove: bool = False) -> bool:
         if self._active != thread_id:
             return False
         mid = self._find(thread_id, target)
         if mid is None:
             raise RuntimeError("message introuvable dans la conversation")
         mine = self.reactions.setdefault(f"{thread_id}/{mid}", [])
+        if remove:
+            if reaction in mine:
+                mine.remove(reaction)
+            if not mine:
+                self.reactions.pop(f"{thread_id}/{mid}", None)
+            _say(f"[mock] RÉACTION RETIRÉE {reaction} -> {thread_id}/{mid}")
+            return True
         if reaction not in mine:
             mine.append(reaction)
         _say(f"[mock] RÉACTION {reaction} -> {thread_id}/{mid}")
