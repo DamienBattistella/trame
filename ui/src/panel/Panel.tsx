@@ -29,7 +29,7 @@ import { ActivityLog } from "@/components/ActivityLog";
 import { McpSettings } from "@/components/McpSettings";
 import { SkillsSettings } from "@/components/SkillsSettings";
 import { TeamsWebSettings } from "@/components/TeamsWebSettings";
-import { GraphSettings } from "@/components/GraphSettings";
+import { ApiTeamsWebSettings } from "@/components/ApiTeamsWebSettings";
 import { TeamsCheckBanner } from "@/components/TeamsCheck";
 import { ChangelogRow } from "@/components/Changelog";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -355,7 +355,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
       body: (
       <div className="flex flex-col gap-6">
         <TeamsWebSettings trame={trame} />
-        <GraphSettings trame={trame} />
+        <ApiTeamsWebSettings trame={trame} />
         <GroupList>
           <ThemeRow value={trame.theme} onChange={trame.setTheme} />
           <UpdatesRow checkMinutes={trame.updateCheckMinutes} />

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Bot, Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw } from "lucide-react";
+import { Check, ChevronLeft, FileText, Loader2, PenLine, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import type { BrainId } from "@/components/BrainPicker";
 import { BrainChoice } from "@/components/BrainConnect";
 import { TeamsLogo } from "@/brands";
@@ -19,7 +18,7 @@ import { isDesktop, teamsWebHide, teamsWebOpen } from "@/desktop";
 import { mockConversations } from "@/mockData";
 import { WatchEntity } from "@/types";
 
-const TOTAL = 8;
+const TOTAL = 7;
 const PROBE_CHECKS = ["Fenêtre Teams de Trame ouverte", "Connecté à ton compte", "Conversations trouvées"];
 
 const slide = {
@@ -88,15 +87,15 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
   };
   const watched = convs.filter((c) => c.watch);
   const autoCount = watched.filter((c) => c.mode === "auto").length;
-  const draftCount = watched.length - autoCount;
-  const setModeAll = (mode: "draft" | "auto") => edit((cs) => cs.map((c) => (c.watch ? { ...c, mode } : c)));
-  const toggleWatch = (id: string) => edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: !c.watch } : c)));
+  // Décocher repasse en brouillon : la recocher ne la remet jamais en Auto sans le robot.
+  const toggleWatch = (id: string) => edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: !c.watch, mode: c.watch ? "draft" : c.mode } : c)));
   const setWatchMany = (ids: string[], watch: boolean) => {
     const set = new Set(ids);
-    edit((cs) => cs.map((c) => (set.has(c.threadId) ? { ...c, watch } : c)));
+    edit((cs) => cs.map((c) => (set.has(c.threadId) ? { ...c, watch, mode: watch ? c.mode : "draft" } : c)));
   };
-  const setMode = (id: string, mode: "draft" | "auto") =>
-    edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, mode } : c)));
+  // Le robot coche aussi la conversation ; le couper la laisse cochée, en brouillon.
+  const setAuto = (id: string, on: boolean) =>
+    edit((cs) => cs.map((c) => (c.threadId === id ? { ...c, watch: on || c.watch, mode: on ? "auto" : "draft" } : c)));
   const pickBrain = (b: BrainId) => {
     touched.current = true;
     setBrain(b);
@@ -246,7 +245,7 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     (step !== TOTAL - 1 || live);
   const last = step === TOTAL - 1;
   // Étapes facultatives encore vides : le bouton principal devient « Plus tard », en retrait.
-  const skippable = (step === 2 && probe !== "ok") || (step === 5 && !soul) || (step === 6 && !githubConnected);
+  const skippable = (step === 2 && probe !== "ok") || (step === 4 && !soul) || (step === 5 && !githubConnected);
   const canGoBack = step > 0 && activation !== "run" && activation !== "ok";
 
   const screens: { title: string; sub: string; body?: React.ReactNode }[] = [
@@ -329,66 +328,40 @@ export function Wizard({ trame, onStart, onFinish }: { trame: Trame; onStart?: (
     },
     {
       title: "Quelles conversations ?",
-      sub: "Trame ne lit que celles que tu choisis.",
+      sub:
+        countdown === 0
+          ? "Coche celles que Trame suit : il te prépare des brouillons. Le robot le laisse répondre seul."
+          : `Coche celles que Trame suit : il te prépare des brouillons. Le robot le laisse répondre seul, après ${countdown} s.`,
       body: (
         <ConversationList
           className="h-[clamp(6rem,calc(100dvh-30rem),26rem)]"
           items={convs}
           onBulk={setWatchMany}
-          renderRow={(c) => (
-            <motion.button
-              type="button"
-              role="checkbox"
-              aria-checked={c.watch}
-              whileTap={{ scale: 0.985 }}
-              onClick={() => toggleWatch(c.threadId)}
-              className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
-            >
-              <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
-              <span className={cn("flex-1 truncate text-left transition-colors", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
-              <ConversationMeta c={c} />
-              <SelectCircle checked={c.watch} />
-            </motion.button>
-          )}
-        />
-      ),
-    },
-    {
-      title: "Qui envoie ?",
-      sub: "Pour chaque conversation : toi, ou Trame après un court délai.",
-      body: (
-        <div className="flex w-full flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3 text-left">
-            <ModeCard mode="draft" count={draftCount} total={watched.length} countdown={countdown} onAll={() => setModeAll("draft")} />
-            <ModeCard mode="auto" count={autoCount} total={watched.length} countdown={countdown} onAll={() => setModeAll("auto")} />
-          </div>
-          <ConversationList
-            className="h-[clamp(6rem,calc(100dvh-39rem),22rem)]"
-            fewClassName="max-h-[clamp(6rem,calc(100dvh-39rem),22rem)]"
-            items={watched}
-            filters={false}
-            footer={
-              <span className="flex w-full justify-between gap-3">
-                <span className="tabular-nums">
-                  {draftCount} en brouillon · {autoCount} en auto
-                </span>
-                <span>Conseil : commence en brouillon.</span>
-              </span>
-            }
-            renderRow={(c) => (
-              <div className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors duration-300", c.mode === "auto" && "bg-warning/[0.05]")}>
-                <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
-                <div className="flex min-w-0 flex-1 flex-col text-left">
-                  <span className="truncate">{c.displayName}</span>
-                  <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>
-                </div>
-                <div className="shrink-0">
-                  <AutoToggle name={c.displayName} mode={c.mode} onChange={(v) => setMode(c.threadId, v)} />
-                </div>
+          renderRow={(c) => {
+            const auto = c.watch && c.mode === "auto";
+            return (
+              <div className={cn("flex items-center gap-2 pr-3 transition-colors duration-300", auto && "bg-warning/[0.05]")}>
+                <motion.button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={c.watch}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={() => toggleWatch(c.threadId)}
+                  className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 transition-colors hover:bg-accent"
+                >
+                  <SelectCircle checked={c.watch} />
+                  <InitialsAvatar name={c.displayName} presence={c.presence} className="size-8" />
+                  <span className="flex min-w-0 flex-1 flex-col text-left">
+                    <span className={cn("truncate transition-colors", !c.watch && "text-muted-foreground", c.unread && "font-semibold text-foreground")}>{c.displayName}</span>
+                    {c.watch && <span className="truncate text-xs text-muted-foreground">{SURFACE_HINT[c.surface]}</span>}
+                  </span>
+                  <ConversationMeta c={c} />
+                </motion.button>
+                <AutoToggle name={c.displayName} mode={auto ? "auto" : "draft"} onChange={(v) => setAuto(c.threadId, v === "auto")} />
               </div>
-            )}
-          />
-        </div>
+            );
+          }}
+        />
       ),
     },
     {
@@ -701,71 +674,3 @@ const SURFACE_HINT = {
   group: "Groupe · si on te mentionne",
   channel: "Canal · si on te mentionne",
 } as const;
-
-function ModeCard({
-  mode,
-  count,
-  total,
-  countdown,
-  onAll,
-}: {
-  mode: "draft" | "auto";
-  count: number;
-  total: number;
-  countdown: number;
-  onAll: () => void;
-}) {
-  const auto = mode === "auto";
-  const allSet = total > 0 && count === total;
-  return (
-    <Card
-      className={cn(
-        "gap-1.5 rounded-2xl p-3.5 shadow-none transition-colors duration-300",
-        auto && count > 0 && "border-warning/40 bg-warning/5"
-      )}
-    >
-      <div className="flex items-center gap-2.5">
-        <span className={cn("grid size-8 place-items-center rounded-full", auto ? "bg-warning/15 text-warning" : "bg-primary/10 text-link")}>
-          {auto ? <Bot className="size-4" /> : <PenLine className="size-4" />}
-        </span>
-        <span className="font-semibold">{auto ? "Auto" : "Brouillon"}</span>
-        <span className="relative ml-auto h-7 overflow-hidden">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={count}
-              initial={{ y: 14, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -14, opacity: 0 }}
-              transition={pop}
-              className={cn("block text-xl font-semibold tabular-nums", auto && count > 0 && "text-warning")}
-            >
-              {count}
-            </motion.span>
-          </AnimatePresence>
-        </span>
-      </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {auto ? (
-          <>
-            {countdown === 0 ? (
-              <>Envoi seul <strong className="font-medium text-foreground">immédiat</strong>.</>
-            ) : (
-              <>
-                Envoi seul après <strong className="font-medium text-foreground">{countdown} s</strong>, annulable par la pause.
-              </>
-            )}
-          </>
-        ) : (
-          "Trame prépare, tu relis et tu envoies."
-        )}
-      </p>
-      <button
-        onClick={onAll}
-        disabled={allSet}
-        className="mt-auto self-start text-xs font-medium text-link transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-40"
-      >
-        {allSet ? `Toutes en ${auto ? "auto" : "brouillon"}` : `Tout en ${auto ? "auto" : "brouillon"}`}
-      </button>
-    </Card>
-  );
-}
