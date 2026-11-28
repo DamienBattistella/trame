@@ -114,6 +114,17 @@ export function Panel({
           >
             <div className="mb-4 flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/10 px-4 py-2 text-sm">
               <AlertTriangle className="size-4 text-warning" /> Trame est en pause : aucun message n'est lu.
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7"
+                onClick={async () => {
+                  const res = await trame.setPaused(false);
+                  if (!res.ok) toast.error("Reprise impossible", { description: res.error });
+                }}
+              >
+                Reprendre
+              </Button>
             </div>
           </motion.div>
         )}

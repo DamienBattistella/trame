@@ -194,7 +194,6 @@ export default function App() {
                     trame={trame}
                     tab={panelTab}
                     onTab={setPanelTab}
-                    onTogglePause={togglePause}
                   />
                 )}
                 <div className="h-full min-w-0 flex-1">
