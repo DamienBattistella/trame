@@ -809,8 +809,17 @@
     // Noms affichés de personnes (mri « 8:orgid:… »), demandés au middletier comme le fait Teams
     // (fetchShortProfile), gardés en mémoire de la page. Sert à nommer les tête-à-tête.
     const names = new Map(); // mri -> displayName
+    // Par lots de 100 (la limite de Teams), jusqu'à 500 personnes par appel : une seule demande
+    // de 100 laissait sans nom les tête-à-tête au-delà (vu en direct : 87 sur 277). Une personne
+    // que Teams ne nomme pas (compte supprimé) n'est pas redemandée avant 30 min.
+    const unnamed = new Map(); // mri -> dernière demande sans réponse
     const people = async (mris) => {
-      const want = Array.from(new Set((mris || []).filter((m) => /^8:[A-Za-z0-9:._-]{3,120}$/.test(m) && !names.has(m)))).slice(0, 100);
+      const now = Date.now();
+      const all = Array.from(new Set((mris || []).filter((m) => /^8:[A-Za-z0-9:._-]{3,120}$/.test(m) && !names.has(m) && !(now - (unnamed.get(m) || 0) < 30 * 60 * 1000)))).slice(0, 500);
+      for (let i = 0; i < all.length; i += 100) await peopleBatch(all.slice(i, i + 100));
+      return Object.fromEntries((mris || []).filter((m) => names.has(m)).map((m) => [m, names.get(m)]));
+    };
+    const peopleBatch = async (want) => {
       const base = apiCapture.mtBase();
       const bearer = apiCapture.mtBearer();
       if (want.length && base && bearer) {
@@ -827,9 +836,9 @@
             const name = String((p && p.displayName) || "").trim();
             if (p && p.mri && name) names.set(String(p.mri), name);
           }
+          if (res.ok) for (const m of want) if (!names.has(m)) unnamed.set(m, Date.now());
         } catch {}
       }
-      return Object.fromEntries((mris || []).filter((m) => names.has(m)).map((m) => [m, names.get(m)]));
     };
     // Mon identifiant, la session ouverte au besoin (« » si elle ne s'ouvre pas).
     const whoami = async () => {
@@ -2581,7 +2590,9 @@
         }
       }
       const people = await chatsvc.people(rows.filter((r) => r.kind === "dm" && r.other).map((r) => r.other));
-      for (const r of rows) r.name = r.kind === "dm" ? people[r.other] || "" : r.topic;
+      // Sans nom chez Teams : celui que porte son dernier message, s'il vient de l'autre personne.
+      for (const r of rows)
+        r.name = r.kind === "dm" ? people[r.other] || (r.last && r.other && r.last.from === r.other ? r.last.sender : "") || "" : r.topic;
       return { ok: true, me: chatsvc.me(), rows, sync: next, full: !sync };
     };
   })();

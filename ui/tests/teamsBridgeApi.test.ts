@@ -1474,6 +1474,41 @@ test("chatmeetings : conversations lues en parallèle, résultats dans l'ordre d
   assert.ok(peak > 1 && peak <= 4, `en parallèle : ${peak}`);
 });
 
+test("chatlist : noms des tête-à-tête par lots de 100 (au-delà de 100), sinon le nom du dernier message de l'autre", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const me = "8:orgid:00000000-0000-0000-0000-000000000000";
+  const guid = (i: number) => `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
+  const convs = Array.from({ length: 150 }, (_, i) => ({
+    id: `19:${guid(0)}_${guid(i + 1)}@unq.gbl.spaces`,
+    threadProperties: {},
+    properties: {},
+    lastMessage: { id: String(1795777000000 + i), messagetype: "RichText/Html", content: "<p>x</p>", imdisplayname: `Expéditeur ${i + 1}`, from: `https://x/v1/users/ME/contacts/8:orgid:${guid(i + 1)}`, originalarrivaltime: new Date(1795777000000 + i).toISOString() },
+  }));
+  const batches: number[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(JSON.stringify({ tokens: { skypeToken: `x.${Buffer.from(JSON.stringify({ skypeid: me.slice(2) })).toString("base64url")}.y`, expiresIn: 86400 }, region: "emea", regionGtms: { chatService: "https://emea.ng.msg.teams.microsoft.com" } }));
+    if (url.includes("fetchShortProfile")) {
+      const want: string[] = JSON.parse(init.body);
+      batches.push(want.length);
+      // Teams ne nomme pas la personne n° 150 (compte supprimé, par exemple).
+      return fakeResponse(JSON.stringify({ value: want.filter((m) => !m.endsWith(guid(150))).map((m) => ({ mri: m, displayName: `Nom ${Number(m.slice(-12))}` })) }));
+    }
+    if (url.includes("/v1/users/ME/conversations")) return fakeResponse(JSON.stringify({ conversations: convs, _metadata: {} }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatlist", {})).result;
+  assert.equal(r.ok, true);
+  assert.deepEqual(batches, [100, 50]);
+  const byOther = Object.fromEntries(r.rows.map((x: any) => [x.other, x.name]));
+  assert.equal(byOther[`8:orgid:${guid(120)}`], "Nom 120"); // au-delà des 100 premiers
+  assert.equal(byOther[`8:orgid:${guid(150)}`], "Expéditeur 150"); // repli : son dernier message
+  // Une personne que Teams ne nomme pas n'est pas redemandée tout de suite.
+  batches.length = 0;
+  await p.run("chatlist", {});
+  assert.deepEqual(batches, []);
+});
+
 test("chatgesture hide : propriété « unpinnedTime » de la conversation (comme Teams), prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);

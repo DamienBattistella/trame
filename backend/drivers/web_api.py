@@ -461,9 +461,12 @@ class WebApiDriver:
             kind, topic = r.get("kind"), str(r.get("topic") or "").strip()
             if kind in ("group", "meeting") and topic:
                 tid, name, surface = f"title-{cid}", topic, Surface.group
-            elif kind == "dm" and r.get("name") and dm_count.get(str(r["name"]).casefold()) == 1:
+            elif kind == "dm" and r.get("name"):
                 name = str(r["name"]).strip()
-                tid, surface = f"name:{name}", Surface.dm
+                # Homonymes : chacun sous l'id Teams de SA conversation (sans ambiguïté), la date
+                # du dernier message les distingue ; un nom unique garde l'id de la page.
+                tid = f"name:{name}" if dm_count.get(name.casefold()) == 1 else cid
+                surface = Surface.dm
             else:
                 continue
             if tid in skip or (words and not all(w in self._fold(name) for w in words)):
