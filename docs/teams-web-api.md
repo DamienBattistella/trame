@@ -145,7 +145,7 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
   et garde **en mémoire de la page** le jeton du chat et l'adresse régionale. Renouvelée
   5 minutes avant l'expiration, et une fois sur un 401.
 - **Échéance du bearer** : Teams fait ses appels de chat depuis un worker et ne repose presque
-  jamais de bearer middletier dans la fenêtre ; celui-ci expire environ une heure après. La page
+  jamais de bearer middletier dans la fenêtre ; celui-ci expire au bout de quelques heures (environ 18 h relevées en direct, d’où une panne le lendemain matin). La page
   lit donc l'échéance (`exp`) et l'audience (`aud`) de chaque bearer capturé, sans que rien n'en
   sorte, et retient le jeton **valide** qui expire le plus tard (audience `api.spaces.skype.com`
   d'abord), jamais un jeton expiré. Le choix par date de capture gardait un jeton expiré : nos
