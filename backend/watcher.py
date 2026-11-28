@@ -51,6 +51,10 @@ _MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "ao
 CANCELLED = "Action annulée."
 # self_names shipped in config.json by earlier versions: replaced by the name Teams gives.
 FORMER_SHIPPED_SELF_NAMES = ("Damien", "Damien Battistella")
+# Libellé que Trame donne à ta conversation avec toi-même quand seul le service de chat la
+# connaît (drivers/web_api.py, SELF_NAME) : ce n'est pas ton nom. La 0.108 l'a appris comme tel
+# (self_names = ["Mes notes", "Mes"]) ; cette valeur est réparée dès que ton vrai nom est connu.
+SELF_PLACEHOLDER = "Mes notes"
 
 
 def _images_seen(images: list[str]) -> str:
@@ -974,15 +978,28 @@ class Watcher:
     def _learn_self_name(self, discovered: list[WatchEntity]) -> None:
         """Teams marks the user's own chat (« (You) ») with their name: it fills
         self_names when empty, or when it still holds the names shipped by older
-        versions (written for Damien) and Teams says the user is someone else."""
-        name = next((c.display_name.strip() for c in discovered if c.is_self and c.display_name.strip()), None)
-        if not name:
-            return
+        versions (written for Damien) and Teams says the user is someone else. The
+        label Trame gives that chat when only the chat service knows it is not a name."""
+        name = next((c.display_name.strip() for c in discovered
+                     if c.is_self and c.display_name.strip() and c.display_name.strip().casefold() != SELF_PLACEHOLDER.casefold()),
+                    None)
+        if name:
+            self._learn_self(name)
+
+    def _learn_self_from(self, msgs) -> None:
+        """A message the chat service marks as the user's own (`from_me`) names them."""
+        name = next((m.sender.strip() for m in msgs if getattr(m, "from_me", None) is True and (m.sender or "").strip()), None)
+        if name and name.casefold() != SELF_PLACEHOLDER.casefold():
+            self._learn_self(name)
+
+    def _learn_self(self, name: str) -> None:
         with self._lock:
             current = self._self_names()
             known = {n.strip().casefold() for n in current}
             former = known == {n.casefold() for n in FORMER_SHIPPED_SELF_NAMES}
-            if current and not (former and name.casefold() not in known):
+            # Le libellé « Mes notes » appris à tort (seul, ou avec son premier mot) se remplace.
+            wrong = bool(known) and known <= {SELF_PLACEHOLDER.casefold(), SELF_PLACEHOLDER.split()[0].casefold()}
+            if current and not wrong and not (former and name.casefold() not in known):
                 return
             first = name.split()[0]
             names = [name] + ([first] if first.casefold() != name.casefold() else [])
@@ -999,6 +1016,8 @@ class Watcher:
     def _is_own_message(self, msg: IncomingMessage, self_names: list[str]) -> bool:
         """The user's own messages, and the replies Trame just sent, must never trigger
         a reply (an auto-mode conversation would otherwise answer itself forever)."""
+        if msg.from_me is True:
+            return True
         sender = (msg.sender or "").strip().casefold()
         if sender in ("you", "vous", "moi") or (sender and any(sender == n.strip().casefold() for n in self_names if n.strip())):
             return True
@@ -1501,7 +1520,7 @@ class Watcher:
             if surface == Surface.channel:
                 return
             seen = [m if isinstance(m, followmod.Seen) else
-                    followmod.Seen(sender=m.sender, text=m.text, at=m.received_at, mine=self._is_mine(m.sender))
+                    followmod.Seen(sender=m.sender, text=m.text, at=m.received_at, mine=self._is_mine(m.sender, getattr(m, "from_me", None)))
                     for m in msgs if not getattr(m, "deleted", False)]
             name = entity.display_name if entity else ""
             if self.follow_ups.observe(thread_id, name, seen):
@@ -1586,7 +1605,10 @@ class Watcher:
         self._sync_follow_ups()
 
     # --- manual mode: read a conversation, reply by hand, or ask for a proposal ---
-    def _is_mine(self, sender: str) -> bool:
+    def _is_mine(self, sender: str, from_me: Optional[bool] = None) -> bool:
+        # Le service de chat dit l'auteur par son identifiant : cela prime sur le nom affiché.
+        if from_me is not None:
+            return from_me
         names = self._self_names()
         s = (sender or "").strip().casefold()
         return s in ("you", "vous", "moi") or any(s == n.strip().casefold() for n in names if n.strip())
@@ -1606,7 +1628,8 @@ class Watcher:
                 return out[-last_n:], top and len(out) <= last_n
         entity = self._conversation(thread_id)
         msgs, top = self._read_history_focused(thread_id, entity.display_name, last_n, purpose="Lecture")
-        out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender),
+        self._learn_self_from(msgs)
+        out = [{"id": m.id, "sender": m.sender, "text": m.text, "at": m.received_at, "mine": self._is_mine(m.sender, m.from_me),
                 "reactions": list(m.reactions), "reaction_counts": [r.model_dump() for r in m.reaction_counts],
                 "files": [f.model_dump() for f in m.files],
                 "images": [i.model_dump() for i in m.images], "seen": m.seen, "deleted": m.deleted,
@@ -1824,6 +1847,19 @@ class Watcher:
         what = "retirée du" if remove else "au"
         self.log("info", f"Réaction {emoji} {what} message{who} dans « {entity.display_name} »")
 
+    def _seen_message(self, thread_id: str, target: MessageRef) -> Optional[dict]:
+        """The message as last read in the discussion view (same id), if any."""
+        with self._lock:
+            cached = self._thread_cache.get(thread_id)
+            return next((m for m in reversed(cached[1] if cached else []) if target.id and m.get("id") == target.id), None)
+
+    def _own(self, seen: Optional[dict], target: MessageRef) -> bool:
+        """Whether the user wrote this message: what the last reading said (the chat service
+        knows the author by id), else the author's name."""
+        if seen is not None:
+            return bool(seen.get("mine")) or self._is_mine(seen["sender"])
+        return self._is_mine(target.sender)
+
     def delete_message(self, thread_id: str, target: MessageRef) -> None:
         """Delete one of the user's own messages in Teams, on their explicit request from
         the discussion view (after a confirmation there). Never called by the Auto mode,
@@ -1832,16 +1868,12 @@ class Watcher:
         Success only once Teams shows the message deleted: never a false « fait »."""
         entity = self._conversation(thread_id)
         self._require("delete")
-        if not target.sender.strip() or not self._is_mine(target.sender):
+        seen = self._seen_message(thread_id, target)
+        if not target.sender.strip() or not self._own(seen, target):
             self.log("warn", f"Suppression refusée dans « {entity.display_name} » : message d'une autre personne")
             raise ActionError(403, "Seuls tes propres messages peuvent être supprimés.")
-        with self._lock:
-            cached = self._thread_cache.get(thread_id)
-            seen = next((m for m in reversed(cached[1] if cached else []) if target.id and m.get("id") == target.id), None)
-        if seen is not None and (not self._is_mine(seen["sender"]) or seen.get("deleted")):
-            raise ActionError(403 if not seen.get("deleted") else 409,
-                              "Ce message est déjà supprimé." if seen.get("deleted")
-                              else "Seuls tes propres messages peuvent être supprimés.")
+        if seen is not None and seen.get("deleted"):
+            raise ActionError(409, "Ce message est déjà supprimé.")
         self._typing_allowed()
         excerpt = f"« {target.text[:60]}{'…' if len(target.text) > 60 else ''} »"
         with self._ui_lock:
@@ -1890,17 +1922,13 @@ class Watcher:
             raise ActionError(422, "Le nouveau texte est vide : pour retirer le message, supprime-le.")
         if len(new) > self.MAX_EDIT:
             raise ActionError(422, "Le nouveau texte est trop long.")
-        if not target.sender.strip() or not self._is_mine(target.sender):
+        seen = self._seen_message(thread_id, target)
+        if not target.sender.strip() or not self._own(seen, target):
             self.log("warn", f"Modification refusée dans « {entity.display_name} » : message d'une autre personne")
             raise ActionError(403, "Seuls tes propres messages peuvent être modifiés.")
-        with self._lock:
-            cached = self._thread_cache.get(thread_id)
-            seen = next((m for m in reversed(cached[1] if cached else []) if target.id and m.get("id") == target.id), None)
         if seen is not None:
             if seen.get("deleted"):
                 raise ActionError(409, "Ce message est supprimé.")
-            if not self._is_mine(seen["sender"]):
-                raise ActionError(403, "Seuls tes propres messages peuvent être modifiés.")
             if any(seen.get(k) for k in ("quote", "mentions", "files", "images", "cards")):
                 raise ActionError(409, "Ce message a une citation, une mention, une pièce jointe ou un aperçu : "
                                        "modifie-le dans Teams.")
