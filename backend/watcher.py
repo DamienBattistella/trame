@@ -539,6 +539,9 @@ class Watcher:
         "empty": (404, "La transcription est vide."),
         "frame": (504, "La transcription ne s'est pas affichée dans Teams."),
         "timeout": (504, "La transcription a mis trop de temps à se charger."),
+        "graph_denied": (403, "Graph refuse de donner cette transcription de réunion de canal (droit absent du jeton de Teams, "
+                              "ou réunion dont tu n'as pas accès à la transcription)."),
+        "no_link": (404, "Lien de cette réunion de canal inconnu : affiche sa semaine dans le Calendrier, puis réessaie."),
     }
 
     def _transcripts_ready(self) -> None:
@@ -562,6 +565,17 @@ class Watcher:
                 raise ActionError(502, f"Réunions non lues : {e}")
         home = cfgmod._home()
         merged, read_at = self._keep_meetings(home, found)
+        # Les réunions de canal ne sont dans aucune conversation de la liste : elles viennent de
+        # l'agenda des deux dernières semaines (lu sur Graph, rien d'ouvert dans Teams).
+        if getattr(self.driver, "can_read_calendar", False):
+            today = date.today()
+            try:
+                self.calendar((today - timedelta(days=13)).isoformat(), today.isoformat())
+            except ActionError:
+                pass
+            else:
+                merged, stored_at = transcriptsmod.load_meetings(home)
+                read_at = stored_at or read_at
         if transcript_only:
             merged = [m for m in merged if m.get("transcript")]
         return self._meetings_view(home, merged, read_at)
@@ -626,24 +640,26 @@ class Watcher:
                     known, read_at = self._keep_meetings(home, found)
         return {"events": events, **self._meetings_view(home, known, read_at)}
 
-    def _calendar_missing(self, events: list[dict], known: list[dict], now: datetime) -> list[tuple[str, str]]:
-        """(id Teams, sujet) des conversations de réunion à relire : réunions Teams commencées,
-        sans réunion connue ce jour-là dans leur conversation, pas cherchées récemment."""
+    def _calendar_missing(self, events: list[dict], known: list[dict], now: datetime) -> list[tuple[str, str, str]]:
+        """(id Teams, sujet, lien) des conversations de réunion à relire (réunions de canal
+        comprises) : réunions Teams commencées, sans réunion connue ce jour-là dans leur
+        conversation, pas cherchées récemment."""
         have = {(m.get("thread_id"), m.get("date")) for m in known}
         tried = self.__dict__.setdefault("_calendar_tried", {})
         clock = time.monotonic()
-        out: list[tuple[str, str]] = []
+        out: list[tuple[str, str, str]] = []
         for e in events:
             cid = e.get("chat_id") or ""
-            if not cid.startswith("19:meeting_") or not e.get("started"):
+            tid = e.get("thread_id") or ""
+            if not tid or not e.get("started"):
                 continue
-            if (f"title-{cid}", e["date"]) in have or any(c == cid for c, _ in out):
+            if (tid, e["date"]) in have or any(c == cid for c, _, _ in out):
                 continue
             at = tried.get((cid, e["date"]))
             if at is not None and clock - at < self.CALENDAR_RETRY:
                 continue
             tried[(cid, e["date"])] = clock
-            out.append((cid, e.get("title") or ""))
+            out.append((cid, e.get("title") or "", e.get("join_url") or ""))
             if len(out) >= self.CALENDAR_CHATS:
                 break
         return out
@@ -683,7 +699,7 @@ class Watcher:
                 raise ActionError(409, "Partage d'écran en cours : Trame ne touche pas à Teams.")
             try:
                 with telemetry.span("teams.transcript", conversation=thread_id) as sp:
-                    res = self.driver.meeting_transcript(thread_id, str(mid)) or {}
+                    res = self._read_transcript(home, thread_id, str(mid))
                     telemetry.set_attrs(sp, ok=bool(res.get("ok")), entries=len(res.get("entries") or []))
             except NotSupported as e:
                 raise ActionError(501, str(e))
@@ -729,6 +745,22 @@ class Watcher:
         if content:
             out["vtt"] = vtt
         return out
+
+    def _read_transcript(self, home, thread_id: str, mid: str) -> dict:
+        """La transcription d'une réunion : dans la page (récapitulatif de la conversation), ou,
+        pour une réunion de canal (« chan:… », pas dans la liste de Chat), sur Graph par le lien
+        de la réunion, l'occurrence étant celle de la fin d'appel `mid`."""
+        if not thread_id.startswith("chan:"):
+            return self.driver.meeting_transcript(thread_id, mid) or {}
+        read = getattr(self.driver, "meeting_transcript_graph", None)
+        if not callable(read):
+            raise NotSupported("transcription des réunions de canal indisponible avec ce pilote Teams")
+        known, _ = transcriptsmod.load_meetings(home)
+        m = next((k for k in known if k.get("thread_id") == thread_id and str(k.get("mid")) == mid), None)
+        if not m or not m.get("join_url"):
+            return {"ok": False, "reason": "no_link"}
+        res = read(str(m["join_url"]), int(mid) if mid.isdigit() else 0) or {}
+        return {"title": m.get("title"), "when": m.get("when"), **res}
 
     def probe_transcript(self, thread_id: str, mid: str) -> dict:
         """Diagnostic : la forme de la page de transcription (balises, rôles, longueurs),
@@ -3767,6 +3799,10 @@ def calendar_days(raw: Iterable[dict], first: date, last: date, now: datetime) -
         if e.get("cancelled"):
             continue
         cid = str(e.get("thread") or "")
+        root = str(e.get("root") or "")
+        # Réunion de canal : son fil est la publication qui l'annonce dans le canal.
+        if cid.endswith("@thread.tacv2") and root.isdigit():
+            cid = f"{cid};messageid={root}"
         base = {
             "event_id": str(e.get("id") or ""),
             "title": str(e.get("subject") or "") or ("Privé" if e.get("private") else "Occupé"),
@@ -3774,7 +3810,7 @@ def calendar_days(raw: Iterable[dict], first: date, last: date, now: datetime) -
             "private": bool(e.get("private")),
             "online": bool(e.get("online")),
             "chat_id": cid,
-            "thread_id": f"title-{cid}" if cid.startswith("19:meeting_") else "",
+            "thread_id": f"title-{cid}" if cid.startswith("19:meeting_") else f"chan:{cid}" if ";messageid=" in cid else "",
             "join_url": meetingmod.join_url(e.get("join_url")) or "",
             "organizer": str(e.get("organizer") or ""),
             "location": str(e.get("location") or ""),

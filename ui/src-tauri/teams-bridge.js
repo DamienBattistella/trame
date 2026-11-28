@@ -3045,14 +3045,21 @@
   // vérifié sur deux réunions) : la lecture des transcriptions par la page reste valable.
   // La conversation Teams d'une réunion, lue dans son lien (« …/meetup-join/19%3ameeting_…%40thread.v2/0 ») ;
   // une réunion de canal porte l'id du canal (« @thread.tacv2 »). "" sans lien Teams.
-  const meetingThreadOf = (joinUrl) => {
+  const meetingThreadOf = (joinUrl) => meetingLinkOf(joinUrl).thread;
+  // Conversation et publication d'une réunion : une réunion de canal porte, après l'id du canal,
+  // l'id du message qui l'annonce dans le canal (« …%40thread.tacv2/1700000000000?context=… ») ;
+  // ses fins d'appel sont des réponses à ce message. "0" (réunion hors canal) : pas de publication.
+  const meetingLinkOf = (joinUrl) => {
     let u = String(joinUrl || "");
     try {
       u = decodeURIComponent(u);
     } catch {}
-    const m = /\b(19:[A-Za-z0-9_.=-]{1,200}@thread\.(?:v2|tacv2|skype))/.exec(u);
-    return m ? m[1] : "";
+    const m = /\b(19:[A-Za-z0-9_.=-]{1,200}@thread\.(?:v2|tacv2|skype))(?:\/(\d{1,20}))?/.exec(u);
+    if (!m) return { thread: "", root: "" };
+    return { thread: m[1], root: /@thread\.tacv2$/.test(m[1]) && m[2] && m[2] !== "0" ? m[2] : "" };
   };
+  // Fil d'une réunion de canal sur le service de chat : la publication et ses réponses.
+  const CHANNEL_MEETING = /^19:[A-Za-z0-9_.=-]{1,200}@thread\.tacv2;messageid=\d{1,20}$/;
   // Un appel coupé puis relancé laisse deux fins d'appel pour UN SEUL rendez-vous : une seule
   // réunion par créneau, celle qui a une transcription (sinon la dernière terminée).
   const oneAppointment = (recaps) => {
@@ -3118,6 +3125,7 @@
             .map((e) => ({
               subject: norm(e && e.subject),
               thread: meetingThreadOf(e && e.onlineMeeting && e.onlineMeeting.joinUrl),
+              root: meetingLinkOf(e && e.onlineMeeting && e.onlineMeeting.joinUrl).root,
               start: new Date(`${String((e && e.start && e.start.dateTime) || "").replace(/Z$/, "")}Z`),
               end: new Date(`${String((e && e.end && e.end.dateTime) || "").replace(/Z$/, "")}Z`),
             }))
@@ -3131,7 +3139,9 @@
     // « Migration weekly »). Le sujet ne sert qu'à défaut.
     const fromCalendar = async (topic, callStart, thread) => {
       const near = (await dayEvents(callStart)).filter((e) => Math.abs(e.start - callStart) <= 2 * 3600000);
-      const same = near.filter((e) => thread && e.thread === thread);
+      // Réunion de canal : son fil est « canal;messageid=publication ».
+      const [conv, root] = String(thread || "").split(";messageid=");
+      const same = near.filter((e) => conv && e.thread === conv && (!root || e.root === root));
       if (same.length) return same.reduce((a, b) => (Math.abs(b.start - callStart) < Math.abs(a.start - callStart) ? b : a));
       const want = norm(topic);
       if (!want) return null;
@@ -3176,7 +3186,7 @@
       const got = await read(thread);
       if (!got.ok) return { thread, ok: false, error: got.error };
       const msgs = got.msgs;
-      const onlyTranscribed = !MEETING_CHAT.test(thread);
+      const onlyTranscribed = !MEETING_CHAT.test(thread) && !CHANNEL_MEETING.test(thread);
       const recaps = [];
       for (let i = 0; i < msgs.length; i++) {
         const m = msgs[i];
@@ -3214,7 +3224,7 @@
       return { thread, ok: true, recaps: oneAppointment(recaps).reverse() };
     };
     return async ({ threads = [], topics = {} } = {}) => {
-      const ids = (Array.isArray(threads) ? threads : []).filter((t) => CALL_CHAT.test(String(t))).slice(0, 30);
+      const ids = (Array.isArray(threads) ? threads : []).filter((t) => CALL_CHAT.test(String(t)) || CHANNEL_MEETING.test(String(t))).slice(0, 30);
       calendar.clear();
       const topicOf = (t) => (topics && typeof topics === "object" && topics[t]) || "";
       const out = await paced(ids, (t) => one(t, topicOf(t)), { onError: (e, t) => ({ thread: t, ok: false, error: String((e && e.message) || e) }) });
@@ -3260,6 +3270,7 @@
         const endAt = utc(e.end);
         if (!startAt || !endAt) continue;
         const join = String((e.onlineMeeting && e.onlineMeeting.joinUrl) || "");
+        const link = meetingLinkOf(join);
         events.push({
           id: s(e.id, 300),
           subject: s(e.subject, 200),
@@ -3274,7 +3285,8 @@
           cancelled: e.isCancelled === true,
           online: Boolean(join) || e.isOnlineMeeting === true,
           join_url: join.slice(0, 2000),
-          thread: meetingThreadOf(join),
+          thread: link.thread,
+          root: link.root,
           organizer: s(e.organizer && e.organizer.emailAddress && e.organizer.emailAddress.name, 120),
           location: s(e.location && e.location.displayName, 160),
           recurring: e.type === "occurrence" || e.type === "exception",
@@ -3285,6 +3297,63 @@
       url = next.startsWith("https://graph.microsoft.com/") ? next : "";
     }
     return { ok: true, events };
+  };
+
+  // --- Transcription d'une réunion lue sur Graph (réunions de canal) ---
+  // La page ne sait ouvrir que les conversations de la liste de Chat : le récapitulatif d'une
+  // réunion de canal ne s'y affiche pas. Graph donne la transcription par la réunion en ligne
+  // (retrouvée par son lien), signé dans la page avec le jeton que Teams a posé :
+  // /me/onlineMeetings?$filter=JoinWebUrl eq '…', puis ses transcriptions, puis le .vtt de celle
+  // de cette occurrence (la plus proche de `at`, fin de l'appel en ms). Seul le .vtt sort.
+  const graphTranscript = async ({ joinUrl = "", at = 0 } = {}) => {
+    let join;
+    try {
+      join = new URL(String(joinUrl || ""));
+    } catch {
+      return { ok: false, reason: "not_found", error: "lien de réunion illisible" };
+    }
+    if (join.protocol !== "https:" || !/^teams\.microsoft\.com$/i.test(join.hostname) || !join.pathname.startsWith("/l/meetup-join/"))
+      return { ok: false, reason: "not_found", error: "ce n'est pas un lien de réunion Teams" };
+    const G = "https://graph.microsoft.com/v1.0";
+    if (!apiCapture.credsFor(`${G}/me/onlineMeetings`))
+      return { ok: false, reason: "error", error: "Teams n'a pas encore appelé Graph dans cette session : réessaie dans un instant" };
+    const get = (url, json = true) => ops.webfetch({ url, method: "GET", sign: true, json, cookies: false });
+    const refused = (r, what) => {
+      const st = (r && r.status) || 0;
+      if (st === 401 || st === 403) return { ok: false, reason: "denied", error: `Graph refuse la lecture ${what} (HTTP ${st})` };
+      if (st === 404) return { ok: false, reason: "not_found", error: `${what} introuvable sur Graph` };
+      return { ok: false, reason: "error", error: (r && r.error) || `Graph ${st || "injoignable"}` };
+    };
+    const quoted = String(join.toString()).replace(/'/g, "''");
+    const found = await get(`${G}/me/onlineMeetings?$filter=${encodeURIComponent(`JoinWebUrl eq '${quoted}'`)}`);
+    if (!found || !found.ok) return refused(found, "de la réunion");
+    const meeting = ((found.json && found.json.value) || [])[0];
+    const id = String((meeting && meeting.id) || "");
+    if (!/^[A-Za-z0-9_=+\/-]{1,600}$/.test(id)) return { ok: false, reason: "not_found", error: "réunion introuvable sur Graph" };
+    const base = `${G}/me/onlineMeetings/${encodeURIComponent(id)}/transcripts`;
+    const list = await get(base);
+    if (!list || !list.ok) return refused(list, "des transcriptions");
+    const items = ((list.json && list.json.value) || []).filter((t) => t && /^[A-Za-z0-9_=+\/-]{1,600}$/.test(String(t.id || "")));
+    if (!items.length) return { ok: false, reason: "none", error: "pas de transcription pour cette réunion" };
+    const time = (v) => {
+      const d = new Date(String(v || ""));
+      return Number.isNaN(d.getTime()) ? null : d.getTime();
+    };
+    const target = Number(at) || 0;
+    const distance = (t) => {
+      const end = time(t.endDateTime);
+      const start = time(t.createdDateTime);
+      if (!target) return -(end || start || 0); // sans repère : la plus récente
+      if (start != null && end != null && start <= target && target <= end + 10 * 60000) return 0;
+      return Math.abs((end != null ? end : start != null ? start : 0) - target);
+    };
+    const best = items.reduce((a, b) => (distance(b) < distance(a) ? b : a));
+    if (target && distance(best) > 3 * 3600000) return { ok: false, reason: "none", error: "pas de transcription pour cette occurrence" };
+    const content = await get(`${base}/${encodeURIComponent(String(best.id))}/content?$format=text/vtt`, false);
+    if (!content || !content.ok) return refused(content, "du contenu de la transcription");
+    const vtt = String(content.text || "");
+    if (!/^\uFEFF?WEBVTT/.test(vtt)) return { ok: false, reason: "empty", error: "transcription illisible" };
+    return { ok: true, vtt };
   };
 
   // --- Sonde des conversations de réunion (découverte, lecture seule) ---
@@ -4070,6 +4139,8 @@
     chatmeetings: (args) => chatMeetings(args || {}),
     // L'agenda de l'utilisateur sur une période (Graph, jeton que Teams a posé), en lecture seule.
     calendarevents: (args) => calendarEvents(args || {}),
+    // La transcription d'une réunion (de canal) lue sur Graph, sans rien ouvrir dans la page.
+    graphtranscript: (args) => graphTranscript(args || {}),
     chatsearch: (args) => chatSearch(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé

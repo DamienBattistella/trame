@@ -1879,3 +1879,100 @@ test("calendarevents : l'agenda de la période, signé avec le jeton Graph de Te
   assert.equal((await p.run("calendarevents", { start: "2026-01-01", end: "2026-12-31" })).result.ok, false);
   assert.equal(urls.length, 2);
 });
+
+test("chatmeetings : réunion de canal, lue dans le fil de sa publication (« canal;messageid=… »)", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const CHAN = "19:canal42@thread.tacv2;messageid=1795000000000";
+  const iso = (s: string) => new Date(s).toISOString();
+  const t = (s: string) => new Date(s).getTime();
+  const msgs = [
+    { id: "1795000000000", messagetype: "RichText/Html", content: "<p>Revue d'équipe</p>" },
+    { id: String(t("2026-11-26T10:00:30")), messagetype: "Event/Call", content: `<partlist><meetingdetails><starttime>${iso("2026-11-26T10:00:00")}</starttime><endtime>${iso("2026-11-26T11:00:00")}</endtime></meetingdetails></partlist>` },
+    { id: String(t("2026-11-26T10:58:00")), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  const seen: string[] = [];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes("/messages")) seen.push(url);
+    if (url.includes(`/conversations/${encodeURIComponent(CHAN)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  // Le canal seul (sans publication) n'est pas lu : ce n'est pas le fil d'une réunion.
+  const r = (await p.run("chatmeetings", { threads: [CHAN, "19:canal42@thread.tacv2"] })).result;
+  assert.equal(r.chats.length, 1);
+  assert.equal(seen.length, 1);
+  assert.equal(r.chats[0].thread, CHAN);
+  assert.equal(r.chats[0].recaps.length, 1);
+  assert.equal(r.chats[0].recaps[0].when, "jeudi 26 novembre 2026 10:00 - 11:00");
+  // Une réunion de canal sans transcription est gardée, comme une conversation de réunion.
+  assert.equal(r.chats[0].recaps[0].transcript, false);
+});
+
+test("calendarevents : une réunion de canal donne le canal ET l'id de sa publication", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/me/events", { headers: { authorization: "Bearer GRAPH-SECRET" } });
+  await new Promise((r) => setImmediate(r));
+  const join = (t: string, n: string) => `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(t)}/${n}?context=x`;
+  const value = [
+    { id: "c", subject: "Revue", start: { dateTime: "2026-11-26T09:00:00" }, end: { dateTime: "2026-11-26T10:00:00" }, onlineMeeting: { joinUrl: join("19:canal42@thread.tacv2", "1795000000000") } },
+    { id: "m", subject: "Point", start: { dateTime: "2026-11-26T11:00:00" }, end: { dateTime: "2026-11-26T12:00:00" }, onlineMeeting: { joinUrl: join("19:meeting_x@thread.v2", "0") } },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.startsWith("https://graph.microsoft.com/v1.0/me/calendarView")) return fakeResponse(JSON.stringify({ value }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("calendarevents", { start: "2026-11-23", end: "2026-11-29" })).result;
+  assert.equal(r.events[0].thread, "19:canal42@thread.tacv2");
+  assert.equal(r.events[0].root, "1795000000000");
+  assert.equal(r.events[1].thread, "19:meeting_x@thread.v2");
+  assert.equal(r.events[1].root, "");
+});
+
+test("graphtranscript : la réunion par son lien, la transcription de CETTE occurrence, seul le .vtt sort", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const JOIN = "https://teams.microsoft.com/l/meetup-join/19%3acanal42%40thread.tacv2/1795000000000?context=%7b%22Tid%22%3a%22t%22%7d";
+  // Sans jeton Graph vu dans la page : rien n'est demandé.
+  const none = (await p.run("graphtranscript", { joinUrl: JOIN, at: 1 })).result;
+  assert.equal(none.ok, false);
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/me/events", { headers: { authorization: "Bearer GRAPH-SECRET" } });
+  await new Promise((r) => setImmediate(r));
+  const urls: string[] = [];
+  const at = new Date("2026-11-26T10:58:00Z").getTime();
+  let transcripts: any[] = [
+    { id: "old", createdDateTime: "2026-11-19T10:01:00Z", endDateTime: "2026-11-19T10:59:00Z" },
+    { id: "this", createdDateTime: "2026-11-26T10:01:00Z", endDateTime: "2026-11-26T10:58:30Z" },
+  ];
+  let meetings = 200;
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.startsWith("https://graph.microsoft.com/")) {
+      urls.push(url);
+      assert.equal(init.headers.Authorization, "Bearer GRAPH-SECRET");
+      if (url.includes("/me/onlineMeetings?")) return fakeResponse(JSON.stringify({ value: [{ id: "MSo1N2Y5" }] }), { status: meetings });
+      if (url.endsWith("/transcripts")) return fakeResponse(JSON.stringify({ value: transcripts }));
+      if (url.includes("/transcripts/this/content")) return fakeResponse("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Ana Martin>Bonjour</v>\n", { contentType: "text/vtt" });
+    }
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("graphtranscript", { joinUrl: JOIN, at })).result;
+  assert.equal(r.ok, true, r.error);
+  assert.ok(r.vtt.startsWith("WEBVTT") && r.vtt.includes("<v Ana Martin>Bonjour</v>"));
+  assert.ok(decodeURIComponent(urls[0]).includes(`JoinWebUrl eq '${JOIN}'`));
+  assert.ok(urls[1].endsWith("/me/onlineMeetings/MSo1N2Y5/transcripts"));
+  assert.ok(urls[2].includes("/transcripts/this/content?$format=text/vtt"));
+  assert.ok(!/GRAPH-SECRET/.test(JSON.stringify(r)));
+  // Pas de transcription près de cette occurrence : « none », pas celle d'une autre semaine.
+  transcripts = [transcripts[0]];
+  assert.equal((await p.run("graphtranscript", { joinUrl: JOIN, at })).result.reason, "none");
+  // Droit absent du jeton : « denied ».
+  meetings = 403;
+  assert.equal((await p.run("graphtranscript", { joinUrl: JOIN, at })).result.reason, "denied");
+  // Lien qui n'est pas une réunion Teams : refusé sans appel.
+  const n = urls.length;
+  assert.equal((await p.run("graphtranscript", { joinUrl: "https://evil.test/l/meetup-join/x", at })).result.ok, false);
+  assert.equal(urls.length, n);
+});

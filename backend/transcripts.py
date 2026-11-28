@@ -378,7 +378,7 @@ def remember_dir(home: Path, directory: Path) -> None:
 # --- liste des réunions gardée sur le poste (%APPDATA%\Trame, conservé par les mises à jour) ---
 MEETINGS_KEPT = 500
 _MEETING_KEYS = ("thread_id", "chat", "mid", "title", "when", "transcript", "meeting_id", "date", "start", "end",
-                 "organizer")
+                 "organizer", "join_url")
 
 
 def _meetings_file(home: Path) -> Path:
