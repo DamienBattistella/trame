@@ -1451,20 +1451,21 @@ test("chatmeetings : conversations lues en parallèle, résultats dans l'ordre d
   assert.ok(peak > 1 && peak <= 4, `en parallèle : ${peak}`);
 });
 
-test("chatgesture hide : propriété « hidden » de la conversation, prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
+test("chatgesture hide : propriété « unpinnedTime » de la conversation (comme Teams), prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);
-  // L'état vit dans threadProperties (comme le lit Teams), en chaîne sur le service.
-  const conv: any = { properties: {}, threadProperties: {} };
+  // Comme Teams : masquée = `unpinnedTime` plus récent que le dernier message.
+  const conv: any = { properties: {}, threadProperties: {}, lastMessage: { originalarrivaltime: new Date(Date.now() - 3600000).toISOString() } };
   const writes: any[] = [];
   p.setResponse((url: string, init: any) => {
     if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
     const method = (init && init.method) || "GET";
-    if (method === "PUT" && url.includes("/properties?name=hidden")) {
+    if (method === "PUT" && url.includes("/properties?name=hidden")) return fakeResponse("{}", { status: 400 }); // vu en direct
+    if (method === "PUT" && url.includes("/properties?name=unpinnedTime")) {
       const body = JSON.parse(init.body);
       writes.push({ url, body });
-      if (typeof body.hidden !== "boolean") return fakeResponse("{}", { status: 400 }); // comme Teams
-      conv.threadProperties.hidden = String(body.hidden);
+      if (!("unpinnedTime" in body)) return fakeResponse("{}", { status: 400 });
+      conv.properties.unpinnedTime = body.unpinnedTime == null ? null : String(body.unpinnedTime);
       return fakeResponse("", { status: 200 });
     }
     if (url.includes(`/conversations/${encodeURIComponent(GROUP_ID)}`)) return fakeResponse(JSON.stringify(conv));
@@ -1472,12 +1473,18 @@ test("chatgesture hide : propriété « hidden » de la conversation, prouvée r
   });
   const r = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
   assert.equal(r.ok, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(writes[0].body)), { hidden: true });
+  assert.deepEqual(Object.keys(writes[0].body), ["unpinnedTime"]);
+  assert.ok(Math.abs(writes[0].body.unpinnedTime - Date.now()) < 5000);
   const again = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
   assert.equal(again.already, true);
   const back = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: false })).result;
   assert.equal(back.ok, true);
-  assert.equal(conv.threadProperties.hidden, "false");
+  assert.equal(conv.properties.unpinnedTime, null);
+  assert.equal(writes[1].body.unpinnedTime, null);
+  // Un message arrivé après le masquage : Teams la réaffiche, Trame la voit visible.
+  conv.properties.unpinnedTime = String(Date.now() - 7200000);
+  const shown = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: false })).result;
+  assert.equal(shown.already, true);
   assert.equal(writes.length, 2);
   // Sa conversation avec soi-même : refusée avant tout appel.
   const before = p.fetchCalls.length;
