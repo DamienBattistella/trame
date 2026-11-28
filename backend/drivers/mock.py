@@ -2,7 +2,7 @@ from __future__ import annotations
 import itertools
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Iterable, Optional
 from models import DELETED_TEXT, CardRef, IncomingMessage, LinkRef, MessageRef, Surface, WatchEntity
 from drivers.base import TeamsDriver, same_message
@@ -363,6 +363,30 @@ class MockTeamsDriver(TeamsDriver):
             return []
         hits = [n for n in _TEAMS_PEOPLE if all(any(t.startswith(w) for t in _fold(n).split()) for w in words)]
         return hits[:limit]
+
+    # Flux « Activité » de Teams et appels, fictifs (démo et aperçu de l'interface).
+    can_read_activity = True
+
+    def teams_activity(self, limit: int = 50, calls: bool = True) -> dict:
+        now = datetime.now()
+        at = lambda minutes: (now - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        activity = [
+            {"kind": "mention", "type": "mentionInChat", "at": at(12), "from": "Sofia Marino", "conversation": "Équipe Interop",
+             "thread_id": "19:cc33@thread.v2", "message_id": "1", "preview": "@Damien tu peux relire le mapping PID avant demain ?"},
+            {"kind": "reaction", "type": "reactionInChat", "at": at(45), "from": "Lucas Bernard", "conversation": "Lucas Bernard",
+             "thread_id": "19:bb22@thread.v2", "message_id": "2", "preview": "Déployé sur la recette, ça passe."},
+            {"kind": "reply", "type": "reply", "at": at(190), "from": "Chiara Rossi", "conversation": "#prod-incidents",
+             "thread_id": "19:dd44@thread.v2", "message_id": "3", "preview": "Le flux ADT est reparti depuis 14 h."},
+            {"kind": "mention", "type": "mention", "at": at(60 * 26), "from": "Sofia Marino", "conversation": "Point interop hebdo",
+             "thread_id": "19:meeting_ff66@thread.v2", "message_id": "4", "preview": "@Damien pour l'ordre du jour"},
+        ]
+        call_list = [
+            {"direction": "incoming", "state": "missed", "missed": True, "type": "twoParty", "at": at(30), "duration_s": 0,
+             "with": "Chiara Rossi", "thread_id": "19:ee55@thread.v2"},
+            {"direction": "outgoing", "state": "accepted", "missed": False, "type": "twoParty", "at": at(60 * 5), "duration_s": 742,
+             "with": "Lucas Bernard", "thread_id": "19:bb22@thread.v2"},
+        ] if calls else []
+        return {"activity": activity[:limit], "calls": call_list[:limit], "errors": {}, "shape": {}}
 
     def search_messages(self, query: str, limit: int = 25) -> list[dict]:
         """Like Teams' search: every conversation, older messages included."""

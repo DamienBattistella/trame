@@ -812,6 +812,18 @@ const prefsOf = (s: Settings): BriefPrefs => ({ ...s.brief, github: s.github.ena
 
 
 // « API Teams web » : voie suivie par action (appel API depuis la page / DOM) et santé de la
+/** Une entrée du flux « Activité » de Teams. */
+export type TeamsActivityItem = {
+  kind: "mention" | "reply" | "reaction" | "other";
+  type: string;
+  at: string | null;
+  from: string;
+  conversation: string;
+  threadId: string | null;
+  preview: string;
+};
+/** Un appel de l'historique Teams. */
+export type TeamsCall = { direction: "incoming" | "outgoing"; missed: boolean; at: string | null; durationS: number; with: string; threadId: string | null };
 // signature des appels API (le jeton reste dans la page, docs/teams-web-api.md).
 /** tried : la voie a servi depuis le démarrage (false : câblée sur l'API mais rien de prouvé encore). */
 export type ApiRoute = { via: "api" | "page"; reason: string | null; at: string; tried?: boolean };
@@ -1449,6 +1461,33 @@ export function useTrame() {
     // Visible tout de suite, sans attendre la prochaine trame du flux d'état.
     setState((s) => (s.watchlist.some((w) => w.threadId === conversation.threadId) ? s : { ...s, watchlist: [conversation, ...s.watchlist] }));
     return { ok: true, conversation };
+  };
+  /** Flux « Activité » de Teams (mentions, réponses, réactions) et derniers appels. */
+  const teamsActivity = async (): Promise<Result<{ supported: boolean; activity: TeamsActivityItem[]; calls: TeamsCall[] }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, supported: false, activity: [], calls: [] };
+    }
+    const res = await request<{ supported: boolean; activity: any[]; calls: any[] }>("GET", "/api/teams/activity?limit=100");
+    if (!res.ok) return res;
+    const activity: TeamsActivityItem[] = (res.activity ?? []).map((a) => ({
+      kind: ["mention", "reply", "reaction"].includes(a.kind) ? a.kind : "other",
+      type: String(a.type ?? ""),
+      at: a.at ?? null,
+      from: String(a.from ?? ""),
+      conversation: String(a.conversation ?? ""),
+      threadId: a.thread_id ?? null,
+      preview: String(a.preview ?? ""),
+    }));
+    const calls: TeamsCall[] = (res.calls ?? []).map((c) => ({
+      direction: c.direction === "outgoing" ? "outgoing" : "incoming",
+      missed: Boolean(c.missed),
+      at: c.at ?? null,
+      durationS: Number(c.duration_s) || 0,
+      with: String(c.with ?? ""),
+      threadId: c.thread_id ?? null,
+    }));
+    return { ok: true, supported: Boolean(res.supported), activity, calls };
   };
   /** « Anciennes conversations » : celles que Teams connaît et que la liste ne montre pas. */
   const olderConversations = async (
@@ -2526,6 +2565,7 @@ export function useTrame() {
     startConversation,
     olderConversations,
     openOlder,
+    teamsActivity,
     uploadPeople,
     removePeople,
     selftest,

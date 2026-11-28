@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, BellRing, Bot, CheckCheck, ChevronRight, Clock, EllipsisVertical, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, AtSign, BellRing, Bot, CheckCheck, ChevronRight, Clock, EllipsisVertical, EyeOff, History, Inbox as InboxIcon, Loader2, MessagesSquare, PenLine, Search, SquarePen, Star, StarOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { AUTO_HINT, InitialsAvatar, spring } from "@/components/kit";
 import { DiscussionView } from "@/components/DiscussionView";
 import { NewConversation } from "@/components/NewConversation";
 import { OlderConversations } from "@/components/OlderConversations";
+import { TeamsActivity } from "@/components/TeamsActivity";
 import { MessageSearchResults } from "@/components/MessageSearchResults";
 import { ReflectionPanel } from "@/components/ReflectionPanel";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -63,6 +64,7 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
   const [dock, setDock] = useState<"brief" | "reflection" | null>(null);
   const [starting, setStarting] = useState(false);
   const [browsingOlder, setBrowsingOlder] = useState(false);
+  const [browsingActivity, setBrowsingActivity] = useState(false);
   // Fenêtre assez large pour le panneau de résumé à côté de la discussion.
   const wide = useMedia("(min-width: 1024px)");
 
@@ -573,6 +575,24 @@ export function Inbox({ trame, onBrief }: { trame: Trame; onBrief: (t: BriefTarg
             trame={trame}
             open={browsingOlder}
             onOpenChange={setBrowsingOlder}
+            onOpened={(threadId) => {
+              setQuery("");
+              setCollapsed({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: false, archived: false });
+              setSelected(threadId);
+            }}
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-9 rounded-full" aria-label="Activité Teams" onClick={() => setBrowsingActivity(true)}>
+                <AtSign className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Activité Teams : mentions, réactions, appels</TooltipContent>
+          </Tooltip>
+          <TeamsActivity
+            trame={trame}
+            open={browsingActivity}
+            onOpenChange={setBrowsingActivity}
             onOpened={(threadId) => {
               setQuery("");
               setCollapsed({ favorites: false, review: false, followUp: false, unread: false, followed: false, others: false, archived: false });

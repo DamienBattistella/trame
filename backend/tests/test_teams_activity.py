@@ -89,6 +89,9 @@ def test_api_driver_maps_conversations_to_trame_ids():
     out = d.teams_activity()
     assert [a["thread_id"] for a in out["activity"]] == ["title-19:recent@thread.v2", "name:Marc Petit", None]
     assert [c["thread_id"] for c in out["calls"]] == ["name:Marc Petit", None]
+    # Sans sujet dans la charge : le nom que la liste connaît (le tête-à-tête : l'autre personne).
+    assert out["activity"][1]["conversation"] == "Marc Petit"
+    assert out["activity"][0]["conversation"] == "Équipe Interop"
     assert d.routes()["activity"]["via"] == "api"
 
 
@@ -101,6 +104,9 @@ def test_api_driver_falls_back_and_says_why():
 
 def test_endpoint_filters_and_unsupported_driver(make_client):
     client, watcher, _ = make_client()
+    # Le pilote fictif (démo) a son flux d'exemple ; un pilote sans le service le dit.
+    assert client.get("/api/teams/activity").json()["supported"] is True
+    watcher.driver = FakePage([SHOWN], [])
     assert client.get("/api/teams/activity").json() == {"ok": True, "supported": False, "activity": [], "calls": [], "errors": {}}
     watcher.driver = _driver()
     r = client.get("/api/teams/activity?kind=mention").json()
