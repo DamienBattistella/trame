@@ -1439,6 +1439,31 @@ export function useTrame() {
     setState((s) => (s.watchlist.some((w) => w.threadId === conversation.threadId) ? s : { ...s, watchlist: [conversation, ...s.watchlist] }));
     return { ok: true, conversation };
   };
+  /** « Anciennes conversations » : celles que Teams connaît et que la liste ne montre pas. */
+  const olderConversations = async (
+    query: string,
+    offset = 0
+  ): Promise<Result<{ supported: boolean; total: number; conversations: WatchEntity[] }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      return { ok: true, supported: false, total: 0, conversations: [] };
+    }
+    const res = await request<{ supported: boolean; total: number; conversations: any[] }>(
+      "GET",
+      `/api/conversations/older?q=${encodeURIComponent(query)}&offset=${offset}&limit=50`
+    );
+    if (!res.ok) return res;
+    return { ok: true, supported: Boolean(res.supported), total: Number(res.total) || 0, conversations: (res.conversations ?? []).map(mapWatch) };
+  };
+  /** Ajoute à la liste, non suivie, une conversation trouvée dans les anciennes. */
+  const openOlder = async (threadId: string): Promise<Result<{ conversation: WatchEntity }>> => {
+    if (!connectedRef.current) return { ok: false, error: OFFLINE };
+    const res = await request<{ conversation: any }>("POST", "/api/conversations/older/open", { thread_id: threadId });
+    if (!res.ok) return res;
+    const conversation = mapWatch(res.conversation);
+    setState((s) => (s.watchlist.some((w) => w.threadId === conversation.threadId) ? s : { ...s, watchlist: [conversation, ...s.watchlist] }));
+    return { ok: true, conversation };
+  };
   const uploadPeople = async (filename: string, content: string): Promise<Result<{ people: PeopleSummary }>> => {
     if (!/\.json$/i.test(filename)) return { ok: false, error: "Le fichier doit être un .json exporté d'Orbite." };
     if (new Blob([content]).size > 512 * 1024) return { ok: false, error: "Le fichier dépasse 512 Ko." };
@@ -2486,6 +2511,8 @@ export function useTrame() {
     listPeople,
     searchPeople,
     startConversation,
+    olderConversations,
+    openOlder,
     uploadPeople,
     removePeople,
     selftest,

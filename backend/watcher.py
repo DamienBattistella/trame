@@ -2347,6 +2347,40 @@ class Watcher:
                 "teams_search": bool(self.driver.can_search_people), "teams_error": teams_error,
                 "unsupported": None if self.driver.can_start_chat else self.driver.start_chat_unsupported}
 
+    def older_conversations(self, query: str = "", offset: int = 0, limit: int = 50) -> dict:
+        """« Anciennes conversations » : celles que Teams connaît et que la liste ne montre pas, de
+        la plus récente à la plus ancienne, filtrées par nom. Rien n'est ouvert dans Teams."""
+        read = getattr(self.driver, "older_conversations", None)
+        if read is None:
+            return {"supported": False, "total": 0, "conversations": []}
+        with self._lock:
+            known = [w.thread_id for w in self.state.watchlist]
+        try:
+            items, total = read(" ".join((query or "").split())[:120], offset, limit, exclude=known)
+        except Exception as e:
+            raise ActionError(503, f"Anciennes conversations indisponibles : {e}")
+        return {"supported": True, "total": total, "conversations": [json.loads(e.model_dump_json()) for e in items]}
+
+    def open_older(self, thread_id: str) -> WatchEntity:
+        """Ouvre une conversation trouvée dans « Anciennes conversations » : elle rejoint la liste,
+        non suivie (comme une nouvelle conversation), et se lit sans être ouverte dans Teams."""
+        with self._lock:
+            known = next((w for w in self.state.watchlist if w.thread_id == thread_id), None)
+        if known is not None:
+            return known
+        opener = getattr(self.driver, "open_older", None)
+        entity = opener(thread_id) if opener is not None else None
+        if entity is None:
+            raise ActionError(404, "Conversation introuvable : relance la recherche des anciennes conversations.")
+        with self._lock:
+            if not any(w.thread_id == entity.thread_id for w in self.state.watchlist):
+                self.state.watchlist = [entity, *self.state.watchlist]
+            self._started.add(entity.thread_id)
+        self._persist_watchlist()
+        self._thread_cache.pop(entity.thread_id, None)
+        self.log("info", f"Ancienne conversation ouverte : {entity.display_name}")
+        return entity
+
     def start_conversation(self, name: str) -> WatchEntity:
         """Open (or create) the private chat with `name` in Teams and add it to the list,
         unfollowed. Nothing is typed. Refused unless Teams shows that very name."""

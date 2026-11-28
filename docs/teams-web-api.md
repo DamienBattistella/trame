@@ -375,6 +375,17 @@ lire les transcriptions (`OnlineMeetingTranscript.Read.All`), Graph répond 403 
 « Chercher la transcription » pour une réunion de canal même quand le fil ne signale pas de
 transcription.
 
+### Anciennes conversations, à la demande
+
+La liste ne montre que les conversations récentes (celles de la page, complétées par les groupes et
+tête-à-tête actifs depuis 30 jours). Le service de chat les connaît toutes : le bouton « Anciennes
+conversations » (`GET /api/conversations/older?q=&offset=&limit=`) les parcourt de la plus récente à
+la plus ancienne (groupes et réunions nommés, tête-à-tête au nom sans homonyme), filtrées par nom
+(casse et accents ignorés), sans rien ouvrir dans la page. En choisir une
+(`POST /api/conversations/older/open`) l'ajoute à la liste, non suivie, reliée par son id Teams : elle
+se lit et s'écrit ensuite comme les autres. Seule une conversation de la dernière liste peut être
+ouverte : l'id Teams vient du service, jamais de l'interface.
+
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).

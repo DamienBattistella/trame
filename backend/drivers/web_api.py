@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
@@ -155,6 +156,10 @@ class _ChatState:
         # Conversations ajoutées à la liste depuis le service (la page ne les dessinait pas) : thread_id
         # -> id Teams. Reliées seulement tant que la page ne les montre pas elle-même.
         self.extra: dict[str, str] = {}
+        # Dernière liste des conversations plus anciennes (« Anciennes conversations ») : thread_id
+        # -> (id Teams, nom, sorte, heure du dernier message). Seule une entrée de cette liste
+        # peut être ouverte (open_older) : l'id Teams vient du service, jamais de l'interface.
+        self.older: dict[str, tuple[str, str, Surface, int]] = {}
         # Dernier message signalé par l'aperçu de la page, par conversation : (texte replié, heure).
         # Le service ne le signale pas une seconde fois quand il relie la conversation ensuite.
         self.previewed: dict[str, tuple[str, float]] = {}
@@ -420,6 +425,77 @@ class WebApiDriver:
             if len(out) >= self.MAX_EXTRA:
                 break
         return out
+
+    # --- Conversations plus anciennes, à la demande ---------------------------------------
+    # Le service connaît toutes les conversations (des milliers) ; la liste n'en montre que les
+    # récentes. « Anciennes conversations » les parcourt de la plus récente à la plus ancienne,
+    # filtrées par nom, sans rien ouvrir dans la page. Une conversation ne rejoint la liste que
+    # quand l'utilisateur l'ouvre.
+    @staticmethod
+    def _fold(text: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFD", text or "") if not unicodedata.combining(c)).casefold()
+
+    def older_conversations(self, query: str = "", offset: int = 0, limit: int = 50,
+                            exclude: Iterable[str] = ()) -> tuple[list[WatchEntity], int]:
+        """Conversations du service que la liste ne montre pas (`exclude` : ses thread_id), de la
+        plus récente à la plus ancienne ; chaque mot de `query` présent dans le nom (casse et accents
+        ignorés). Rend une page et le total. Lève RuntimeError si le service est injoignable."""
+        st = self._chat
+        if not st.ok:
+            self._refresh_chat()
+        if not st.ok:
+            raise RuntimeError("service de chat de Teams injoignable")
+        skip = set(exclude)
+        skip_cids = {c for t, c in st.mapped.items() if t in skip}
+        dm_count: dict[str, int] = {}
+        for r in list(st.rows.values()):
+            if r.get("kind") == "dm" and r.get("name"):
+                k = str(r["name"]).casefold()
+                dm_count[k] = dm_count.get(k, 0) + 1
+        words = self._fold(query).split()
+        found: list[tuple[str, str, str, Surface, dict]] = []
+        for r in sorted(list(st.rows.values()), key=lambda r: -((r.get("last") or {}).get("ts", 0) or 0)):
+            cid = str(r.get("id") or "")
+            if not cid or cid in skip_cids or r.get("empty"):
+                continue
+            kind, topic = r.get("kind"), str(r.get("topic") or "").strip()
+            if kind in ("group", "meeting") and topic:
+                tid, name, surface = f"title-{cid}", topic, Surface.group
+            elif kind == "dm" and r.get("name") and dm_count.get(str(r["name"]).casefold()) == 1:
+                name = str(r["name"]).strip()
+                tid, surface = f"name:{name}", Surface.dm
+            else:
+                continue
+            if tid in skip or (words and not all(w in self._fold(name) for w in words)):
+                continue
+            found.append((tid, cid, name, surface, r))
+        st.older = {tid: (cid, name, surface, int((r.get("last") or {}).get("ts", 0) or 0)) for tid, cid, name, surface, r in found}
+        offset, limit = max(0, int(offset)), max(1, min(self.OLDER_PAGE, int(limit)))
+        page = [WatchEntity(thread_id=tid, display_name=name, surface=surface, rank=offset + i,
+                            last_activity=_list_label((r.get("last") or {}).get("ts")), unread=self._unread(r))
+                for i, (tid, cid, name, surface, r) in enumerate(found[offset:offset + limit])]
+        return page, len(found)
+
+    OLDER_PAGE = 100
+
+    def open_older(self, thread_id: str) -> Optional[WatchEntity]:
+        """Relie une conversation de la dernière liste « Anciennes conversations » : lue et écrite
+        ensuite par le service, comme une conversation de la liste. None si elle n'y est pas."""
+        st = self._chat
+        hit = st.older.get(thread_id)
+        if hit is None:
+            return None
+        cid, name, surface, ts = hit
+        st.extra[thread_id] = cid
+        st.mapped = {**st.mapped, thread_id: cid}
+        st.strong.add(thread_id)
+        if isinstance(getattr(self._inner, "chat_aliases", None), dict) and thread_id.startswith("name:"):
+            self._inner.chat_aliases = {**self._inner.chat_aliases, thread_id: cid}
+        for attr, value in (("_names", name), ("_kinds", surface)):
+            table = getattr(self._inner, attr, None)
+            if isinstance(table, dict):
+                table[thread_id] = value
+        return WatchEntity(thread_id=thread_id, display_name=name, surface=surface, last_activity=_list_label(ts))
 
     def list_all_conversations(self) -> list[WatchEntity]:
         """La lecture complète de la page (défilement de la liste), complétée par le service :
