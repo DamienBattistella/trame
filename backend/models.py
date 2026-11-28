@@ -88,9 +88,11 @@ def reaction_emoji(key: str) -> str:
     m = re.match(r"^((?:[0-9a-f]{4,6})(?:-[0-9a-f]{4,6})*)_", k)
     if m:
         try:
-            return "".join(chr(int(cp, 16)) for cp in m.group(1).split("-"))
+            emoji = "".join(chr(int(cp, 16)) for cp in m.group(1).split("-"))
         except (ValueError, OverflowError):
             return ""
+        # « 1f44b_wavinghand-tone2 » -> 👋🏼 (même règle que les émoticônes nommées).
+        return emoji.removesuffix(chr(0xFE0F)) + tone if tone else emoji
     return ""
 
 

@@ -1,3 +1,5 @@
+import type { SkinTone } from "@/lib/emoji";
+
 export type Surface = "dm" | "group" | "channel";
 export type Mode = "draft" | "auto";
 /** Présence Teams de la personne d'une conversation privée. */
@@ -113,7 +115,7 @@ export interface Settings {
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
   /** Préférences d'interface, gardées dans config.json : une mise à jour ne les perd pas. */
-  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound; calendarView: CalendarView; calendarPersonal: boolean };
+  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound; calendarView: CalendarView; calendarPersonal: boolean; emojiTone: SkinTone };
 }
 
 export type ConversationSort = "watched" | "recent" | "alpha";

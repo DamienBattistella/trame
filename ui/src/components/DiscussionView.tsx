@@ -1,12 +1,14 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, SmilePlus, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, Smile, SmilePlus, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import type { SkinTone } from "@/lib/emoji";
+import type { EmojiPick } from "@/components/EmojiPicker";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AutoToggle, Dotted, InitialsAvatar, PRESENCE, PresenceLabel, shake } from "@/components/kit";
@@ -248,43 +250,94 @@ function ReactionIcon({ reaction, emoji }: { reaction: Reaction; emoji?: string 
   return <img src={teamsEmoticonUrl(reaction)} alt={glyph} draggable={false} className="size-5" onError={() => setBroken(true)} />;
 }
 
-function AddReaction({ mine, disabled, onReact }: { mine: Reaction[]; disabled: boolean; onReact: (r: Reaction) => void }) {
+const EmojiPicker = lazy(() => import("@/components/EmojiPicker"));
+
+/** La bibliothèque d'emoji dans une fenêtre : en réaction (elle se ferme au choix) ou à insérer
+ *  dans un message (elle reste ouverte pour en mettre plusieurs). */
+function EmojiPopover({
+  mode,
+  tone,
+  onTone,
+  mine,
+  hint,
+  trigger,
+  onPick,
+  onClosed,
+}: {
+  mode: "message" | "reaction";
+  tone: SkinTone;
+  onTone: (t: SkinTone) => void;
+  mine?: Reaction[];
+  hint: string;
+  trigger: React.ReactNode;
+  onPick: (p: EmojiPick) => void;
+  /** Au lieu de rendre le focus au bouton : le rendre ailleurs (la zone de saisie). */
+  onClosed?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Après la fermeture (Échap, clic ailleurs) : le focus retourne où il doit aller.
+        if (!next && onClosed) setTimeout(onClosed);
+      }}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        </TooltipTrigger>
+        {!open && <TooltipContent>{hint}</TooltipContent>}
+      </Tooltip>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-auto p-2"
+        onCloseAutoFocus={(e) => {
+          if (onClosed) e.preventDefault();
+        }}
+      >
+        {open && (
+          <Suspense fallback={<div className="grid h-96 w-[22rem] place-items-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>}>
+            <EmojiPicker
+              mode={mode}
+              tone={tone}
+              onTone={onTone}
+              mine={mine}
+              onPick={(pick) => {
+                if (mode === "reaction") setOpen(false);
+                onPick(pick);
+              }}
+            />
+          </Suspense>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** « Ajouter une réaction » : toute la bibliothèque, les réactions rapides en tête. */
+function AddReaction({ mine, disabled, tone, onTone, onReact }: { mine: Reaction[]; disabled: boolean; tone: SkinTone; onTone: (t: SkinTone) => void; onReact: (r: Reaction, emoji: string) => void }) {
+  return (
+    <EmojiPopover
+      mode="reaction"
+      tone={tone}
+      onTone={onTone}
+      mine={mine}
+      hint="Ajouter une réaction"
+      onPick={(p) => p.key && onReact(p.key, p.emoji)}
+      trigger={
         <button
           type="button"
           disabled={disabled}
-          title="Ajouter une réaction"
           aria-label="Ajouter une réaction"
           className="inline-flex size-7 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-xs hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
         >
           <SmilePlus className="size-4" aria-hidden />
         </button>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="start" className="flex w-auto gap-0.5 rounded-full p-1">
-        {REACTIONS.map((r) => (
-          <button
-            key={r.key}
-            type="button"
-            title={mine.includes(r.key) ? `${r.label} · cliquer pour retirer` : r.label}
-            aria-label={mine.includes(r.key) ? `Retirer la réaction : ${r.label}` : `Réagir : ${r.label}`}
-            aria-pressed={mine.includes(r.key)}
-            onClick={() => {
-              setOpen(false);
-              onReact(r.key);
-            }}
-            className={cn(
-              "grid size-8 place-items-center rounded-full text-xl leading-none transition-transform hover:scale-125 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring",
-              mine.includes(r.key) && "bg-primary/10"
-            )}
-          >
-            {r.emoji}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
+      }
+    />
   );
 }
 
@@ -299,6 +352,8 @@ function MessageActions({
   canDelete,
   propose,
   pending,
+  tone,
+  onTone,
   onReact,
   onReply,
   onPropose,
@@ -313,7 +368,9 @@ function MessageActions({
   /** « Proposer une réponse à ce message » : null si absent ; `blocked` dit pourquoi il est inactif. */
   propose: { busy: boolean; blocked: string | null } | null;
   pending: Reaction | null;
-  onReact: (r: Reaction) => void;
+  tone: SkinTone;
+  onTone: (t: SkinTone) => void;
+  onReact: (r: Reaction, emoji?: string) => void;
   onReply: () => void;
   onPropose: () => void;
   onEdit: () => void;
@@ -352,6 +409,26 @@ function MessageActions({
             <TooltipContent>{mine.includes(r.key) ? `${r.label} · cliquer pour retirer` : r.label}</TooltipContent>
           </Tooltip>
         ))}
+      {canReact && (
+        <EmojiPopover
+          mode="reaction"
+          tone={tone}
+          onTone={onTone}
+          mine={mine}
+          hint="Plus de réactions"
+          onPick={(p) => p.key && onReact(p.key, p.emoji)}
+          trigger={
+            <button
+              type="button"
+              aria-label="Plus de réactions"
+              disabled={Boolean(pending)}
+              className="grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <SmilePlus className="size-4" aria-hidden />
+            </button>
+          }
+        />
+      )}
       {canReply && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -503,6 +580,17 @@ export function DiscussionView({
   const [saving, setSaving] = useState(false);
   const caps = trame.state.capabilities;
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Un emoji choisi s'insère à la place de la sélection de la zone de saisie (elle la garde
+  // même quand le sélecteur a le focus), puis le curseur passe après lui.
+  const insertEmoji = (emoji: string) => {
+    const el = composer.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + emoji + text.slice(end));
+    setReview(null);
+    const caret = start + emoji.length;
+    setTimeout(() => composer.current?.setSelectionRange(caret, caret));
+  };
   // Mentions : personnes choisies dans les suggestions « @ », et la liste ouverte.
   const [chosen, setChosen] = useState<string[]>([]);
   const [mentioning, setMentioning] = useState<{ at: number; query: string; index: number } | null>(null);
@@ -825,10 +913,10 @@ export function DiscussionView({
 
   // Un clic sur une réaction déjà mise la retire (comme dans Teams) ; l'état voulu est
   // envoyé explicitement au moteur, qui ne bascule jamais à l'aveugle.
-  const react = async (m: ThreadMessage, index: number, reaction: Reaction) => {
+  const react = async (m: ThreadMessage, index: number, reaction: Reaction, emoji?: string) => {
     if (reacting) return;
     const remove = (m.reactions ?? []).includes(reaction);
-    const glyph = reactionGlyph(reaction, tallyOf(m).find((r) => r.key === reaction)?.emoji);
+    const glyph = emoji || reactionGlyph(reaction, tallyOf(m).find((r) => r.key === reaction)?.emoji);
     setReacting({ index, reaction });
     const res = await trame.reactInThread(c.threadId, refOf(m), reaction, remove);
     setReacting(null);
@@ -1216,7 +1304,7 @@ export function DiscussionView({
                         );
                       })}
                     </AnimatePresence>
-                    {canReact && <AddReaction mine={m.reactions ?? []} disabled={Boolean(reacting)} onReact={(r) => react(m, i, r)} />}
+                    {canReact && <AddReaction mine={m.reactions ?? []} disabled={Boolean(reacting)} tone={trame.emojiTone} onTone={trame.setEmojiTone} onReact={(r, e) => react(m, i, r, e)} />}
                   </div>
                 );
                 return (
@@ -1251,7 +1339,9 @@ export function DiscussionView({
                         canDelete={canDelete}
                         propose={canPropose ? { busy: busy === "suggest" && sameRef(proposingFor, m), blocked: proposeBlocked } : null}
                         pending={pending}
-                        onReact={(r) => react(m, i, r)}
+                        tone={trame.emojiTone}
+                        onTone={trame.setEmojiTone}
+                        onReact={(r, e) => react(m, i, r, e)}
                         onReply={() => replyToMessage(m)}
                         onPropose={() => proposeOn(m)}
                         onEdit={() => startEdit(m)}
@@ -1605,6 +1695,19 @@ export function DiscussionView({
               <IconAction label={attachHint} disabled={!canAttach || busy === "send"} onClick={() => picker.current?.click()}>
                 <Paperclip className="size-4" />
               </IconAction>
+              <EmojiPopover
+                mode="message"
+                tone={trame.emojiTone}
+                onTone={trame.setEmojiTone}
+                hint="Emoji"
+                onPick={(p) => insertEmoji(p.emoji)}
+                onClosed={() => composer.current?.focus()}
+                trigger={
+                  <Button variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground hover:text-foreground" aria-label="Emoji" disabled={busy === "send"}>
+                    <Smile className="size-4" />
+                  </Button>
+                }
+              />
               <IconAction
                 label="Corriger"
                 hint="Corriger l'orthographe, la grammaire et la typographie, sans changer ton ton ni tes mots"

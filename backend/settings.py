@@ -165,6 +165,7 @@ NOTIFICATION_SOUNDS = ("off", "Default", "IM", "Mail", "Reminder", "SMS")
 # « week » : 7 jours ; « work_week » : du lundi au vendredi, comme la vue « Work week » de Teams.
 CalendarView = Literal["week", "work_week", "day"]
 CALENDAR_VIEWS = ("week", "work_week", "day")
+EmojiTone = Literal[0, 1, 2, 3, 4, 5]
 
 
 class UiSettings(BaseModel):
@@ -176,6 +177,8 @@ class UiSettings(BaseModel):
     calendar_view: CalendarView = "week"
     # Absences, événements privés et événements sans réunion Teams dans le calendrier.
     calendar_personal: bool = False
+    # Teinte de peau des emoji (0 : sans ; 1 à 5 : 🏻 à 🏿), messages et réactions.
+    emoji_tone: EmojiTone = 0
 
 
 class Settings(BaseModel):
@@ -275,6 +278,7 @@ class UiPatch(_Patch):
     notification_sound: Optional[NotificationSound] = None
     calendar_view: Optional[CalendarView] = None
     calendar_personal: Optional[bool] = None
+    emoji_tone: Optional[EmojiTone] = None
 
 
 class SettingsPatch(_Patch):
@@ -384,6 +388,7 @@ def _ui(u: dict) -> UiSettings:
         notification_sound=sound if (sound := u.get("notification_sound")) in NOTIFICATION_SOUNDS else "off",
         calendar_view=view if (view := u.get("calendar_view")) in CALENDAR_VIEWS else "week",
         calendar_personal=u.get("calendar_personal") is True,
+        emoji_tone=tone if type(tone := u.get("emoji_tone")) is int and 0 <= tone <= 5 else 0,
     )
 
 

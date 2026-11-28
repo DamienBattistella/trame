@@ -169,7 +169,7 @@ def test_settings_get(make_client):
         "telemetry": {"enabled": False, "endpoint": "", "include_content": False},
         "mcp": {"enabled": False, "token": "", "allow_send": False},
         "teams_web": {"enabled": True},
-        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False},
+        "ui": {"conversation_sort": "watched", "update_check_minutes": 15, "theme": "dark", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False, "emoji_tone": 0},
     }
 
 
@@ -238,6 +238,26 @@ def test_calendar_work_week_and_personal_events_persist_without_touching_saved_c
     assert saved["calendar_view"] == "work_week" and saved["calendar_personal"] is True
 
 
+def test_emoji_tone_is_saved_and_keeps_other_ui_settings(make_client, fresh_home):
+    """La teinte de peau des emoji s'enregistre sans rien réécrire ; une valeur hors bornes
+    (écrite à la main) retombe sur « sans teinte » sans être refusée au chargement."""
+    path = fresh_home / "config.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg.setdefault("ui", {}).update({"theme": "light", "future_option": 1})
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["emoji_tone"] == 0
+    r = client.put("/api/settings", json={"ui": {"emoji_tone": 3}})
+    assert r.status_code == 200 and r.json()["settings"]["ui"]["emoji_tone"] == 3
+    saved = json.loads(path.read_text(encoding="utf-8"))["ui"]
+    assert saved["emoji_tone"] == 3 and saved["theme"] == "light" and saved["future_option"] == 1
+    assert client.put("/api/settings", json={"ui": {"emoji_tone": 9}}).status_code == 422
+    saved["emoji_tone"] = 9
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "ui": saved}), encoding="utf-8")
+    client, _watcher, _driver = make_client()
+    assert client.get("/api/settings").json()["settings"]["ui"]["emoji_tone"] == 0
+
+
 def test_settings_save_keeps_keys_it_does_not_know(make_client, fresh_home):
     """An update must never drop an option: a save keeps every key, known or not."""
     path = fresh_home / "config.json"
@@ -260,7 +280,7 @@ def test_update_check_minutes_defaults_to_15_and_persists(make_client, fresh_hom
     r = client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     assert r.status_code == 200
     ui = r.json()["settings"]["ui"]
-    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False}
+    assert ui == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "dark", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False, "emoji_tone": 0}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["update_check_minutes"] == 60
     # 0: at launch only; values outside the offered choices are refused.
@@ -282,7 +302,7 @@ def test_theme_defaults_to_dark_and_persists_without_losing_other_ui_keys(make_c
     client.put("/api/settings", json={"ui": {"update_check_minutes": 60}})
     r = client.put("/api/settings", json={"ui": {"theme": "light", "notification_sound": "off"}})
     assert r.status_code == 200
-    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False}
+    assert r.json()["settings"]["ui"] == {"conversation_sort": "watched", "update_check_minutes": 60, "theme": "light", "notification_sound": "off", "calendar_view": "week", "calendar_personal": False, "emoji_tone": 0}
     saved = json.loads((fresh_home / "config.json").read_text(encoding="utf-8"))
     assert saved["ui"]["theme"] == "light"
     assert saved["ui"]["update_check_minutes"] == 60

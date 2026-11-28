@@ -55,6 +55,7 @@ import {
   type FileLink,
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
+import type { SkinTone } from "@/lib/emoji";
 import { mockBrief, mockConversations, mockDrafts, mockFavorites, mockFollowUps, mockLogs } from "@/mockData";
 import { isDesktop, notificationsEnabled, notify, setUpdateCheckMinutes as setDesktopUpdateCheckMinutes } from "@/desktop";
 import { loadPrefs, toasts } from "@/lib/notifyPrefs";
@@ -394,12 +395,14 @@ function mapSettings(s: any): Settings {
       notificationSound: toSound(s?.ui?.notification_sound),
       calendarView: toCalendarView(s?.ui?.calendar_view),
       calendarPersonal: s?.ui?.calendar_personal === true,
+      emojiTone: toneOf(s?.ui?.emoji_tone),
     },
   };
 }
 /** Copie locale du thème, pour le premier rendu avant la réponse du moteur. */
 const THEME_KEY = "trame.theme";
 const toCalendarView = (v: unknown): CalendarView => (v === "day" || v === "work_week" ? v : "week");
+const toneOf = (v: unknown): SkinTone => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5 ? (v as SkinTone) : 0);
 const toSound = (v: unknown): NotificationSound => (NOTIFICATION_SOUNDS.includes(v as NotificationSound) ? (v as NotificationSound) : "off");
 const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
 const toCheckMinutes = (v: unknown): UpdateCheckMinutes =>
@@ -642,6 +645,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.ui.notificationSound !== undefined) u.notification_sound = p.ui.notificationSound;
     if (p.ui.calendarView !== undefined) u.calendar_view = p.ui.calendarView;
     if (p.ui.calendarPersonal !== undefined) u.calendar_personal = p.ui.calendarPersonal;
+    if (p.ui.emojiTone !== undefined) u.emoji_tone = p.ui.emojiTone;
     out.ui = u;
   }
   return out;
@@ -728,7 +732,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off", calendarView: "week", calendarPersonal: false },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off", calendarView: "week", calendarPersonal: false, emojiTone: 0 },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -966,6 +970,7 @@ export function useTrame() {
   // Vue du calendrier (semaine ou jour), enregistrée dans config.json.
   const [calendarView, setCalendarViewState] = useState<CalendarView>(localSettings.ui.calendarView);
   const [calendarPersonal, setCalendarPersonalState] = useState<boolean>(localSettings.ui.calendarPersonal);
+  const [emojiTone, setEmojiToneState] = useState<SkinTone>(localSettings.ui.emojiTone);
   const soundRef = useRef(notificationSound);
   soundRef.current = notificationSound;
   const applyPrefs = (s: Settings) => {
@@ -974,6 +979,7 @@ export function useTrame() {
     setNotificationSoundState(s.ui.notificationSound);
     setCalendarViewState(s.ui.calendarView);
     setCalendarPersonalState(s.ui.calendarPersonal);
+    setEmojiToneState(s.ui.emojiTone);
     setConversationSortState(s.ui.conversationSort);
     setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
     void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
@@ -1296,6 +1302,11 @@ export function useTrame() {
   const setCalendarPersonal = (next: boolean) => {
     setCalendarPersonalState(next);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { calendarPersonal: next } });
+  };
+  /** Teinte de peau des emoji, messages et réactions : enregistrée aussi. */
+  const setEmojiTone = (next: SkinTone) => {
+    setEmojiToneState(next);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { emojiTone: next } });
   };
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -2440,6 +2451,8 @@ export function useTrame() {
     setCalendarView,
     calendarPersonal,
     setCalendarPersonal,
+    emojiTone,
+    setEmojiTone,
     setNotificationSound,
     getBrief,
     generateBrief,
