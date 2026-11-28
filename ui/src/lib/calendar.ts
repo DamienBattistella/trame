@@ -1,7 +1,7 @@
 /** Calendrier des réunions : semaines, jours, placement des créneaux dans la grille horaire
  *  et libellés relatifs. Rien ici ne parle au moteur ni au DOM. */
 
-import { slotOf, type MeetingLike } from "./meetings.ts";
+import { fold, slotOf, type MeetingLike } from "./meetings.ts";
 
 /** Date locale en ISO (AAAA-MM-JJ), sans passer par l'UTC. */
 export const isoDay = (d: Date) =>
@@ -20,11 +20,17 @@ export function weekStart(d: Date): Date {
   return addDays(d, -((d.getDay() + 6) % 7));
 }
 
-/** Les jours affichés : 7 à partir du lundi, ou le seul jour choisi. */
-export function visibleDays(anchor: Date, view: "week" | "day"): Date[] {
+/** Les jours affichés : 7 à partir du lundi, du lundi au vendredi (semaine de travail), ou le seul jour choisi. */
+export function visibleDays(anchor: Date, view: "week" | "work_week" | "day"): Date[] {
   if (view === "day") return [new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())];
   const start = weekStart(anchor);
-  return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  return Array.from({ length: view === "work_week" ? 5 : 7 }, (_, i) => addDays(start, i));
+}
+
+/** La semaine entière du lundi au dimanche autour d'un jour : la période lue dans l'agenda. */
+export function weekSpan(anchor: Date): { start: string; end: string } {
+  const a = weekStart(anchor);
+  return { start: isoDay(a), end: isoDay(addDays(a, 6)) };
 }
 
 /** Numéro de semaine ISO 8601. */
@@ -182,4 +188,113 @@ export function relativeLabel(m: MeetingLike, now: Date): string | null {
   if (days === 1) return "Hier";
   if (days === -1) return "Demain";
   return days > 0 ? `Il y a ${plural(days, "jour")}` : `Dans ${plural(-days, "jour")}`;
+}
+
+// --- Agenda et réunions lues : un seul bloc par rendez-vous -------------------------------
+
+/** Ce que le calendrier lit d'une réunion lue (transcription), voir Meeting dans types.ts. */
+export interface ReadMeeting extends MeetingLike {
+  meetingId: string;
+  threadId: string;
+  mid: string;
+  chat: string;
+  transcript: boolean;
+  saved: unknown;
+}
+
+/** Ce que le calendrier lit d'un événement de l'agenda, voir CalendarEvent dans types.ts. */
+export interface AgendaEvent {
+  id: string;
+  title: string;
+  date: string;
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
+  showAs: string;
+  private: boolean;
+  online: boolean;
+  threadId: string;
+}
+
+/** Un bloc du calendrier : un événement de l'agenda, sa réunion lue s'il en a une, ou une réunion seule. */
+export interface CalItem<E extends AgendaEvent, M extends ReadMeeting> extends MeetingLike {
+  key: string;
+  event: E | null;
+  meeting: M | null;
+}
+
+/** Absence, événement privé ou sans réunion Teams : masqué sauf si l'utilisateur les affiche. */
+export const isPersonal = (e: AgendaEvent) => e.showAs === "oof" || e.private || !e.online;
+
+const rank = (m: ReadMeeting) => (m.saved ? 2 : m.transcript ? 1 : 0);
+const midOf = (m: ReadMeeting) => (/^\d+$/.test(m.mid) ? Number(m.mid) : 0);
+const better = <M extends ReadMeeting>(a: M, b: M) => (rank(b) > rank(a) || (rank(b) === rank(a) && midOf(b) > midOf(a)) ? b : a);
+
+/**
+ * Une seule réunion par rendez-vous : un appel coupé puis relancé laisse deux fins d'appel
+ * (même conversation, même créneau). On garde celle qui a la transcription enregistrée, sinon
+ * disponible, sinon la dernière.
+ */
+export function dedupeMeetings<M extends ReadMeeting>(meetings: M[]): M[] {
+  const by = new Map<string, M>();
+  const order: string[] = [];
+  for (const m of meetings) {
+    const { start, end } = slotOf(m);
+    const k = m.date && start ? `${m.threadId}|${m.date}|${start}|${end}` : `id|${m.meetingId}`;
+    const kept = by.get(k);
+    if (!kept) order.push(k);
+    by.set(k, kept ? better(kept, m) : m);
+  }
+  return order.map((k) => by.get(k)!);
+}
+
+/** Écart entre deux débuts « HH:MM », en minutes ; Infinity si l'un manque. */
+const gap = (a: string | null, b: string | null) => (a && b ? Math.abs(toMinutes(a) - toMinutes(b)) : Infinity);
+
+/**
+ * L'agenda d'abord, comme le calendrier de Teams : chaque événement est un bloc, et la réunion
+ * lue qui lui correspond (même conversation de réunion, sinon même titre, le même jour, à moins
+ * de 2 h) lui donne sa transcription. Les réunions lues sans événement (appel dans un groupe,
+ * agenda pas lu) restent en blocs à part. Les événements personnels ne sont montrés que sur
+ * demande, sauf s'ils portent une réunion lue.
+ */
+export function joinCalendar<E extends AgendaEvent, M extends ReadMeeting>(
+  events: E[],
+  meetings: M[],
+  showPersonal: boolean
+): CalItem<E, M>[] {
+  const byEvent = new Map<string, M>();
+  const alone: M[] = [];
+  const perDay = new Map<string, E[]>();
+  for (const e of events) {
+    const list = perDay.get(e.date);
+    if (list) list.push(e);
+    else perDay.set(e.date, [e]);
+  }
+  for (const m of dedupeMeetings(meetings)) {
+    const sameDay = m.date ? perDay.get(m.date) ?? [] : [];
+    const start = slotOf(m).start;
+    const near = (e: E) => e.allDay || gap(e.start, start) <= 120;
+    const byThread = sameDay.filter((e) => e.threadId && e.threadId === m.threadId && near(e));
+    const byTitle = sameDay.filter((e) => !e.threadId && [fold(m.title), fold(m.chat)].includes(fold(e.title)) && near(e));
+    const pool = byThread.length ? byThread : byTitle;
+    if (!pool.length) {
+      alone.push(m);
+      continue;
+    }
+    const e = pool.reduce((a, b) => (gap(b.start, start) < gap(a.start, start) ? b : a));
+    const kept = byEvent.get(e.id);
+    byEvent.set(e.id, kept ? better(kept, m) : m);
+  }
+  const out: CalItem<E, M>[] = [];
+  for (const e of events) {
+    const meeting = byEvent.get(e.id) ?? null;
+    if (!meeting && !showPersonal && isPersonal(e)) continue;
+    out.push({ key: `ev:${e.id}`, title: e.title, when: "", date: e.date, start: e.allDay ? null : e.start, end: e.allDay ? null : e.end, event: e, meeting });
+  }
+  for (const m of alone) {
+    const { start, end } = slotOf(m);
+    out.push({ key: `m:${m.meetingId}`, title: m.title, when: m.when, date: m.date, start, end, event: null, meeting: m });
+  }
+  return out;
 }

@@ -21,6 +21,7 @@ import persona as personamod
 import presence as presencemod
 import search as searchmod
 import journal as journalmod
+import meeting as meetingmod
 import outbox_store as outboxstore
 import reflection
 import reports as reportsmod
@@ -560,6 +561,13 @@ class Watcher:
                 self.log("warn", f"Réunions non lues : {e}")
                 raise ActionError(502, f"Réunions non lues : {e}")
         home = cfgmod._home()
+        merged, read_at = self._keep_meetings(home, found)
+        if transcript_only:
+            merged = [m for m in merged if m.get("transcript")]
+        return self._meetings_view(home, merged, read_at)
+
+    def _keep_meetings(self, home, found: list[dict]) -> tuple[list[dict], str]:
+        """Ajoute les réunions lues à l'instant à la liste gardée sur le poste ; rend la liste."""
         fresh = []
         for m in found:
             when = m.get("when") or ""
@@ -574,9 +582,71 @@ class Watcher:
         read_at = datetime.now().astimezone().isoformat(timespec="seconds")
         merged = transcriptsmod.merge_meetings(known, fresh)
         transcriptsmod.store_meetings(home, merged, read_at)
-        if transcript_only:
-            merged = [m for m in merged if m.get("transcript")]
-        return self._meetings_view(home, merged, read_at)
+        return merged, read_at
+
+    # --- Calendrier : l'agenda de Teams, les transcriptions rattachées ---------------------
+    CALENDAR_MAX_DAYS = 42
+    # Conversations de réunion relues au plus par affichage du calendrier, et délai avant de
+    # relire une réunion déjà cherchée sans résultat (pas encore lancée, ou jamais lancée).
+    CALENDAR_CHATS = 30
+    CALENDAR_RETRY = 600.0
+
+    def calendar(self, start: str, end: str, now: Optional[datetime] = None) -> dict:
+        """L'agenda du jour `start` au jour `end` (inclus), comme le calendrier de Teams : chaque
+        événement découpé par jour, en heure locale. Les réunions Teams passées de la période dont
+        la conversation n'a pas encore été lue (hors des 12 plus récentes) le sont maintenant, sur
+        le service de chat, pour leurs transcriptions. Rien n'est ouvert dans la fenêtre Teams."""
+        try:
+            first, last = date.fromisoformat(str(start)), date.fromisoformat(str(end))
+        except ValueError:
+            raise ActionError(422, "Période illisible.")
+        if last < first or (last - first).days >= self.CALENDAR_MAX_DAYS:
+            raise ActionError(422, "Période trop longue.")
+        if not getattr(self.driver, "can_read_calendar", False):
+            raise ActionError(501, "Agenda indisponible avec ce pilote Teams.")
+        try:
+            with telemetry.span("teams.calendar", days=(last - first).days + 1) as sp:
+                raw = self.driver.calendar_events(first.isoformat(), last.isoformat())
+                telemetry.set_attrs(sp, events=len(raw))
+        except Exception as e:
+            self.log("warn", f"Agenda non lu : {e}")
+            raise ActionError(502, f"Agenda non lu : {e}")
+        now = now or datetime.now().astimezone()
+        events = calendar_days(raw, first, last, now)
+        home = cfgmod._home()
+        known, read_at = transcriptsmod.load_meetings(home)
+        missing = self._calendar_missing(events, known, now)
+        if missing:
+            try:
+                found = self.driver.meetings_of_chats(missing)
+            except Exception as e:
+                self.log("warn", f"Réunions de l'agenda non relues : {e}")
+            else:
+                if found:
+                    known, read_at = self._keep_meetings(home, found)
+        return {"events": events, **self._meetings_view(home, known, read_at)}
+
+    def _calendar_missing(self, events: list[dict], known: list[dict], now: datetime) -> list[tuple[str, str]]:
+        """(id Teams, sujet) des conversations de réunion à relire : réunions Teams commencées,
+        sans réunion connue ce jour-là dans leur conversation, pas cherchées récemment."""
+        have = {(m.get("thread_id"), m.get("date")) for m in known}
+        tried = self.__dict__.setdefault("_calendar_tried", {})
+        clock = time.monotonic()
+        out: list[tuple[str, str]] = []
+        for e in events:
+            cid = e.get("chat_id") or ""
+            if not cid.startswith("19:meeting_") or not e.get("started"):
+                continue
+            if (f"title-{cid}", e["date"]) in have or any(c == cid for c, _ in out):
+                continue
+            at = tried.get((cid, e["date"]))
+            if at is not None and clock - at < self.CALENDAR_RETRY:
+                continue
+            tried[(cid, e["date"])] = clock
+            out.append((cid, e.get("title") or ""))
+            if len(out) >= self.CALENDAR_CHATS:
+                break
+        return out
 
     def known_meetings(self) -> dict:
         """La liste de la dernière lecture, gardée sur le poste : rien n'est lu dans Teams."""
@@ -3685,4 +3755,64 @@ def _archived(raw) -> dict:
                 out[str(t)] = Archived(**a) if isinstance(a, dict) else Archived(at=str(a))
             except Exception:
                 continue
+    return out
+
+
+def calendar_days(raw: Iterable[dict], first: date, last: date, now: datetime) -> list[dict]:
+    """Les événements de l'agenda (horaires UTC) en heure locale, découpés par jour entre
+    `first` et `last` : un événement qui passe minuit (absence du soir au matin) apparaît sur
+    chaque jour qu'il couvre, comme dans Teams. Les événements annulés sont écartés."""
+    out: list[dict] = []
+    for e in raw:
+        if e.get("cancelled"):
+            continue
+        cid = str(e.get("thread") or "")
+        base = {
+            "event_id": str(e.get("id") or ""),
+            "title": str(e.get("subject") or "") or ("Privé" if e.get("private") else "Occupé"),
+            "show_as": str(e.get("show_as") or ""),
+            "private": bool(e.get("private")),
+            "online": bool(e.get("online")),
+            "chat_id": cid,
+            "thread_id": f"title-{cid}" if cid.startswith("19:meeting_") else "",
+            "join_url": meetingmod.join_url(e.get("join_url")) or "",
+            "organizer": str(e.get("organizer") or ""),
+            "location": str(e.get("location") or ""),
+            "recurring": bool(e.get("recurring")),
+            "response": str(e.get("response") or ""),
+        }
+        if e.get("all_day"):
+            try:
+                d0 = date.fromisoformat(str(e.get("start_day")))
+                d1 = date.fromisoformat(str(e.get("end_day")))
+            except ValueError:
+                continue
+            d1 = max(d1, d0 + timedelta(days=1))
+            d = max(d0, first)
+            while d < d1 and d <= last:
+                out.append({**base, "id": f"{base['event_id']}|{d.isoformat()}", "date": d.isoformat(),
+                            "start": None, "end": None, "all_day": True,
+                            "started": datetime.combine(d, datetime.min.time()).astimezone() <= now,
+                            "ended": datetime.combine(d1, datetime.min.time()).astimezone() <= now})
+                d += timedelta(days=1)
+            continue
+        try:
+            s = datetime.fromisoformat(str(e.get("start")).replace("Z", "+00:00")).astimezone(now.tzinfo)
+            t = datetime.fromisoformat(str(e.get("end")).replace("Z", "+00:00")).astimezone(now.tzinfo)
+        except (TypeError, ValueError):
+            continue
+        if t < s:
+            continue
+        d = s.date()
+        while True:
+            day_start = datetime.combine(d, datetime.min.time(), tzinfo=s.tzinfo)
+            day_end = day_start + timedelta(days=1)
+            seg_s, seg_e = max(s, day_start), min(t, day_end)
+            if first <= d <= last and (seg_e > seg_s or s == t):
+                out.append({**base, "id": f"{base['event_id']}|{d.isoformat()}", "date": d.isoformat(),
+                            "start": seg_s.strftime("%H:%M"), "end": seg_e.strftime("%H:%M"), "all_day": False,
+                            "started": s <= now, "ended": t <= now})
+            if t <= day_end or d >= last:
+                break
+            d += timedelta(days=1)
     return out

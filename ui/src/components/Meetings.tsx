@@ -42,6 +42,7 @@ import {
 import { GroupList, InitialsAvatar, SectionLabel, pop } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { useMedia } from "@/lib/useMedia";
+import { dedupeMeetings } from "@/lib/calendar";
 import { dayOf, durationLabel, durationMinutes, fold, groupByPeriod, matches, occurrences, shortDate, shortPath, slotOf } from "@/lib/meetings";
 import { Meeting, ReportSession, SavedTranscript } from "@/types";
 import { ReportDialog } from "@/components/ReportDialog";
@@ -202,7 +203,8 @@ export function Meetings({ trame }: { trame: Trame }) {
   };
 
   const counts = useMemo(() => occurrences(meetings ?? []), [meetings]);
-  const visible = useMemo(() => (meetings ?? []).filter((m) => matches(m, query)), [meetings, query]);
+  // Un appel coupé puis relancé laisse deux fins d'appel : une seule réunion par rendez-vous.
+  const visible = useMemo(() => dedupeMeetings(meetings ?? []).filter((m) => matches(m, query)), [meetings, query]);
 
   // Pour chaque réunion déjà enregistrée, demander au moteur si son compte-rendu est déjà sur
   // le dépôt lié. Le moteur met en cache et ne fait d'appel GitHub que s'il relie un dépôt.

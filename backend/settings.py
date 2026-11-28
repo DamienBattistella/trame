@@ -162,7 +162,9 @@ Theme = Literal["dark", "light"]
 # Son des notifications Windows : « off » (muet, comportement historique) ou un son du système.
 NotificationSound = Literal["off", "Default", "IM", "Mail", "Reminder", "SMS"]
 NOTIFICATION_SOUNDS = ("off", "Default", "IM", "Mail", "Reminder", "SMS")
-CalendarView = Literal["week", "day"]
+# « week » : 7 jours ; « work_week » : du lundi au vendredi, comme la vue « Work week » de Teams.
+CalendarView = Literal["week", "work_week", "day"]
+CALENDAR_VIEWS = ("week", "work_week", "day")
 
 
 class UiSettings(BaseModel):
@@ -172,6 +174,8 @@ class UiSettings(BaseModel):
     theme: Theme = "dark"
     notification_sound: NotificationSound = "off"
     calendar_view: CalendarView = "week"
+    # Absences, événements privés et événements sans réunion Teams dans le calendrier.
+    calendar_personal: bool = False
 
 
 class Settings(BaseModel):
@@ -270,6 +274,7 @@ class UiPatch(_Patch):
     theme: Optional[Theme] = None
     notification_sound: Optional[NotificationSound] = None
     calendar_view: Optional[CalendarView] = None
+    calendar_personal: Optional[bool] = None
 
 
 class SettingsPatch(_Patch):
@@ -377,7 +382,8 @@ def _ui(u: dict) -> UiSettings:
         update_check_minutes=every if type(every) is int and every in UPDATE_CHECK_CHOICES else 15,
         theme="light" if u.get("theme") == "light" else "dark",
         notification_sound=sound if (sound := u.get("notification_sound")) in NOTIFICATION_SOUNDS else "off",
-        calendar_view="day" if u.get("calendar_view") == "day" else "week",
+        calendar_view=view if (view := u.get("calendar_view")) in CALENDAR_VIEWS else "week",
+        calendar_personal=u.get("calendar_personal") is True,
     )
 
 

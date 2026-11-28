@@ -1733,3 +1733,118 @@ test("chatmeetings : l'agenda (Graph) donne le créneau d'une occurrence déplac
   assert.equal(twice.chats[0].recaps[0].calendar, false);
   assert.equal(twice.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:01 - 12:11");
 });
+
+test("chatmeetings : l'agenda reconnaît la réunion par sa conversation, même quand le sujet diffère", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/me/events", { headers: { authorization: "Bearer GRAPH-SECRET" } });
+  await new Promise((r) => setImmediate(r));
+  const MEET = "19:meeting_migration@thread.v2";
+  const start = new Date("2026-11-24T11:02:00").getTime();
+  const end = new Date("2026-11-24T11:40:00").getTime();
+  const msgs = [
+    { id: String(start), messagetype: "Event/Call", content: "<partlist></partlist>" },
+    { id: String(end), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  const utc = (local: string) => new Date(local).toISOString().replace(/Z$/, "0000");
+  const join = `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(MEET)}/0?context=x`;
+  const events = [
+    // Sujet de l'agenda différent du nom de la conversation : reconnue par le lien.
+    { subject: "Suivi : Migration weekly", onlineMeeting: { joinUrl: join }, start: { dateTime: utc("2026-11-24T11:00:00") }, end: { dateTime: utc("2026-11-24T11:30:00") } },
+    { subject: "Migration weekly", start: { dateTime: utc("2026-11-24T11:00:00") }, end: { dateTime: utc("2026-11-24T12:00:00") } },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.startsWith("https://graph.microsoft.com/v1.0/me/calendarView")) return fakeResponse(JSON.stringify({ value: events }));
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET], topics: { [MEET]: "Migration weekly" } })).result;
+  assert.equal(r.chats[0].recaps[0].calendar, true);
+  assert.equal(r.chats[0].recaps[0].when, "mardi 24 novembre 2026 11:00 - 11:30");
+});
+
+test("chatmeetings : un appel coupé puis relancé ne donne qu'une réunion (celle qui a la transcription)", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const MEET = "19:meeting_coupee@thread.v2";
+  const iso = (s: string) => new Date(s).toISOString();
+  const details = `<meetingdetails><starttime>${iso("2026-11-25T15:00:00")}</starttime><endtime>${iso("2026-11-25T15:30:00")}</endtime></meetingdetails>`;
+  const t = (s: string) => new Date(s).getTime();
+  const msgs = [
+    { id: String(t("2026-11-25T15:00:20")), messagetype: "Event/Call", content: `<partlist>${details}</partlist>` },
+    { id: String(t("2026-11-25T15:03:00")), messagetype: "Event/Call", content: "<ended/>" },
+    { id: String(t("2026-11-25T15:04:00")), messagetype: "Event/Call", content: `<partlist>${details}</partlist>` },
+    { id: String(t("2026-11-25T15:05:00")), messagetype: "RichText/Media_CallTranscript", content: "" },
+    { id: String(t("2026-11-25T15:29:00")), messagetype: "Event/Call", content: "<ended/>" },
+  ];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.includes(`/conversations/${encodeURIComponent(MEET)}/messages`)) return fakeResponse(JSON.stringify({ messages: msgs }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: [MEET] })).result;
+  assert.equal(r.chats[0].recaps.length, 1);
+  assert.equal(r.chats[0].recaps[0].mid, String(t("2026-11-25T15:29:00")));
+  assert.equal(r.chats[0].recaps[0].transcript, true);
+  assert.equal(r.chats[0].recaps[0].when, "mercredi 25 novembre 2026 15:00 - 15:30");
+});
+
+test("calendarevents : l'agenda de la période, signé avec le jeton Graph de Teams, pages suivies, rien d'autre que l'agenda", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  await p.ctx.window.fetch("https://graph.microsoft.com/v1.0/me/events", { headers: { authorization: "Bearer GRAPH-SECRET" } });
+  await new Promise((r) => setImmediate(r));
+  const MEET = "19:meeting_abc@thread.v2";
+  const CHANNEL = "19:canal42@thread.tacv2";
+  const urls: string[] = [];
+  const first = {
+    value: [
+      { id: "e1", subject: "Weekly Hexaflux", start: { dateTime: "2026-11-25T08:45:00.0000000" }, end: { dateTime: "2026-11-25T09:15:00.0000000" },
+        isOnlineMeeting: true, onlineMeeting: { joinUrl: `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(MEET)}/0?context=%7b%7d` },
+        organizer: { emailAddress: { name: "Ana Martin", address: "ana@x.test" } }, showAs: "busy", sensitivity: "normal", type: "occurrence", body: { content: "secret" } },
+      { id: "e2", subject: "Out of the office", start: { dateTime: "2026-11-25T18:00:00.0000000" }, end: { dateTime: "2026-11-26T07:00:00.0000000" }, showAs: "oof", sensitivity: "normal" },
+    ],
+    "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?$skip=2",
+  };
+  const second = {
+    value: [
+      { id: "e3", subject: "Revue d'équipe", start: { dateTime: "2026-11-26T10:00:00.0000000" }, end: { dateTime: "2026-11-26T11:00:00.0000000" },
+        onlineMeeting: { joinUrl: `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(CHANNEL)}/1700000000000?context=x` } },
+      { id: "e4", subject: "Unsubscribe", isAllDay: true, start: { dateTime: "2026-11-25T00:00:00.0000000" }, end: { dateTime: "2026-11-26T00:00:00.0000000" }, sensitivity: "private" },
+    ],
+  };
+  const auth: string[] = [];
+  p.setResponse((url: string, init: any) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    if (url.startsWith("https://graph.microsoft.com/v1.0/me/calendarView")) {
+      urls.push(url);
+      auth.push((init && init.headers && init.headers.Authorization) || "");
+      return fakeResponse(JSON.stringify(url.includes("$skip=2") ? second : first));
+    }
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("calendarevents", { start: "2026-11-23", end: "2026-11-29" })).result;
+  assert.equal(r.ok, true, r.error);
+  assert.equal(urls.length, 2);
+  assert.ok(urls[0].includes("isAllDay") && urls[0].includes("onlineMeeting"));
+  assert.equal(auth[0], "Bearer GRAPH-SECRET");
+  const text = JSON.stringify(r);
+  assert.ok(!/GRAPH-SECRET|secret|ana@x\.test/.test(text), "ni jeton, ni corps, ni adresse");
+  const [weekly, away, channel, allDay] = r.events;
+  assert.equal(weekly.thread, MEET);
+  assert.equal(weekly.start, "2026-11-25T08:45:00Z");
+  assert.equal(weekly.organizer, "Ana Martin");
+  assert.equal(weekly.online, true);
+  assert.equal(weekly.recurring, true);
+  assert.equal(away.show_as, "oof");
+  assert.equal(away.online, false);
+  assert.equal(channel.thread, CHANNEL);
+  assert.equal(allDay.all_day, true);
+  assert.equal(allDay.start_day, "2026-11-25");
+  assert.equal(allDay.private, true);
+  // Période illisible ou trop longue : refusée sans appel.
+  assert.equal((await p.run("calendarevents", { start: "2026-11-23", end: "x" })).result.ok, false);
+  assert.equal((await p.run("calendarevents", { start: "2026-01-01", end: "2026-12-31" })).result.ok, false);
+  assert.equal(urls.length, 2);
+});

@@ -11,7 +11,11 @@ import {
   relativeLabel,
   untimed,
   visibleDays,
+  weekSpan,
   weekStart,
+  dedupeMeetings,
+  joinCalendar,
+  isPersonal,
 } from "../src/lib/calendar.ts";
 
 const m = (title: string, date: string | null, start: string | null = null, end: string | null = null, when = "") =>
@@ -97,4 +101,64 @@ test("libellé relatif à maintenant", () => {
   assert.equal(relativeLabel(m("x", "2026-11-23", "09:00", "10:00"), now), "Hier");
   assert.equal(relativeLabel(m("x", "2026-11-20"), now), "Il y a 4 jours");
   assert.equal(relativeLabel(m("x", null), now), null);
+});
+
+test("semaine de travail : du lundi au vendredi ; l'agenda est lu sur la semaine entière", () => {
+  assert.deepEqual(visibleDays(new Date(2026, 10, 28), "work_week").map(isoDay), ["2026-11-23", "2026-11-24", "2026-11-25", "2026-11-26", "2026-11-27"]);
+  assert.deepEqual(weekSpan(new Date(2026, 10, 28)), { start: "2026-11-23", end: "2026-11-29" });
+});
+
+const MEET = "title-19:meeting_strat@thread.v2";
+const meeting = (o: Record<string, unknown> = {}) => ({
+  meetingId: "m1", threadId: MEET, mid: "1000", chat: "Stratégie GAP", title: "Stratégie GAP", when: "",
+  date: "2026-11-25", start: "15:00", end: "15:30", transcript: false, saved: null as unknown, ...o,
+});
+const event = (o: Record<string, unknown> = {}) => ({
+  id: "e1|2026-11-25", title: "Stratégie Gestion rendez-vous GAP/WebAgenda/Bornes", date: "2026-11-25", start: "15:00", end: "15:30",
+  allDay: false, showAs: "busy", private: false, online: true, threadId: MEET, ...o,
+});
+
+test("un appel coupé puis relancé : une seule réunion, celle qui a la transcription", () => {
+  const twice = [meeting({ meetingId: "a", mid: "1000" }), meeting({ meetingId: "b", mid: "2000", transcript: true }), meeting({ meetingId: "c", mid: "3000" })];
+  assert.deepEqual(dedupeMeetings(twice).map((x) => x.meetingId), ["b"]);
+  // Deux créneaux différents dans la même conversation (réunion récurrente) : deux réunions.
+  assert.equal(dedupeMeetings([meeting(), meeting({ meetingId: "z", date: "2026-11-26" })]).length, 2);
+});
+
+test("agenda d'abord : la réunion lue rejoint son événement (même conversation), titre de l'agenda, un seul bloc", () => {
+  const items = joinCalendar([event()], [meeting({ meetingId: "a" }), meeting({ meetingId: "b", mid: "2000", transcript: true })], false);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "Stratégie Gestion rendez-vous GAP/WebAgenda/Bornes");
+  assert.equal(items[0].meeting?.meetingId, "b");
+  assert.equal(items[0].event?.id, "e1|2026-11-25");
+});
+
+test("agenda d'abord : réunions jamais lancées et à venir affichées ; réunion lue sans événement gardée à part", () => {
+  const items = joinCalendar(
+    [event({ id: "never", threadId: "title-19:meeting_other@thread.v2", title: "CIR 2026", start: "11:00", end: "12:00" })],
+    [meeting({ meetingId: "group-call", threadId: "title-19:grp@thread.v2", title: "Projet X", chat: "Projet X" })],
+    false
+  );
+  assert.deepEqual(items.map((i) => [i.key, Boolean(i.event), Boolean(i.meeting)]), [["ev:never", true, false], ["m:group-call", false, true]]);
+});
+
+test("sans conversation dans l'agenda, la réunion lue est reconnue par son titre, le même jour, à moins de 2 h", () => {
+  const ev = event({ threadId: "", title: "Stratégie GAP", start: "15:15", end: "15:45" });
+  assert.equal(joinCalendar([ev], [meeting()], false).length, 1);
+  assert.equal(joinCalendar([{ ...ev, start: "18:00", end: "18:30" }], [meeting()], false).length, 2);
+});
+
+test("absences, événements privés et sans réunion Teams : masqués sauf demande", () => {
+  const away = event({ id: "oof", title: "Out of the office", showAs: "oof", online: false, threadId: "" });
+  const room = event({ id: "room", title: "Meeting Room réservation", online: false, threadId: "" });
+  const secret = event({ id: "p", title: "Orthophoniste", private: true, online: false, threadId: "" });
+  assert.ok([away, room, secret].every(isPersonal));
+  assert.equal(isPersonal(event()), false);
+  assert.equal(joinCalendar([away, room, secret, event()], [], false).length, 1);
+  assert.equal(joinCalendar([away, room, secret, event()], [], true).length, 4);
+});
+
+test("un événement sur la journée reste sans horaire (bandeau en tête du jour)", () => {
+  const items = joinCalendar([event({ id: "ad", allDay: true, start: null, end: null, private: true, online: false, threadId: "" })], [], true);
+  assert.equal(untimed(items).length, 1);
 });

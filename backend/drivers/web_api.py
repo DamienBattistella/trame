@@ -783,26 +783,67 @@ class WebApiDriver:
                 self._refresh_chat()
             chats = self._meeting_chats(limit)
             if chats:
-                # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence
-                # déplacée) ; un tête-à-tête n'en a pas.
-                topics = {cid: (name if not tid.startswith("name:") else "") for cid, tid, name in chats}
                 try:
-                    found = api([cid for cid, _, _ in chats], topics)
+                    out = self._recaps_of(chats)
                 except Exception as e:
                     self._route("meetings", "page", f"repli sur la page : {e}")
                 else:
-                    where = {cid: (tid, name) for cid, tid, name in chats}
-                    out = []
-                    for c in found:
-                        if c["thread"] not in where:
-                            continue
-                        tid, name = where[c["thread"]]
-                        for r in c["recaps"]:
-                            out.append({"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
-                                        "when": r["when"], "transcript": r["transcript"]})
                     self._route("meetings", "api")
                     return out
         return self._inner.list_meetings(limit)
+
+    def _recaps_of(self, chats: list[tuple[str, str, str]]) -> list[dict]:
+        """Les réunions terminées des conversations `chats` ((id Teams, thread_id, nom)), lues sur
+        le service de chat. Lève si le service refuse."""
+        # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence
+        # déplacée) ; un tête-à-tête n'en a pas.
+        topics = {cid: (name if not tid.startswith("name:") else "") for cid, tid, name in chats}
+        found = self._inner.meetings_api([cid for cid, _, _ in chats], topics)
+        where = {cid: (tid, name) for cid, tid, name in chats}
+        out = []
+        for c in found:
+            if c["thread"] not in where:
+                continue
+            tid, name = where[c["thread"]]
+            for r in c["recaps"]:
+                out.append({"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
+                            "when": r["when"], "transcript": r["transcript"]})
+        return out
+
+    # --- Agenda : le calendrier de Trame part de l'agenda, comme celui de Teams ---------------
+    @property
+    def can_read_calendar(self) -> bool:
+        return callable(getattr(self._inner, "calendar_api", None))
+
+    def calendar_events(self, start: str, end: str) -> list[dict]:
+        """Les événements de l'agenda du jour `start` au jour `end` (inclus). Lève si Graph refuse."""
+        return self._inner.calendar_api(start, end)
+
+    def meetings_of_chats(self, chats: list[tuple[str, str]]) -> list[dict]:
+        """Les réunions terminées des conversations de réunion `chats` ((id Teams, sujet de
+        l'agenda)), lues sur le service de chat même hors des MAX_MEETING_CHATS plus récentes :
+        celles que l'agenda montre dans la période affichée. Même forme que list_meetings."""
+        if not callable(getattr(self._inner, "meetings_api", None)) or not chats:
+            return []
+        st = self._chat
+        if not st.ok:
+            self._refresh_chat()
+        names = getattr(self._inner, "_names", None)
+        kinds = getattr(self._inner, "_kinds", None)
+        picked: list[tuple[str, str, str]] = []
+        for cid, subject in chats:
+            if not re.fullmatch(r"19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2", cid):
+                continue
+            row = st.rows.get(cid) or {}
+            # Le nom de la conversation (celui que la page affiche), sinon le sujet de l'agenda.
+            name = str(row.get("topic") or "").strip() or subject or "Réunion"
+            tid = f"title-{cid}"
+            if isinstance(names, dict):
+                names.setdefault(tid, name)
+            if isinstance(kinds, dict):
+                kinds.setdefault(tid, Surface.group)
+            picked.append((cid, tid, name))
+        return self._recaps_of(picked) if picked else []
 
     def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
         """La transcription se lit dans la page, qui ouvre la conversation par son nom. Une réunion
