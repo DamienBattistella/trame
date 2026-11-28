@@ -704,7 +704,7 @@
       edit: (c, m) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages/${m}`, ""],
       send: (c) => ["POST", `/v1/users/ME/conversations/${encodeURIComponent(c)}/messages`, ""],
       // Masquer / réafficher une conversation dans la liste de Teams (propriété « hidden »).
-      hide: (c) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/properties`, "?name=hidden"],
+      hide: (c) => ["PUT", `/v1/users/ME/conversations/${encodeURIComponent(c)}/properties`, "?name=unpinnedTime"],
       // Création d'un tête-à-tête (c : son id calculé, jamais mis dans le chemin).
       thread: () => ["POST", "/v1/threads", ""],
     };
@@ -2885,11 +2885,17 @@
     // Masquer (ou réafficher) une conversation dans la liste de Teams, comme son menu
     // « Masquer » : propriété « hidden » de la conversation, puis relue. Teams la réaffiche
     // d'elle-même au prochain message.
-    // Relevé dans le code de Teams (28/11/2026) : la valeur écrite est un BOOLÉEN
-    // (`…(conv, "hidden", false)` pour réafficher), et l'état se lit dans
-    // `threadProperties.hidden`. Une chaîne « true » était refusée (HTTP 400, vu en direct).
+    // Relevé dans le code de Teams (28/11/2026) : « Masquer » (mutation setChatVisibility) écrit
+    // la propriété de conversation `unpinnedTime` = l'heure du masquage, et `null` pour
+    // réafficher. Écrire `hidden` était refusé (HTTP 400, vu en direct). Teams écrit aussi
+    // `historyHiddenTime`, qui cache l'historique d'avant quand la conversation revient : Trame
+    // ne l'écrit pas (l'historique reste visible). Masquée tant que `unpinnedTime` est plus
+    // récent que le dernier message ; un fil de réunion peut aussi porter `threadProperties.hidden`.
     const isHidden = (json) => {
-      const v = ((json && json.threadProperties) || {}).hidden ?? ((json && json.properties) || {}).hidden;
+      const at = Number(((json && json.properties) || {}).unpinnedTime) || 0;
+      const last = Date.parse(((json && json.lastMessage) || {}).originalarrivaltime || "") || 0;
+      if (at > 0 && at >= last) return true;
+      const v = ((json && json.threadProperties) || {}).hidden;
       return v === true || String(v) === "true";
     };
     const hide = async ({ thread, hidden }) => {
@@ -2899,7 +2905,7 @@
       const r = await getConv(thread);
       if (!r.ok || !r.json) return notSent(r.error || "conversation introuvable sur le service de chat");
       if (isHidden(r.json) === (want === "true")) return { ok: true, already: true };
-      const w = await chatsvc.write("hide", thread, null, { hidden: want === "true" });
+      const w = await chatsvc.write("hide", thread, null, { unpinnedTime: want === "true" ? Date.now() : null });
       if (!w.sent) return notSent(w.error);
       if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `${want === "true" ? "masquage" : "réaffichage"} refusé (HTTP ${w.status})` };
       const ok = await proven(async () => {
