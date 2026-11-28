@@ -406,6 +406,95 @@ test("chatsvc : authz refusé remonte l'étape et le statut, sans corps", async 
 });
 
 
+// --- Jeton middletier : échéance, et frein des réessais authz --------------------------
+// Un bearer JWT factice : seule la charge (exp, aud) compte, la signature est fausse.
+const mtJwt = (expSeconds: number, aud = "https://api.spaces.skype.com", tag = "X") => {
+  const b64 = (o: any) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `Bearer ${b64({ alg: "none" })}.${b64({ exp: Math.floor(Date.now() / 1000) + expSeconds, aud, tag })}.SIG-${tag}`;
+};
+const teamsCall = async (p: any, path: string, token: string) => {
+  await p.ctx.window.fetch(`https://teams.cloud.microsoft${path}`, { headers: { authorization: token } });
+  await new Promise((r) => setImmediate(r));
+};
+
+test("jeton middletier : un jeton expiré n'est jamais rejoué, même capturé en dernier", async () => {
+  const p = teamsPage();
+  const fresh = mtJwt(3600, undefined, "FRESH");
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", fresh);
+  // Nos propres appels (ou un vieux) repassent par le hook avec un jeton expiré, PLUS récemment.
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/fetchShortProfile", mtJwt(-600, undefined, "STALE"));
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse('{"conversations":[]}')));
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, true);
+  assert.equal(p.fetchCalls[before].init.headers.Authorization, fresh);
+  const diag = (await p.run("diagnose")).result;
+  assert.equal(diag.mt_token.state, "valid");
+  assert.ok(diag.mt_token.expires_in_s > 3000 && diag.mt_token.expires_in_s <= 3600, String(diag.mt_token.expires_in_s));
+  assert.ok(!/FRESH|STALE|SIG-/.test(JSON.stringify(diag)), "jeton dans diagnose");
+});
+
+test("jeton middletier : l'audience du service de chat passe avant une autre, plus tardive", async () => {
+  const p = teamsPage();
+  const chat = mtJwt(1800, "https://api.spaces.skype.com", "CHAT");
+  await teamsCall(p, "/api/mt/part/emea-03/beta/sharepoint/sites/validSites", mtJwt(7200, "https://other.example", "OTHER"));
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", chat);
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : fakeResponse('{"conversations":[]}')));
+  const before = p.fetchCalls.length;
+  await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(p.fetchCalls[before].init.headers.Authorization, chat);
+});
+
+test("jeton middletier tous expirés : aucun appel authz, réponse immédiate, état « expired »", async () => {
+  const p = teamsPage();
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", mtJwt(-60, undefined, "OLD"));
+  const before = p.fetchCalls.length;
+  const t0 = Date.now();
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.ok(Date.now() - t0 < 1000, "attente inutile d'un jeton");
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.stage, "bearer");
+  assert.match(r.result.error, /expiré/);
+  assert.equal(p.fetchCalls.length, before);
+  assert.equal((await p.run("diagnose")).result.mt_token.state, "expired");
+});
+
+test("authz refusé : pas de nouvel échange tant que le jeton est le même, un nouveau jeton lève le frein", async () => {
+  const p = teamsPage();
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", mtJwt(3600, undefined, "A"));
+  let authz = 0;
+  let accept = false;
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) {
+      authz++;
+      return accept ? fakeResponse(AUTHZ_BODY) : fakeResponse("{}", { status: 401 });
+    }
+    return fakeResponse('{"conversations":[]}');
+  });
+  for (let i = 0; i < 5; i++) {
+    const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+    assert.equal(r.result.ok, false);
+    assert.equal(r.result.stage, "authz");
+  }
+  assert.equal(authz, 1); // un seul échange refusé, pas cinq
+  // Teams pose un nouveau jeton : on réessaie aussitôt.
+  accept = true;
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", mtJwt(3700, undefined, "B"));
+  const ok = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(ok.result.ok, true);
+  assert.equal(authz, 2);
+});
+
+test("webfetch signé : un jeton expiré de l'endpoint cède la place au jeton valide de l'hôte", async () => {
+  const p = teamsPage();
+  const fresh = mtJwt(3600, undefined, "HOSTFRESH");
+  await teamsCall(p, "/api/mt/part/emea-03/beta/me/settings/42", mtJwt(-600, undefined, "PATHOLD"));
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", fresh);
+  const before = p.fetchCalls.length;
+  await p.run("webfetch", { url: "https://teams.cloud.microsoft/api/mt/part/emea-03/beta/me/settings/42", method: "GET", sign: true });
+  assert.equal(p.fetchCalls[before].init.headers.Authorization, fresh);
+});
+
 // --- Lecture d'un fil par le service de chat (op chatread) -----------------------------
 const msg = (id: number, text: string, extra: any = {}) => ({
   id: String(id),

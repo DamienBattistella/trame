@@ -144,6 +144,20 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
   Teams vient de poser (`/api/mt/…`, audience `api.spaces.skype.com`), l'échange via `authz`,
   et garde **en mémoire de la page** le jeton du chat et l'adresse régionale. Renouvelée
   5 minutes avant l'expiration, et une fois sur un 401.
+- **Échéance du bearer** : Teams fait ses appels de chat depuis un worker et ne repose presque
+  jamais de bearer middletier dans la fenêtre ; celui-ci expire environ une heure après. La page
+  lit donc l'échéance (`exp`) et l'audience (`aud`) de chaque bearer capturé, sans que rien n'en
+  sorte, et retient le jeton **valide** qui expire le plus tard (audience `api.spaces.skype.com`
+  d'abord), jamais un jeton expiré. Le choix par date de capture gardait un jeton expiré : nos
+  propres appels repassent par le hook avec ce jeton.
+- **Frein des réessais** : après un échange `authz` refusé, pas de nouvel échange avant 30 s
+  (doublé à chaque échec, au plus 10 min) tant que le jeton de Teams est le même ; un nouveau
+  jeton lève le frein aussitôt.
+- **Tous expirés** : réponse immédiate (`stage: "bearer"`, « jeton Teams expiré »), sans appel
+  réseau, et la page se recharge **au repos** pour que Teams repose des jetons frais : aucune
+  opération en cours ni finie depuis moins de 15 s, liste visible (jamais l'écran de connexion),
+  zone de saisie vide, au plus une fois par 30 minutes (repère dans `sessionStorage`).
+  `diagnose` → `mt_token` = `{ state: valid | expired | none, expires_in_s }`.
 - Côté moteur : `WebBridgeDriver.chat_get(path, query)` ; `chat_conversation_path(thread_id)`
   encode l'id comme le client.
 - **Garde-fous** : liste blanche de chemins (liste, conversation, messages, message) et de

@@ -263,12 +263,33 @@
       } catch {}
       return "";
     };
+    // Échéance (`exp`) et audience (`aud`) d'un bearer JWT, lues DANS la page pour ne pas
+    // rejouer un jeton expiré. Rien de la charge ne sort : seule une durée restante, arrondie,
+    // apparaît dans le diagnostic. Jeton opaque (non JWT) : { exp: 0 } = échéance inconnue.
+    const claimsOf = (authorization) => {
+      try {
+        const part = String(authorization || "").replace(/^Bearer\s+/i, "").split(".")[1] || "";
+        if (!part) return { exp: 0, aud: "" };
+        const json = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")));
+        return { exp: Number(json.exp) > 0 ? Number(json.exp) * 1000 : 0, aud: String(json.aud || "") };
+      } catch {
+        return { exp: 0, aud: "" };
+      }
+    };
+    // Un jeton à moins d'une minute de son échéance est traité comme expiré.
+    const SKEW_MS = 60 * 1000;
+    const expired = (v) => Boolean(v && v.exp && v.exp - Date.now() <= SKEW_MS);
     const storeCreds = (map, key, authorization, xSkypetoken) => {
       const prev = map.get(key) || {};
+      const auth = authorization || prev.authorization || "";
+      const claims = auth === prev.authorization && prev.claimed ? prev : { ...claimsOf(auth), claimed: true };
       map.set(key, {
-        authorization: authorization || prev.authorization || "",
+        authorization: auth,
         xSkypetoken: xSkypetoken || prev.xSkypetoken || "",
         at: Date.now(),
+        exp: claims.exp || 0,
+        aud: claims.aud || "",
+        claimed: true,
       });
     };
     // Retient, PRIVÉ À LA PAGE, l'auth que Teams vient de poser, par hôte ET par endpoint exact,
@@ -296,10 +317,14 @@
     };
     // Rendues à `webfetch`/l'auto-test UNIQUEMENT (dans la page). Jamais sérialisées vers le moteur.
     // Priorité au jeton de l'endpoint exact (bonne audience), repli sur le dernier jeton de l'hôte.
+    // Un jeton expiré de l'endpoint cède la place à celui, valide, de l'hôte.
     const credsFor = (rawUrl) => {
       try {
         const u = new URL(String(rawUrl || ""), location.origin);
-        return credsByPath.get(pathKey(u.hostname, u.pathname)) || creds.get(u.hostname) || null;
+        const byPath = credsByPath.get(pathKey(u.hostname, u.pathname));
+        const byHost = creds.get(u.hostname);
+        if (byPath && expired(byPath) && byHost && !expired(byHost)) return byHost;
+        return byPath || byHost || null;
       } catch {
         return creds.get(String(rawUrl)) || null;
       }
@@ -307,14 +332,50 @@
     // Bearer d'audience api.spaces.skype.com : celui que Teams pose sur ses appels middletier
     // (`/api/mt/…`). C'est le jeton que `authsvc/v1.0/authz` échange contre le jeton du service
     // de chat. Rendu à `chatsvc` UNIQUEMENT (dans la page), jamais sérialisé vers le moteur.
-    const mtBearer = () => {
-      let best = null;
+    // Choix par ÉCHÉANCE, pas par date de capture : nos propres appels repassent par le hook
+    // avec le jeton qu'on leur a donné, et un choix « le plus récent » garderait un jeton expiré
+    // indéfiniment. Candidats : les appels middletier et l'échange authz que Teams fait lui-même ;
+    // un jeton d'audience api.spaces.skype.com passe avant les autres ; un jeton expiré jamais.
+    const MT_AUD = /api\.spaces\.skype\.com/i;
+    const mtCandidates = () => {
+      const out = [];
       for (const [k, v] of credsByPath) {
         const [host, pathname] = k.split("\n");
-        if (!v.authorization || !/(^|\.)teams\.(microsoft\.com|cloud\.microsoft)$/i.test(host) || !/^\/api\/mt\//.test(pathname)) continue;
-        if (!best || (v.at || 0) > (best.at || 0)) best = v;
+        if (!v.authorization || !/(^|\.)teams\.(microsoft\.com|cloud\.microsoft)$/i.test(host)) continue;
+        if (!/^\/api\/(mt|authsvc)\//.test(pathname)) continue;
+        out.push(v);
       }
+      return out;
+    };
+    const rank = (v) => [v.aud && MT_AUD.test(v.aud) ? 1 : v.aud ? 0 : 0.5, v.exp || v.at || 0];
+    const better = (a, b) => {
+      const [ra, rb] = [rank(a), rank(b)];
+      return ra[0] !== rb[0] ? ra[0] > rb[0] : ra[1] > rb[1];
+    };
+    const mtBest = () => {
+      let best = null;
+      for (const v of mtCandidates()) if (!expired(v) && (!best || better(v, best))) best = v;
+      return best;
+    };
+    // Dernière fois qu'un appel a voulu le jeton sans en trouver de valide (voir tokenRefresh).
+    let wantedAt = 0;
+    const mtBearer = () => {
+      const best = mtBest();
+      if (!best && mtCandidates().length) wantedAt = Date.now();
       return best ? best.authorization : "";
+    };
+    // État du jeton, pour le diagnostic et la relance : jamais de valeur, une durée arrondie.
+    //   none : Teams n'en a pas encore posé ; valid : utilisable ; expired : tous expirés.
+    const mtState = () => {
+      const best = mtBest();
+      if (best) return { state: "valid", expires_in_s: best.exp ? Math.max(0, Math.round((best.exp - Date.now()) / 60000) * 60) : null };
+      return { state: mtCandidates().length ? "expired" : "none", expires_in_s: 0 };
+    };
+    // Identité du jeton retenu (échéance, longueur) : change quand Teams en pose un nouveau.
+    // Sert seulement à lever le frein des réessais authz ; aucun morceau du jeton.
+    const mtStamp = () => {
+      const best = mtBest();
+      return best ? `${best.exp || best.at}:${best.authorization.length}` : "";
     };
     // Base des API middletier de CE locataire (« https://teams.cloud.microsoft/api/mt/part/emea-03/ »),
     // relevée sur les appels que Teams fait lui-même. Pas un secret : un chemin.
@@ -504,16 +565,18 @@
     // l'expose jamais ; rememberCreds alimente le cache depuis les hooks.
     // Au démarrage, Teams pose son jeton middletier quelques secondes après le chargement de la
     // page : attendre qu'il arrive (au plus `ms`) plutôt qu'échouer aussitôt. Rendu à la page seulement.
+    // Si Teams a déjà posé des jetons et qu'ils sont tous expirés, attendre ne sert à rien : on
+    // rend la main aussitôt (la relance, elle, est demandée par mtBearer).
     const whenMtBearer = async (ms = 6000) => {
       const until = Date.now() + ms;
       let b = mtBearer();
-      while (!b && Date.now() < until) {
+      while (!b && !mtCandidates().length && Date.now() < until) {
         await new Promise((r) => setTimeout(r, 200));
         b = mtBearer();
       }
       return b;
     };
-    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, whenMtBearer, mtBase, summary, safeProbe: () => probeUrl };
+    return { note, noteSocket, noteFrame, authNames, rememberCreds, credsFor, credsSource, mtBearer, whenMtBearer, mtState, mtStamp, wanted: () => wantedAt, mtBase, summary, safeProbe: () => probeUrl };
   })();
 
   // --- Service de chat de Teams (chatsvc), appelé DANS la page --------------------------
@@ -545,7 +608,11 @@
     const open = async () => {
       const bearer = await apiCapture.whenMtBearer();
       if (!bearer) {
-        const e = new Error("aucun jeton Teams observé pour l'instant (ouvre une conversation)");
+        const e = new Error(
+          apiCapture.mtState().state === "expired"
+            ? "jeton Teams expiré, renouvellement demandé à la page"
+            : "aucun jeton Teams observé pour l'instant (ouvre une conversation)",
+        );
         e.stage = "bearer";
         throw e;
       }
@@ -586,9 +653,26 @@
         return "";
       }
     };
+    // Frein des réessais : après un échec d'ouverture, on ne rappelle pas authsvc avant un délai
+    // (30 s, doublé à chaque échec, au plus 10 min) TANT QUE le jeton de Teams est le même.
+    // Sans ce frein, chaque lecture rejouait l'échange refusé (des centaines de 401 par heure).
+    // Un nouveau jeton posé par Teams lève le frein aussitôt.
+    let failure = null; // { until, n, stamp, err }
     const ensure = async (force) => {
       if (!force && session && session.exp - Date.now() > RENEW_MS) return session;
-      if (!pending) pending = open().finally(() => (pending = null));
+      if (failure && Date.now() < failure.until && failure.stamp === apiCapture.mtStamp()) throw failure.err;
+      if (!pending)
+        pending = open()
+          .then(
+            (s) => ((failure = null), s),
+            (err) => {
+              const stamp = apiCapture.mtStamp();
+              const n = failure && failure.stamp === stamp ? failure.n + 1 : 0;
+              failure = { n, stamp, err, until: Date.now() + Math.min(10 * 60 * 1000, 30 * 1000 * 2 ** n) };
+              throw err;
+            },
+          )
+          .finally(() => (pending = null));
       return pending;
     };
     const send = async (s, method, path, search) => {
@@ -4807,11 +4891,63 @@
       bridge: (typeof globalThis !== "undefined" && globalThis.__trameBridge) || null,
       // Auto-test de signature (statut seulement, jamais de corps) : 200 ⇒ la page signe bien.
       sign_selftest: lastSignTest,
+      // Jeton middletier : état et durée restante seulement (« valid » / « expired » / « none »).
+      mt_token: apiCapture.mtState(),
       // Auto-test du service de chat : { ok, status, stage, region, at } ; ni jeton ni contenu.
       chatsvc_selftest: chatTest,
       };
     },
   };
+
+  // --- Jeton Teams expiré : recharger la page AU REPOS ----------------------------------
+  // Teams fait ses appels de chat depuis un worker ; la fenêtre ne repose presque jamais de
+  // jeton middletier, qui expire environ une heure après. Quand un appel en a voulu un et
+  // qu'ils sont tous expirés, on recharge la page Teams (comme au lancement de Trame : la
+  // session est gardée, Teams repose des jetons frais). Seulement au repos : aucune opération
+  // en cours ni finie depuis moins de 15 s, liste visible (jamais l'écran de connexion), zone
+  // de saisie vide ; au plus une fois par 30 min (repère gardé dans sessionStorage, qui survit
+  // au rechargement). Rien n'est envoyé nulle part.
+  let lastOpEnd = Date.now();
+  const tokenRefresh = (() => {
+    const KEY = "trame.tokenReload";
+    const GAP_MS = 30 * 60 * 1000;
+    const store = () => {
+      try {
+        return typeof sessionStorage !== "undefined" ? sessionStorage : null;
+      } catch {
+        return null;
+      }
+    };
+    const draftEmpty = () => {
+      const e = editor();
+      if (!e) return true;
+      const known = modelText(e);
+      return known === null ? !String(e.innerText || "").trim() : !known;
+    };
+    const due = () => {
+      if (apiCapture.mtState().state !== "expired") return false;
+      if (Date.now() - apiCapture.wanted() > 5 * 60 * 1000) return false; // personne n'en a eu besoin
+      if (running > 0 || Date.now() - lastOpEnd < 15000) return false;
+      if (!rail() || !draftEmpty()) return false;
+      const last = Number((store() && store().getItem(KEY)) || 0);
+      return Date.now() - last >= GAP_MS;
+    };
+    const tick = () => {
+      try {
+        if (due()) {
+          const st = store();
+          if (st) st.setItem(KEY, String(Date.now()));
+          if (st) location.reload(); // sans repère durable, pas de rechargement (pas de boucle)
+          return;
+        }
+      } catch {}
+      const t = setTimeout(tick, 20000);
+      if (t && typeof t.unref === "function") t.unref();
+    };
+    const t = setTimeout(tick, 20000);
+    if (t && typeof t.unref === "function") t.unref();
+    return { due };
+  })();
 
   const api = Object.freeze({
     run: async (cmd) => {
@@ -4828,7 +4964,10 @@
         try {
           reply({ id: cmd.id, ok: true, result: await op(cmd.args || {}) });
         } finally {
-          if (own) running--;
+          if (own) {
+            running--;
+            lastOpEnd = Date.now();
+          }
         }
       } catch (e) {
         reply({ id: cmd.id, ok: false, error: String((e && e.message) || e) });
