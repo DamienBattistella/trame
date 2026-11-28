@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
+import { AutoToggle, Dotted, InitialsAvatar, PRESENCE, PresenceLabel, shake } from "@/components/kit";
 import { Highlight } from "@/components/MessageSearchResults";
 import { LinkCards } from "@/components/LinkCards";
 import { MessageText } from "@/components/MessageText";
@@ -956,7 +956,7 @@ export function DiscussionView({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold">{c.displayName}</span>
           <span className="truncate text-xs text-muted-foreground">
-            {[meeting ? (meeting.live ? "Réunion en cours" : "Conversation de réunion") : KIND[c.surface], c.presence && PRESENCE[c.presence]?.label, draft?.senderLabel].filter(Boolean).join(" · ")}
+            <Dotted parts={[meeting ? (meeting.live ? "Réunion en cours" : "Conversation de réunion") : KIND[c.surface], c.presence && PRESENCE[c.presence] ? <PresenceLabel presence={c.presence} /> : null, draft?.senderLabel]} />
           </span>
         </div>
         <JoinMeeting meeting={meeting} />

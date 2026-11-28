@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { AutoToggle, InitialsAvatar, PRESENCE, shake } from "@/components/kit";
+import { AutoToggle, Dotted, InitialsAvatar, PRESENCE, PresenceLabel, shake } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Trame } from "@/api";
 import { LinkCards } from "@/components/LinkCards";
@@ -90,7 +90,9 @@ export function ConversationSheet({ trame, conversation, onClose }: { trame: Tra
           <InitialsAvatar name={live.displayName} presence={live.presence} className="size-9" />
           <div className="flex min-w-0 flex-1 flex-col">
             <SheetTitle className="truncate">{live.displayName}</SheetTitle>
-            <SheetDescription>{[KIND[live.surface], live.presence && PRESENCE[live.presence]?.label].filter(Boolean).join(" · ")}</SheetDescription>
+            <SheetDescription>
+              <Dotted parts={[KIND[live.surface], live.presence && PRESENCE[live.presence] ? <PresenceLabel presence={live.presence} /> : null]} />
+            </SheetDescription>
           </div>
           <AutoToggle
             name={live.displayName}

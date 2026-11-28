@@ -4,7 +4,8 @@ import { useId } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Check, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { usePhoto } from "@/lib/photos";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Presence } from "@/types";
 
@@ -18,7 +19,7 @@ export function initials(name: string) {
   return letters.join("") || "?";
 }
 
-/** Avatar shadcn à initiales (Teams n'expose pas les photos). */
+/** Teintes des avatars à initiales. */
 const AVATAR_HUES = [258, 200, 160, 130, 85, 50, 25, 340, 300, 230] as const;
 
 /** Teinte stable par nom : la même personne garde sa couleur partout (wizard, panneau, brief). */
@@ -30,48 +31,129 @@ export function avatarHue(name: string): number {
   return AVATAR_HUES[h % AVATAR_HUES.length];
 }
 
-/** Libellé et pastille de chaque statut Teams, couleurs façon Teams. */
-export const PRESENCE: Record<Presence, { label: string; dot: string }> = {
-  available: { label: "Disponible", dot: "bg-success" },
-  busy: { label: "Occupé", dot: "bg-destructive" },
-  in_call: { label: "En appel", dot: "bg-destructive" },
-  in_meeting: { label: "En réunion", dot: "bg-destructive" },
-  presenting: { label: "En présentation", dot: "bg-destructive" },
-  dnd: { label: "Ne pas déranger", dot: "bg-destructive" },
-  brb: { label: "De retour bientôt", dot: "bg-warning" },
-  away: { label: "Absent", dot: "bg-warning" },
-  ooo: { label: "Absent du bureau", dot: "bg-[oklch(0.55_0.2_310)]" },
-  offline: { label: "Hors ligne", dot: "border-2 border-muted-foreground/70 bg-background" },
+/** Ton d'un statut : la couleur de sa pastille (jetons --presence-* de index.css). */
+export type PresenceTone = "available" | "busy" | "away" | "ooo" | "offline";
+
+/** Pictogramme posé dans la pastille, comme dans Teams : le statut se lit sans la couleur. */
+type PresenceGlyph = "check" | "minus" | "clock" | "arrow" | "screen" | "phone" | "cross" | null;
+
+/** Libellé, ton et pictogramme de chaque statut Teams. */
+export const PRESENCE: Record<Presence, { label: string; tone: PresenceTone; glyph: PresenceGlyph }> = {
+  available: { label: "Disponible", tone: "available", glyph: "check" },
+  busy: { label: "Occupé", tone: "busy", glyph: null },
+  in_call: { label: "En appel", tone: "busy", glyph: "phone" },
+  in_meeting: { label: "En réunion", tone: "busy", glyph: null },
+  presenting: { label: "En présentation", tone: "busy", glyph: "screen" },
+  dnd: { label: "Ne pas déranger", tone: "busy", glyph: "minus" },
+  brb: { label: "De retour bientôt", tone: "away", glyph: "clock" },
+  away: { label: "Absent", tone: "away", glyph: "clock" },
+  ooo: { label: "Absent du bureau", tone: "ooo", glyph: "arrow" },
+  offline: { label: "Hors ligne", tone: "offline", glyph: "cross" },
 };
 
-/** Pastille de présence posée sur le coin d'un avatar. */
-export function PresenceBadge({ presence, className }: { presence: Presence; className?: string }) {
+const TONE_TEXT: Record<PresenceTone, string> = {
+  available: "text-presence-available",
+  busy: "text-presence-busy",
+  away: "text-presence-away",
+  ooo: "text-presence-ooo",
+  offline: "text-presence-offline",
+};
+
+const TONE_BG: Record<PresenceTone, string> = {
+  available: "bg-presence-available",
+  busy: "bg-presence-busy",
+  away: "bg-presence-away",
+  ooo: "bg-presence-ooo",
+  offline: "bg-presence-offline",
+};
+
+/** Tracés sur 16 × 16, en blanc sur la pastille pleine (hors ligne : dans la couleur). */
+const GLYPHS: Record<Exclude<PresenceGlyph, null>, React.ReactNode> = {
+  check: <path d="M4.9 8.2 7 10.3l4.1-4.4" />,
+  minus: <path d="M4.9 8h6.2" />,
+  clock: <path d="M8 4.7v3.5l2.3 1.4" />,
+  arrow: <path d="M11 8H5.3m2.4-2.5L5.2 8l2.5 2.5" />,
+  screen: <path d="M4.6 5.4h6.8v4.4H4.6zM6.6 11.4h2.8" />,
+  phone: <path stroke="none" fill="white" d="M5.6 4.8 7 6.4l-.7 1a5.2 5.2 0 0 0 2.3 2.3l1-.7 1.6 1.4-.7 1a1.5 1.5 0 0 1-1.6.4 7 7 0 0 1-4-4 1.5 1.5 0 0 1 .4-1.6z" />,
+  cross: <path d="m6.2 6.2 3.6 3.6m0-3.6-3.6 3.6" />,
+};
+
+/** Pastille de présence posée sur le coin d'un avatar : rond du ton du statut et son
+ *  pictogramme. size md (14 px) sur un avatar de 32 px et plus, sm (12 px) en dessous. */
+export function PresenceBadge({ presence, className, size = "md" }: { presence: Presence; className?: string; size?: "sm" | "md" }) {
   const p = PRESENCE[presence];
   if (!p) return null;
+  const hollow = p.tone === "offline";
   return (
     <span
       role="img"
       aria-label={p.label}
+      title={p.label}
       data-presence={presence}
-      className={cn("grid size-3 place-items-center rounded-full ring-2 ring-background", p.dot, className)}
+      className={cn(
+        "inline-grid shrink-0 rounded-full bg-background ring-2 ring-background transition-colors duration-300",
+        size === "sm" ? "size-3" : "size-3.5",
+        TONE_TEXT[p.tone],
+        className
+      )}
     >
-      {presence === "dnd" && <span className="h-0.5 w-1.5 rounded-full bg-white" />}
+      <svg viewBox="0 0 16 16" className="size-full" aria-hidden fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {hollow ? (
+          <circle cx="8" cy="8" r="6.6" stroke="currentColor" strokeWidth="2.2" />
+        ) : (
+          <circle cx="8" cy="8" r="8" fill="currentColor" />
+        )}
+        {p.glyph && (
+          <g stroke={hollow ? "currentColor" : "white"} strokeWidth="1.8">
+            {GLYPHS[p.glyph]}
+          </g>
+        )}
+      </svg>
     </span>
   );
 }
 
-/** Avatar shadcn à initiales (Teams n'expose pas les photos), teinté selon le nom.
- *  Avec une présence connue, la pastille Teams en bas à droite et son libellé au survol. */
+/** Le statut en toutes lettres, précédé de son point coloré (en-têtes de conversation). */
+export function PresenceLabel({ presence, className }: { presence: Presence; className?: string }) {
+  const p = PRESENCE[presence];
+  if (!p) return null;
+  return (
+    <span className={cn("inline-flex items-center gap-1.5", className)}>
+      <span aria-hidden className={cn("size-2 shrink-0 rounded-full transition-colors duration-300", TONE_BG[p.tone])} />
+      {p.label}
+    </span>
+  );
+}
+
+/** Fragments d'une ligne de détails, séparés par « · » ; les vides sont sautés. */
+export function Dotted({ parts }: { parts: React.ReactNode[] }) {
+  const shown = parts.filter((p) => p !== null && p !== undefined && p !== false && p !== "");
+  return (
+    <>
+      {shown.map((p, i) => (
+        <span key={i}>
+          {i > 0 && <span aria-hidden> · </span>}
+          {p}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** Avatar shadcn teinté selon le nom : la photo Teams de la personne quand le moteur l'a
+ *  lue (lib/photos), ses initiales sinon. Avec une présence connue, la pastille Teams en
+ *  bas à droite et son libellé au survol. */
 export function InitialsAvatar({ name, className, presence }: { name: string; className?: string; presence?: Presence | null }) {
   const avatar = <PlainAvatar name={name} className={className} />;
   if (!presence || !PRESENCE[presence]) return avatar;
+  const small = /\bsize-[5-7]\b/.test(className ?? "");
   return (
     <TooltipProvider delayDuration={300}>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="relative inline-flex shrink-0">
             {avatar}
-            <PresenceBadge presence={presence} className="absolute -bottom-0.5 -right-0.5" />
+            <PresenceBadge presence={presence} size={small ? "sm" : "md"} className="absolute -right-0.5 -bottom-0.5" />
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">{PRESENCE[presence].label}</TooltipContent>
@@ -81,8 +163,10 @@ export function InitialsAvatar({ name, className, presence }: { name: string; cl
 }
 
 function PlainAvatar({ name, className }: { name: string; className?: string }) {
+  const photo = usePhoto(name);
   return (
     <Avatar className={cn("size-9 shrink-0", className)} aria-hidden>
+      {photo ? <AvatarImage src={photo} alt="" className="object-cover" /> : null}
       <AvatarFallback
         className="bg-[oklch(0.93_0.045_var(--avatar-h))] text-xs font-semibold text-[oklch(0.4_0.12_var(--avatar-h))] dark:bg-[oklch(0.33_0.07_var(--avatar-h))] dark:text-[oklch(0.9_0.06_var(--avatar-h))]"
         style={{ "--avatar-h": avatarHue(name) } as React.CSSProperties}

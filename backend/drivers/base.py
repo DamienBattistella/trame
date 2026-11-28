@@ -310,6 +310,13 @@ class TeamsDriver(ABC):
         or None when the driver cannot show it. Raises only when Teams is unreachable."""
         return None
 
+    def people_photos(self, known: Iterable[str] = ()) -> dict[str, str]:
+        """Profile photos of the people of 1:1 chats, thread id -> small data URL
+        (image/jpeg or image/png), read where Teams already shows them. Chats in known
+        are skipped; a chat Teams does not draw right now is simply absent. Raises only
+        when Teams is unreachable."""
+        return {}
+
     def set_status_message(self, text: str) -> str:
         """Set (or, empty, clear) the status message. Returns the message Teams shows
         afterwards, checked by the caller. Raises when it could not be done."""

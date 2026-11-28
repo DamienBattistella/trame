@@ -403,6 +403,10 @@ def create_app(
     def get_state():
         return json.loads(state_payload())
 
+    @app.get("/api/photos")
+    def get_photos():
+        return {"rev": watcher.state.photos_rev, "photos": watcher.photos_by_name()}
+
     @app.post("/api/pause")
     def set_pause(body: PauseBody):
         watcher.set_paused(body.paused)
