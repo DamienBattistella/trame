@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, Sparkles, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
@@ -327,11 +327,11 @@ function MessageActions({
               className={cn(
                 "grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
                 canReact && !canReply && "ml-0.5 border-l",
-                propose.busy && "text-primary",
+                propose.busy && "text-link",
                 (propose.blocked || pending) && !propose.busy && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
               )}
             >
-              {propose.busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {propose.busy ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -1228,7 +1228,7 @@ export function DiscussionView({
                             <InitialsAvatar name={m.sender} className="mt-0.5 size-8" />
                           ) : (
                             // Heure d'un message de la série : dans la marge, au survol.
-                            <span className="pt-0.5 text-right text-[0.6875rem] leading-6 text-muted-foreground tabular-nums opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                            <span className="pt-0.5 text-right text-2xs leading-6 text-muted-foreground tabular-nums opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                               {row.time}
                             </span>
                           )}
@@ -1413,7 +1413,7 @@ export function DiscussionView({
                         i === mentioning.index ? "bg-accent text-accent-foreground" : "hover:bg-muted"
                       )}
                     >
-                      <InitialsAvatar name={name} className="size-6 text-[10px]" />
+                      <InitialsAvatar name={name} className="size-6 text-3xs" />
                       <span className="truncate">{name}</span>
                     </li>
                   ))}
@@ -1502,7 +1502,7 @@ export function DiscussionView({
                     e.preventDefault();
                     acceptGhost();
                   }}
-                  className="pointer-events-auto ml-1.5 inline-flex -translate-y-px cursor-pointer items-center gap-1 rounded border bg-background/80 px-1.5 align-middle font-sans text-[11px] leading-4 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  className="pointer-events-auto ml-1.5 inline-flex -translate-y-px cursor-pointer items-center gap-1 rounded border bg-background/80 px-1.5 align-middle font-sans text-2xs leading-4 text-muted-foreground hover:border-primary/40 hover:text-foreground"
                 >
                   <span>⇥</span> Tab
                 </button>
@@ -1603,7 +1603,7 @@ export function DiscussionView({
             </div>
             </div>
           </div>
-          {dragging && limits && <p className="text-center text-xs text-primary">Dépose ici pour joindre · {limitsShort(limits)}</p>}
+          {dragging && limits && <p className="text-center text-xs text-link">Dépose ici pour joindre · {limitsShort(limits)}</p>}
         </div>
       </motion.div>
 

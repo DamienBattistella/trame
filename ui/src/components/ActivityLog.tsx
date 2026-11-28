@@ -180,7 +180,7 @@ export function ActivityLog({ logs, trame }: { logs: LogItem[]; trame: Trame }) 
       </div>
 
       <GroupList className="min-h-0 flex-1">
-        <ScrollArea className="h-full">
+        <ScrollArea className="h-full" viewportLabel="Activité de Trame" viewportClassName="focus-visible:ring-inset">
           {!loading && shown.length === 0 &&
             (filtered ? (
               <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">

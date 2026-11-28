@@ -219,7 +219,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
               {busy === c.value ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
-                presence === c.value && <Check className="size-3.5 text-primary" />
+                presence === c.value && <Check className="size-3.5 text-link" />
               )}
             </button>
           ))}
@@ -287,7 +287,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
                   Effacer le message
                 </button>
               ) : null}
-              <span className={cn("ml-auto text-[11px] tabular-nums text-muted-foreground", message.length >= MESSAGE_MAX && "text-warning")}>
+              <span className={cn("ml-auto text-2xs tabular-nums text-muted-foreground", message.length >= MESSAGE_MAX && "text-warning")}>
                 {message.length}/{MESSAGE_MAX}
               </span>
               <Button type="submit" size="sm" className="h-7 px-3" disabled={working || !dirty}>

@@ -975,6 +975,32 @@
 
   const reply = (payload) => window.__TAURI_INTERNALS__.invoke("teams_bridge_reply", { payload });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Lectures en parallèle, au plus `width` à la fois et au plus `perSec` départs par seconde
+  // (Teams en tolère 9 ; on reste à 8). Une à une, chaque lecture attendait la précédente :
+  // 40 conversations prenaient 15 s. Les résultats gardent l'ordre des entrées ; une erreur
+  // d'une lecture devient son résultat (`onError`) sans arrêter les autres.
+  const paced = async (items, fn, { width = 4, perSec = 8, onError = (e) => ({ ok: false, error: String((e && e.message) || e) }) } = {}) => {
+    const list = Array.from(items || []);
+    const out = new Array(list.length);
+    const gap = 1000 / perSec;
+    let next = 0;
+    let slot = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const i = next++;
+        const at = Math.max(slot, Date.now());
+        slot = at + gap;
+        if (at > Date.now()) await sleep(at - Date.now());
+        try {
+          out[i] = await fn(list[i], i);
+        } catch (e) {
+          out[i] = onError(e, list[i]);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, width), list.length) }, worker));
+    return out;
+  };
   const label = (el) => (el?.getAttribute?.("aria-label") || el?.innerText || "").replace(/\s+/g, " ").trim();
   const norm = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const rail = () => document.querySelector('[role="tree"]');
@@ -2913,25 +2939,49 @@
       }
       return String((c.threadProperties && c.threadProperties.topic) || "").trim();
     };
+    // Messages d'une conversation, déjà convertis : relus du cache tant que son dernier
+    // message n'a pas changé (et au plus 2 min, pour une modification ou une suppression plus
+    // ancienne). Une recherche affinée juste après ne relit que ce qui a bougé.
+    const readConv = async (c) => {
+      const last = String(c.lastMessage.id);
+      const hit = searchCache.get(c.id);
+      if (hit && hit.last === last && Date.now() - hit.at < SEARCH_TTL) return { cached: true, msgs: hit.msgs };
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(c.id)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
+      if (!r.ok) return { cached: false, msgs: [] };
+      const msgs = [];
+      for (const raw of (r.json && r.json.messages) || []) {
+        if (!chatMessage.isUser(raw) || (raw.properties || {}).deletetime) continue;
+        const m = chatMessage.convert(raw, me, chatMessage.parseHtml, messageParts);
+        if (!m.text) continue;
+        msgs.push({ hay: fold(m.text), sender: m.sender, mine: Boolean(me) && mriOfFrom(raw.from) === me, at: m.at, text: m.text.slice(0, 4000), ts: m.ts || 0 });
+      }
+      searchCache.delete(c.id);
+      searchCache.set(c.id, { last, at: Date.now(), msgs });
+      while (searchCache.size > 80) searchCache.delete(searchCache.keys().next().value);
+      return { cached: false, msgs };
+    };
+    // Le cache ne cadence pas : seules les vraies lectures passent par le pool.
+    const fresh = convs.filter((c) => {
+      const hit = searchCache.get(c.id);
+      return !(hit && hit.last === String(c.lastMessage.id) && Date.now() - hit.at < SEARCH_TTL);
+    });
+    await paced(fresh, readConv);
     const hits = [];
     let scanned = 0;
     for (const c of convs) {
-      const started = Date.now();
-      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(c.id)}/messages`, query: { view: "msnp24Equivalent", pageSize: 200 } });
+      const { msgs } = await readConv(c); // tout est en cache à ce stade (sauf un refus)
       scanned++;
-      for (const raw of (r.ok && r.json && r.json.messages) || []) {
-        if (!chatMessage.isUser(raw) || (raw.properties || {}).deletetime) continue;
-        const m = chatMessage.convert(raw, me, chatMessage.parseHtml, messageParts);
-        const hay = fold(m.text);
-        if (!m.text || !words.every((w) => hay.includes(w))) continue;
-        hits.push({ conversation: nameOf(c), thread: String(c.id), self: c.id === "48:notes", sender: m.sender, mine: Boolean(me) && mriOfFrom(raw.from) === me, at: m.at, text: m.text.slice(0, 4000), ts: m.ts || 0 });
+      for (const m of msgs) {
+        if (!words.every((w) => m.hay.includes(w))) continue;
+        hits.push({ conversation: nameOf(c), thread: String(c.id), self: c.id === "48:notes", sender: m.sender, mine: m.mine, at: m.at, text: m.text, ts: m.ts });
       }
-      const spent = Date.now() - started;
-      if (spent < 125) await sleep(125 - spent);
     }
     hits.sort((a, b) => b.ts - a.ts);
     return { ok: true, scanned, results: hits.slice(0, want).map(({ ts, ...h }) => h) };
   };
+  // Cache de la recherche, PRIVÉ À LA PAGE (comme ce que Teams affiche) : jamais sérialisé.
+  const searchCache = new Map(); // id de conversation -> { last, at, msgs }
+  const SEARCH_TTL = 2 * 60 * 1000;
   const mriOfFrom = (from) => {
     const m = /\/contacts\/([^/?#]+)$/.exec(String(from || ""));
     return m ? decodeURIComponent(m[1]) : String(from || "");
@@ -2980,6 +3030,11 @@
     const dayEvents = async (d) => {
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (calendar.has(key)) return calendar.get(key);
+      const pending = dayList(d);
+      calendar.set(key, pending); // la promesse : deux lectures parallèles du même jour, un appel
+      return pending;
+    };
+    const dayList = async (d) => {
       const from = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       const to = new Date(from.getTime() + 86400000);
       const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${encodeURIComponent(from.toISOString())}&endDateTime=${encodeURIComponent(to.toISOString())}&$select=subject,start,end&$top=100`;
@@ -2996,7 +3051,6 @@
             .filter((e) => e.subject && !Number.isNaN(e.start.getTime()) && !Number.isNaN(e.end.getTime()));
         }
       } catch {}
-      calendar.set(key, list);
       return list;
     };
     const fromCalendar = async (topic, callStart) => {
@@ -3082,14 +3136,9 @@
     };
     return async ({ threads = [], topics = {} } = {}) => {
       const ids = (Array.isArray(threads) ? threads : []).filter((t) => CALL_CHAT.test(String(t))).slice(0, 30);
-      const out = [];
       calendar.clear();
-      for (const t of ids) {
-        const started = Date.now();
-        out.push(await one(t, (topics && typeof topics === "object" && topics[t]) || ""));
-        const spent = Date.now() - started;
-        if (spent < 125) await sleep(125 - spent);
-      }
+      const topicOf = (t) => (topics && typeof topics === "object" && topics[t]) || "";
+      const out = await paced(ids, (t) => one(t, topicOf(t)), { onError: (e, t) => ({ thread: t, ok: false, error: String((e && e.message) || e) }) });
       return { ok: true, chats: out };
     };
   })();
