@@ -65,6 +65,7 @@ import { demoCorrect } from "@/lib/demoCorrect";
 import { playDemoReflection, type DemoPlan } from "@/lib/demoReflection";
 import { demoSkills } from "@/lib/demoSkills";
 import { demoPrompt, demoSession, demoTurn } from "@/lib/demoReport";
+import { setPhotos } from "@/lib/photos";
 
 const BRIEF_RANGES: readonly unknown[] = ["messages", "today", "24h", "7d", "30d"] satisfies BriefRange[];
 
@@ -97,6 +98,8 @@ export interface TrameState {
   myPresence: Presence | null;
   /** Sa photo de profil Teams (data URL) ; null sans photo : l'icône de profil la remplace. */
   myPhoto: string | null;
+  /** Change dès qu'une photo de personne est lue : les photos se relisent sur /api/photos. */
+  photosRev: number;
   /** Messages envoyés quand Teams n'était pas prêt : ils partent dès qu'il l'est. */
   outbox: QueuedSend[];
   /** threadId -> compteur : change quand un message arrive ou que Trame en envoie un. */
@@ -303,6 +306,7 @@ function mapState(s: any): TrameState {
     },
     myPresence: s.my_presence ?? null,
     myPhoto: typeof s.my_photo === "string" ? s.my_photo : null,
+    photosRev: Number(s.photos_rev ?? 0),
     outbox: (s.outbox ?? []).map(mapQueued),
     threadUpdates: s.thread_updates ?? {},
     autoToday: (s.auto_today ?? []).map((a: any) => ({ at: a.at ?? "", threadId: a.thread_id, conversation: a.conversation ?? "", text: a.text ?? "" })),
@@ -664,7 +668,7 @@ export function mergeSettings(s: Settings, p: SettingsPatch): Settings {
  *  (jamais de fausses conversations à l'écran d'un vrai poste). */
 function mockState(): TrameState {
   if (isDesktop()) {
-    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, readiness: { page: "waiting", chat: "off", since: "" }, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false, edit: false }, myPresence: null, myPhoto: null, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
+    return { paused: false, screenSharing: false, brain: "claude", selftestOk: false, readiness: { page: "waiting", chat: "off", since: "" }, onboarded: false, watchlist: [], drafts: [], logs: [], notices: [], capabilities: { react: false, reply: false, mentions: false, ownStatus: false, delete: false, edit: false }, myPresence: null, myPhoto: null, photosRev: 0, outbox: [], threadUpdates: {}, undoable: [], autoToday: [], teamsCheck: null, followUps: [], favorites: [], archived: {} };
   }
   return {
     paused: false,
@@ -680,6 +684,7 @@ function mockState(): TrameState {
     capabilities: { react: true, reply: true, mentions: true, ownStatus: true, delete: true, edit: true },
     myPresence: "available",
     myPhoto: null,
+    photosRev: 0,
     outbox: [],
     threadUpdates: {},
     undoable: [],
@@ -957,6 +962,19 @@ export function useTrame() {
       next[i] = run;
       return next;
     });
+
+  // Photos des personnes : relues quand le moteur en annonce une nouvelle, et à chaque
+  // (re)connexion. Hors ligne, les dernières lues restent affichées.
+  useEffect(() => {
+    if (!connected) return;
+    let stale = false;
+    void request<{ photos: Record<string, string> }>("GET", "/api/photos").then((res) => {
+      if (!stale && res.ok && res.photos && typeof res.photos === "object") setPhotos(res.photos);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [connected, state.photosRev]);
 
   useEffect(() => {
     let closed = false;

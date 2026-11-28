@@ -185,6 +185,8 @@ class WebBridgeDriver(TeamsDriver):
         self._ids = itertools.count(1)
         self._last_poll = 0.0
         self._names: dict[str, str] = {}
+        # Thread id -> the id Teams gives its row in the chat list (photos already read).
+        self._row_ids: dict[str, str] = {}
         self._kinds: dict[str, Surface] = {}
         self._title: Optional[str] = None
         self._previews = PreviewWatcher()
@@ -509,6 +511,30 @@ class WebBridgeDriver(TeamsDriver):
         photo = res.get("photo")
         ok = isinstance(photo, str) and photo.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
         return photo if ok and len(photo) <= self.MAX_PHOTO_CHARS else None
+
+    MAX_PERSON_PHOTO_CHARS = 40_000
+
+    def people_photos(self, known: Iterable[str] = ()) -> dict[str, str]:
+        ids = {self._row_ids.get(t, t) for t in known}
+        res = self._rpc("photos", timeout=20, known=sorted(ids)) or {}
+        if not res.get("ok"):
+            raise BridgeUnavailable(f"Teams intégré : {res.get('error') or 'photos illisibles'}")
+        out: dict[str, str] = {}
+        for it in res.get("photos") or []:
+            if not isinstance(it, dict):
+                continue
+            photo, row_id = it.get("photo"), str(it.get("id") or "")
+            thread_id = rail_label.stable_id(row_id)
+            label = rail_label.parse(str(it.get("label") or ""))
+            # Only a person's own photo: a group or meeting chat has no single face.
+            if not thread_id or "@thread." in thread_id or label.is_self or label.surface != Surface.dm:
+                continue
+            if not (isinstance(photo, str) and photo.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+                    and len(photo) <= self.MAX_PERSON_PHOTO_CHARS):
+                continue
+            self._row_ids[thread_id] = row_id
+            out[thread_id] = photo
+        return out
 
     def set_my_status(self, choice: str, duration: Optional[str] = None,
                       until: Optional[datetime] = None) -> Optional[str]:

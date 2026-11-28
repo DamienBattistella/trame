@@ -108,6 +108,8 @@ class Watcher:
         if not self.soul_history.list():
             self.soul_history.snapshot(self.soul, "initial", "Version trouvée au démarrage")
         self._proposed: dict[str, str] = {}
+        # Thread id of a 1:1 chat -> the person's photo (data URL), kept out of the state.
+        self.people_photos: dict[str, str] = {}
         self._suggested: dict[str, tuple[float, str, str]] = {}
         self._learning = False
         self.people = peoplemod.Directory.load()
@@ -322,6 +324,11 @@ class Watcher:
     PHOTO_REFRESH = 3600.0
     PHOTO_RETRY = 300.0
     _photo_at: Optional[float] = None
+    # Photos of the people of 1:1 chats: the rows not read yet every few minutes (Teams
+    # draws its list as it is scrolled), all of them again hourly.
+    PEOPLE_PHOTO_NEW = 180.0
+    _people_photo_at: Optional[float] = None
+    _people_photo_all_at: Optional[float] = None
 
     # Disponibilité de Teams suivie par le moteur lui-même : vite tant que Teams n'est pas prêt
     # (la page se charge), puis rarement. L'interface n'a plus besoin d'être ouverte, et le
@@ -361,6 +368,7 @@ class Watcher:
         while True:
             self.apply_presence()
             self.apply_my_photo()
+            self.apply_people_photos()
             if self._stop.wait(self.PRESENCE_REFRESH):
                 return
 
@@ -389,6 +397,33 @@ class Watcher:
             return  # Teams unreachable: keep the photo already shown
         with self._lock:
             self.state.my_photo = photo
+
+    def apply_people_photos(self, force: bool = False) -> None:
+        """Photos of the people of 1:1 chats, for their avatars. A photo once read stays
+        until Teams shows another one: a row scrolled out of view keeps its face."""
+        now = time.monotonic()
+        if not force and self._people_photo_at is not None and now - self._people_photo_at < self.PEOPLE_PHOTO_NEW:
+            return
+        full = force or self._people_photo_all_at is None or now - self._people_photo_all_at >= self.PHOTO_REFRESH
+        self._people_photo_at = now
+        known = () if full else tuple(self.people_photos)
+        try:
+            seen = self.driver.people_photos(known)
+        except Exception:
+            return  # Teams unreachable: keep the photos already shown
+        if full:
+            self._people_photo_all_at = now
+        with self._lock:
+            changed = {t: p for t, p in seen.items() if self.people_photos.get(t) != p}
+            if changed:
+                self.people_photos.update(changed)
+                self.state.photos_rev += 1
+
+    def photos_by_name(self) -> dict[str, str]:
+        """Display name -> photo, for every avatar of that person (list, thread, senders)."""
+        with self._lock:
+            names = {w.thread_id: w.display_name for w in self.state.watchlist}
+            return {names[t]: p for t, p in self.people_photos.items() if names.get(t)}
 
     def apply_own_status(self) -> None:
         """The user's own status, read on Teams' profile button (no menu opened)."""

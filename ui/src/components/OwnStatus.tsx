@@ -141,7 +141,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
                 </AvatarFallback>
               </Avatar>
               {presence ? (
-                <PresenceBadge presence={presence} className="absolute right-1 bottom-1 ring-sidebar" />
+                <PresenceBadge presence={presence} className="absolute right-1 bottom-1 bg-sidebar ring-sidebar" />
               ) : (
                 <span className="absolute right-1 bottom-1 size-3 rounded-full border-2 border-dashed border-muted-foreground/60 bg-sidebar" />
               )}
@@ -214,7 +214,7 @@ export function OwnStatus({ trame }: { trame: Trame }) {
                 presence === c.value && "font-medium"
               )}
             >
-              <PresenceBadge presence={c.value} className="ring-0" />
+              <PresenceBadge presence={c.value} className="bg-transparent ring-0" />
               <span className="flex-1">{c.label}</span>
               {busy === c.value ? (
                 <Loader2 className="size-3.5 animate-spin" />

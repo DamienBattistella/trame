@@ -1597,6 +1597,28 @@
     };
   };
   const MSGS = LM.messages;
+  // Une photo de profil affichée par Teams, redessinée en size px (JPEG, data URL) ; null
+  // sans image chargée. Une image d'un autre domaine (canvas « tainted ») est relue dans
+  // la page, avec sa session.
+  const photoOf = async (img, size, wait) => {
+    if (!img || !(await waitFor(() => img.complete && img.naturalWidth > 0, wait))) return null;
+    const draw = (source) => {
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      c.getContext("2d").drawImage(source, 0, 0, size, size);
+      return c.toDataURL("image/jpeg", 0.85);
+    };
+    try {
+      return draw(img);
+    } catch {
+      try {
+        const res = await fetch(img.currentSrc || img.src, { credentials: "include" });
+        return res.ok ? draw(await createImageBitmap(await res.blob())) : null;
+      } catch {
+        return null;
+      }
+    }
+  };
   const lastMessages = (n) => Array.from(document.querySelectorAll(MSGS)).slice(-n).map((el) => flat(el.innerText));
   // Messages du fil apparus depuis cet instant : ni leur identifiant ni (sans identifiant)
   // leur élément n'étaient là. Un message déjà affiché, même redessiné, n'en fait pas partie.
@@ -4559,26 +4581,25 @@
     myphoto: async () => {
       const trigger = document.querySelector(ME);
       if (!trigger) return { ok: false, error: "bouton du profil introuvable dans Teams" };
-      const img = trigger.querySelector("img");
-      if (!img || !(await waitFor(() => img.complete && img.naturalWidth > 0, 3000))) return { ok: true, photo: null };
-      const draw = (source) => {
-        const c = document.createElement("canvas");
-        c.width = c.height = 96;
-        c.getContext("2d").drawImage(source, 0, 0, 96, 96);
-        return c.toDataURL("image/jpeg", 0.85);
-      };
-      try {
-        return { ok: true, photo: draw(img) };
-      } catch {
-        // Image d'un autre domaine (canvas « tainted ») : la relire dans la page, avec sa session.
-        try {
-          const res = await fetch(img.currentSrc || img.src, { credentials: "include" });
-          if (!res.ok) return { ok: true, photo: null };
-          return { ok: true, photo: draw(await createImageBitmap(await res.blob())) };
-        } catch {
-          return { ok: true, photo: null };
-        }
+      return { ok: true, photo: await photoOf(trigger.querySelector("img"), 96, 3000) };
+    },
+    // Les photos des personnes, lues sur l'avatar de chaque ligne de la liste : une seule
+    // <img> (une conversation de groupe en montre plusieurs, ou aucune). Redessinées en
+    // 64 px. known : identifiants déjà lus, sautés. Seules les lignes dessinées comptent :
+    // le moteur garde les photos déjà lues des autres.
+    photos: async ({ known = [] } = {}) => {
+      const skip = new Set(known);
+      const out = [];
+      for (const el of items()) {
+        if (isFolder(el) || out.length >= 120) continue;
+        const id = el.querySelector('[id*="19:"]')?.id || (el.id && el.id.includes("19:") ? el.id : "");
+        if (!id || skip.has(id)) continue;
+        const imgs = el.querySelectorAll("img");
+        if (imgs.length !== 1) continue;
+        const photo = await photoOf(imgs[0], 64, 500);
+        if (photo) out.push({ id, label: label(el), photo });
       }
+      return { ok: true, photos: out };
     },
     mystatus: async ({ message } = {}) => {
       if (!document.querySelector(ME)) return { ok: false, error: "bouton du profil introuvable dans Teams" };
