@@ -263,6 +263,10 @@ class StartBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+class OpenOlderBody(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=300)
+
+
 class SearchBody(BaseModel):
     q: str = Field(max_length=200)
     limit: int = Field(default=25, ge=1, le=50)
@@ -446,6 +450,17 @@ def create_app(
     @app.post("/api/conversations/refresh")
     def refresh_conversations():
         return {"ok": True, "count": watcher.refresh_conversations()}
+
+    @app.get("/api/conversations/older")
+    def older_conversations(q: str = "", offset: int = 0, limit: int = 50):
+        """Conversations que Teams connaît et que la liste ne montre pas (les plus anciennes)."""
+        return {"ok": True, **watcher.older_conversations(q, max(0, offset), max(1, min(100, limit)))}
+
+    @app.post("/api/conversations/older/open")
+    def open_older_conversation(body: OpenOlderBody):
+        """Ajoute à la liste, non suivie, une conversation trouvée dans les anciennes."""
+        entity = watcher.open_older(body.thread_id)
+        return {"ok": True, "conversation": json.loads(entity.model_dump_json())}
 
     @app.post("/api/conversations/start")
     def start_conversation(body: StartBody):
