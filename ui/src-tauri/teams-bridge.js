@@ -2843,18 +2843,26 @@
     // Masquer (ou réafficher) une conversation dans la liste de Teams, comme son menu
     // « Masquer » : propriété « hidden » de la conversation, puis relue. Teams la réaffiche
     // d'elle-même au prochain message.
+    // Relevé dans le code de Teams (28/11/2026) : la valeur écrite est un BOOLÉEN
+    // (`…(conv, "hidden", false)` pour réafficher), et l'état se lit dans
+    // `threadProperties.hidden`. Une chaîne « true » était refusée (HTTP 400, vu en direct).
+    const isHidden = (json) => {
+      const v = ((json && json.threadProperties) || {}).hidden ?? ((json && json.properties) || {}).hidden;
+      return v === true || String(v) === "true";
+    };
     const hide = async ({ thread, hidden }) => {
       const want = hidden === false ? "false" : "true";
+      // Teams ne propose pas de masquer la conversation avec soi-même (refusée en HTTP 400).
+      if (thread === "48:notes") return notSent("Teams ne masque pas ta conversation avec toi-même");
       const r = await getConv(thread);
       if (!r.ok || !r.json) return notSent(r.error || "conversation introuvable sur le service de chat");
-      const now = () => String(((r.json && r.json.properties) || {}).hidden || "false") === "true";
-      if (now() === (want === "true")) return { ok: true, already: true };
-      const w = await chatsvc.write("hide", thread, null, { hidden: want });
+      if (isHidden(r.json) === (want === "true")) return { ok: true, already: true };
+      const w = await chatsvc.write("hide", thread, null, { hidden: want === "true" });
       if (!w.sent) return notSent(w.error);
       if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `${want === "true" ? "masquage" : "réaffichage"} refusé (HTTP ${w.status})` };
       const ok = await proven(async () => {
         const v = await getConv(thread);
-        return v.ok && String(((v.json && v.json.properties) || {}).hidden || "false") === want;
+        return v.ok && isHidden(v.json) === (want === "true");
       });
       return ok ? { ok: true } : uncertain(`${want === "true" ? "masquage" : "réaffichage"} non confirmé par le service de chat`);
     };
