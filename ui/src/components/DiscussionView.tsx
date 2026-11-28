@@ -379,6 +379,10 @@ function MessageActions({
 }
 
 /** Une discussion : historique lu dans Teams, réponse proposée pré-remplie, envoi à la main. */
+// Propositions calculées d'office à l'ouverture d'une conversation qui t'attend,
+// par conversation et dernier message reçu : rouvrir le fil ne relance pas le cerveau.
+const autoProposals = new Map<string, string>();
+
 export function DiscussionView({
   trame,
   conversation: c,
@@ -578,6 +582,38 @@ export function DiscussionView({
     seen.current = next;
     offer(next);
   }, [draft?.proposal]);
+
+  // Conversation qui t'attend (dernier message d'un autre) sans réponse préparée :
+  // Trame calcule d'office une proposition, montrée en texte fantôme. Elle ne bloque
+  // rien (ni frappe ni envoi) et n'écrase jamais ton texte ; un échec reste silencieux.
+  const [autoProposing, setAutoProposing] = useState(false);
+  const currentThread = useRef(c.threadId);
+  currentThread.current = c.threadId;
+  const lastIncoming = messages?.length ? messages[messages.length - 1] : null;
+  const waitingKey =
+    lastIncoming && !lastIncoming.mine && !lastIncoming.deleted && (lastIncoming.text.trim() || lastIncoming.files?.length || lastIncoming.images?.length)
+      ? `${c.threadId}|${lastIncoming.id ?? `${lastIncoming.at}|${lastIncoming.text}`}`
+      : null;
+  useEffect(() => {
+    if (!waitingKey || draft?.proposal || ghost) return;
+    if (!trame.connected && !trame.demoMode) return;
+    const known = autoProposals.get(waitingKey);
+    if (known !== undefined) {
+      if (known) offer(known);
+      return;
+    }
+    autoProposals.set(waitingKey, "");
+    const thread = c.threadId;
+    setAutoProposing(true);
+    void trame.suggestInThread(thread, null).then((res) => {
+      if (currentThread.current !== thread) return;
+      setAutoProposing(false);
+      if (!res.ok) return void autoProposals.delete(waitingKey);
+      autoProposals.set(waitingKey, res.text);
+      if (res.text) offer(res.text);
+    });
+  }, [waitingKey, trame.connected]);
+  useEffect(() => setAutoProposing(false), [c.threadId]);
 
   const showGhost = !text && !!ghost && !ghostHidden;
   // Tab ou le badge : la proposition devient ton message, curseur à la fin.
@@ -1400,7 +1436,7 @@ export function DiscussionView({
             <Textarea
               ref={composer}
               aria-label={replyTo ? `Réponse au message de ${replyTo.sender}` : `Message à ${c.displayName}`}
-              placeholder={showGhost ? undefined : replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
+              placeholder={showGhost ? undefined : autoProposing && !text ? "Trame prépare une réponse…" : replyTo ? `Répondre à ${replyTo.sender || "ce message"}…` : `Écrire à ${c.displayName}…`}
               aria-describedby={showGhost ? ghostId : undefined}
               value={text}
               onChange={(e) => {
