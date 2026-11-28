@@ -19,18 +19,18 @@
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
+  --muted-foreground: oklch(0.53 0.016 285.938);
   --accent: oklch(0.967 0.001 286.375);
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.5 0.2 258);
-  --success: oklch(0.646 0.17 157);
+  --success: oklch(0.55 0.14 155);
   --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.769 0.17 70);
-  --warning-foreground: oklch(0.21 0.006 285.885);
-  --destructive-foreground: oklch(0.141 0.005 285.823);
+  --warning: oklch(0.555 0.163 49);
+  --warning-foreground: oklch(0.985 0 0);
+  --destructive-foreground: oklch(0.985 0 0);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.55 0.2 258);
@@ -40,9 +40,9 @@
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.55 0.2 258);
   /* Statuts Teams : cinq tons, chacun doublé d'un pictogramme (jamais la couleur seule). */
-  --presence-available: oklch(0.62 0.17 148);
+  --presence-available: oklch(0.6 0.17 148);
   --presence-busy: oklch(0.57 0.21 25);
-  --presence-away: oklch(0.76 0.16 72);
+  --presence-away: oklch(0.66 0.16 62);
   --presence-ooo: oklch(0.55 0.2 318);
   --presence-offline: oklch(0.6 0.012 286);
 }
@@ -70,10 +70,10 @@
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.62 0.19 258);
   --success: oklch(0.696 0.17 162.48);
-  --success-foreground: oklch(0.985 0 0);
+  --success-foreground: oklch(0.141 0.005 285.823);
   --warning: oklch(0.828 0.19 84);
   --warning-foreground: oklch(0.141 0.005 285.823);
-  --destructive-foreground: oklch(0.985 0 0);
+  --destructive-foreground: oklch(0.141 0.005 285.823);
   --sidebar: oklch(0.21 0.006 285.885);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.62 0.19 258);
@@ -92,6 +92,10 @@
 /* Largeurs : étroit < 1280 px (xl), moyen 1280–1600, large ≥ 1600 px (3xl). Voir DESIGN.md. */
 @theme {
   --breakpoint-3xl: 100rem;
+  /* Petites tailles de texte, sous text-xs (12 px) : métadonnées, compteurs, pastilles. */
+  --text-compact: 0.8125rem;
+  --text-2xs: 0.6875rem;
+  --text-3xs: 0.625rem;
 }
 
 @theme inline {

@@ -56,7 +56,7 @@ const APP_ICON: Record<Exclude<App, "github">, React.ComponentType<{ className?:
 /** Pastille d'application : icône et libellé court, comme dans un outil de développement.
  *  Discrète (teinte du texte), lisible sur une bulle comme sur le fond. */
 const CHIP =
-  "inline-flex max-w-full items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 align-[-0.2em] text-[0.8125rem] leading-5 font-medium text-foreground ring-1 ring-foreground/10 ring-inset";
+  "inline-flex max-w-full items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 align-[-0.2em] text-compact leading-5 font-medium text-foreground ring-1 ring-foreground/10 ring-inset";
 
 /** Lien cliquable : ouvert dans le navigateur du système, jamais dans la fenêtre de Trame.
  *  Application reconnue : pastille icône + libellé court ; adresse complète au survol. */

@@ -366,7 +366,7 @@ function Grid({
   return (
     <div ref={scroller} className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
       <div className="sticky top-0 z-20 grid border-b bg-card" style={cols}>
-        <div className="flex items-end justify-end pr-2 pb-2 text-[11px] text-muted-foreground">{timeZone}</div>
+        <div className="flex items-end justify-end pr-2 pb-2 text-2xs text-muted-foreground">{timeZone}</div>
         {days.map((d) => {
           const iso = isoDay(d);
           const isToday = iso === today;
@@ -375,8 +375,8 @@ function Grid({
             <div key={iso} className={cn("flex min-w-0 items-center gap-1.5 border-l px-2 py-2.5 lg:px-3", weekend && "text-muted-foreground")}>
               <span
                 className={cn(
-                  "grid h-7 min-w-7 place-items-center rounded-lg px-1 text-lg font-medium tabular-nums",
-                  isToday && "bg-foreground text-background"
+                  "grid h-7 min-w-7 place-items-center rounded-full px-1 text-lg font-medium tabular-nums",
+                  isToday && "bg-primary font-semibold text-primary-foreground"
                 )}
                 aria-current={isToday ? "date" : undefined}
               >
@@ -392,7 +392,7 @@ function Grid({
 
       {hasAllDay && (
         <div className="sticky top-[3.25rem] z-20 grid border-b bg-card" style={cols}>
-          <div className="flex items-center justify-end pr-2 text-[11px] text-muted-foreground">Sans heure</div>
+          <div className="flex items-center justify-end pr-2 text-2xs text-muted-foreground">Sans heure</div>
           {allDay.map((items, i) => (
             <div key={i} className="flex min-w-0 flex-col gap-1 border-l p-1">
               {items.map((m) => (
@@ -413,13 +413,13 @@ function Grid({
       <div className="relative grid" style={{ ...cols, height: hours.length * HOUR }}>
         <div className="relative">
           {hours.map((h, i) => (
-            <span key={h} className="absolute right-2 -translate-y-1/2 text-[11px] text-muted-foreground tabular-nums" style={{ top: i * HOUR }}>
+            <span key={h} className="absolute right-2 -translate-y-1/2 text-2xs text-muted-foreground tabular-nums" style={{ top: i * HOUR }}>
               {i === 0 ? "" : `${pad(h)}:00`}
             </span>
           ))}
           {nowVisible && (
             <span
-              className="absolute right-1 z-10 -translate-y-1/2 rounded-md bg-destructive px-1 text-[11px] font-medium text-destructive-foreground tabular-nums"
+              className="absolute right-1 z-10 -translate-y-1/2 rounded-md bg-destructive px-1 text-2xs font-medium text-destructive-foreground tabular-nums"
               style={{ top: nowTop }}
             >
               {hhmm(nowMinutes)}
@@ -517,7 +517,7 @@ function EventBlock({
           selected && "z-[2] border-2 shadow-md"
         )}
       >
-        <span className={cn("truncate text-[13px] leading-tight font-medium", TONE[tone].title)}>{m.title}</span>
+        <span className={cn("truncate text-compact leading-tight font-medium", TONE[tone].title)}>{m.title}</span>
         <span className="truncate text-xs leading-tight text-muted-foreground tabular-nums">
           {short ? start : `${start} à ${end}`}
         </span>
@@ -772,7 +772,7 @@ function MiniMonth({
                     onClick={() => onPick(d)}
                     className={cn(
                       "relative mx-auto grid size-7 place-items-center rounded-full tabular-nums outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60",
-                      out && "text-muted-foreground/60",
+                      out && "text-muted-foreground",
                       days.length === 1 && shown.has(iso) && "bg-secondary",
                       iso === today && "bg-primary font-semibold text-primary-foreground hover:bg-primary"
                     )}

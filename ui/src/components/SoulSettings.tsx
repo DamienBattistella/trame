@@ -8,7 +8,7 @@ import {
   Loader2,
   PenLine,
   RotateCcw,
-  Sparkle,
+  GraduationCap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,7 +53,7 @@ const QUALITY: Record<Quality, { label: string; className: string }> = {
 const SOURCE: Record<SoulSource, { label: string; className: string }> = {
   initial: { label: "Départ", className: "bg-muted text-muted-foreground" },
   manuel: { label: "Édité", className: "bg-link/10 text-link" },
-  appris: { label: "Appris", className: "bg-primary/15 text-primary" },
+  appris: { label: "Appris", className: "bg-primary/15 text-link" },
   restauré: { label: "Restauré", className: "bg-warning/15 text-warning" },
   assistant: {
     label: "Assistant",
@@ -278,7 +278,7 @@ function Sections({ sections }: { sections: SoulSection[] }) {
             )}
           >
             <div className="mb-2 flex items-center gap-2">
-              {s.learned && <Sparkle className="size-3.5 text-primary" />}
+              {s.learned && <GraduationCap className="size-3.5 text-link" />}
               <span className="text-sm font-medium">
                 {s.heading || "Introduction"}
               </span>
@@ -409,7 +409,7 @@ function LearningCard({
               {busy === "learn" ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Sparkle className="size-4" />
+                <GraduationCap className="size-4" />
               )}
               {busy === "learn" ? "Apprentissage…" : "Apprendre maintenant"}
             </Button>
@@ -654,7 +654,7 @@ function VersionHistory({
             Restaurer
           </Button>
         </div>
-        <div className="max-h-[calc(100dvh-20rem)] overflow-auto px-4 py-3 font-mono text-[13px] leading-relaxed">
+        <div className="max-h-[calc(100dvh-20rem)] overflow-auto px-4 py-3 font-mono text-compact leading-relaxed">
           {content === null ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : (

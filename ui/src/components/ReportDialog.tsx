@@ -440,7 +440,7 @@ function PublishDialog({ trame, s, onPublished, onClose }: { trame: Trame; s: Re
           <>
             <div className="flex flex-col gap-4 px-5 py-4">
               {plan.blocked && (
-                <div role="alert" className="flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning-foreground">
+                <div role="alert" className="flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
                   <span>{plan.blocked}</span>
                 </div>
@@ -466,8 +466,8 @@ function PublishDialog({ trame, s, onPublished, onClose }: { trame: Trame; s: Re
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {repo && repo === plan.repo && !plan.repoConfident && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning-foreground">
-                        <AlertTriangle className="size-3 text-warning" /> déduit — à confirmer
+                      <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-2xs text-warning">
+                        <AlertTriangle className="size-3 text-warning" /> déduit, à confirmer
                       </span>
                     )}
                   </div>
@@ -479,14 +479,14 @@ function PublishDialog({ trame, s, onPublished, onClose }: { trame: Trame; s: Re
                 <div role="alert" className="flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                   <span className="min-w-0">
-                    Un compte-rendu est déjà présent sur ce dépôt — rien n'est écrasé.
+                    Un compte-rendu est déjà présent sur ce dépôt : rien n'est écrasé.
                     {state?.url && (
                       <button type="button" className="ml-1 underline" onClick={() => void openExternal(state.url!)}>Le voir</button>
                     )}
                   </span>
                 </div>
               ) : state?.prUrl ? (
-                <div className="flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning-foreground">
+                <div className="flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning">
                   <GitPullRequest className="mt-0.5 size-4 shrink-0 text-warning" />
                   <span className="min-w-0">
                     Une pull request ouvre déjà ce compte-rendu (#{state.prNumber}).

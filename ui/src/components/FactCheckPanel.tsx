@@ -6,7 +6,7 @@ import { FactCheck, FactClaim, FactVerdict } from "@/types";
 
 const VERDICT: Record<FactVerdict, { label: string; className: string }> = {
   contredit: { label: "Contredit", className: "bg-destructive/10 text-destructive" },
-  non_verifiable: { label: "Non vérifiable", className: "bg-warning/15 text-warning-foreground dark:text-warning" },
+  non_verifiable: { label: "Non vérifiable", className: "bg-warning/15 text-warning" },
   ok: { label: "Vérifié", className: "bg-success/10 text-success" },
 };
 
@@ -73,7 +73,7 @@ export function FactCheckPanel({
               return (
                 <li key={`${i}-${c.excerpt}`} className={cn("flex flex-col gap-0.5", c.verdict === "ok" && "opacity-70")}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", v.className)}>{v.label}</span>
+                    <span className={cn("rounded-full px-2 py-0.5 text-2xs font-medium", v.className)}>{v.label}</span>
                     <span className="font-medium">« {c.excerpt} »</span>
                     {fixable && (
                       <Button variant="outline" size="sm" className="ml-auto h-6 rounded-full px-2 text-xs" onClick={() => onFix(c)}>
