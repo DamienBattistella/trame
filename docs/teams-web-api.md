@@ -158,6 +158,12 @@ ne sert qu'au **push** (frames texte, pas JSON) : il prévient, le client relit 
   opération en cours ni finie depuis moins de 15 s, liste visible (jamais l'écran de connexion),
   zone de saisie vide, au plus une fois par 30 minutes (repère dans `sessionStorage`).
   `diagnose` → `mt_token` = `{ state: valid | expired | none, expires_in_s }`.
+- **Adresse de secours** : authsvc donne deux adresses du service (`chatService`, régionale, et
+  `chatServiceAfd`, derrière Azure Front Door). Une lecture passe à l'autre sur une panne réseau,
+  un 5xx ou un 429 ; celle qui a répondu reste la première essayée (écritures comprises, toujours
+  en un seul essai). Un 429 ou un 503 avec `Retry-After` met les lectures en pause (au plus
+  2 min, 10 s sans en-tête) : réponse immédiate `stage: "throttled"`, `retry_in_s`, sans appel.
+  `diagnose` → `chatsvc_routing` = `{ bases, preferred, throttled_s }`, repris dans `/api/teams-web`.
 - Côté moteur : `WebBridgeDriver.chat_get(path, query)` ; `chat_conversation_path(thread_id)`
   encode l'id comme le client.
 - **Garde-fous** : liste blanche de chemins (liste, conversation, messages, message) et de
@@ -374,6 +380,25 @@ lire les transcriptions (`OnlineMeetingTranscript.Read.All`), Graph répond 403 
 (« Graph refuse de donner cette transcription… ») ; rien n'est tenté d'autre. L'interface propose
 « Chercher la transcription » pour une réunion de canal même quand le fil ne signale pas de
 transcription.
+
+### 12. Flux d'activité et appels — op `chatactivity`
+
+Teams range son volet « Activité » dans la conversation système `48:notifications` et
+l'historique des appels dans `48:calllogs` (mêmes chemins permis que les fils). La page lit les
+deux en parallèle et rend :
+
+- **activité** : `kind` (`mention`, `reply`, `reaction`, sinon `other`), type Teams
+  (`activityType`), date, auteur (`sourceUserImDisplayName`), conversation (`sourceThreadTopic`),
+  id de conversation (`sourceThreadId`, vérifié) et de message, aperçu sans balises
+  (`messagePreview`). La charge est la propriété `activity`, objet ou JSON en texte.
+- **appels** : sens (`callDirection`, ou l'appelant comparé à l'utilisateur), état (`callState` :
+  `missed`, `accepted`…), type, début, durée connectée, nom de l'autre participant, id de la
+  conversation. Charge : propriété `call-log`.
+- **forme** : noms des champs vus (jamais leurs valeurs), pour ajuster la lecture si Teams change.
+
+Le moteur revérifie chaque champ, déduit le thread_id de Trame (même règle que la liste) et
+expose `GET /api/teams/activity?kind=&calls=&limit=` et l'outil MCP `list_activity`
+(`missed_only` pour les appels manqués). Voie « Activité et appels » de la carte API.
 
 ### Anciennes conversations, à la demande
 

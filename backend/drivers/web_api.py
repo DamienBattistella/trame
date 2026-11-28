@@ -170,14 +170,14 @@ class _ChatState:
 # Actions suivies, dans l'ordre d'affichage. Libellés côté UI (ApiTeamsWebSettings).
 ACTIONS = ("list", "read", "watch", "unread", "presence", "my_status", "search_people",
            "search_messages", "mark_read", "react", "delete", "edit", "set_status", "set_note",
-           "send", "start_chat", "hide", "meetings", "transcript")
+           "send", "start_chat", "hide", "meetings", "transcript", "activity")
 
 
 class WebApiDriver:
     # Actions déjà câblées sur le service de chat (les autres restent sur la page).
     API_ACTIONS = frozenset({"read", "watch", "unread", "mark_read", "react", "delete", "edit", "send",
                              "presence", "my_status", "set_status", "set_note", "search_people", "start_chat",
-                             "search_messages", "hide", "meetings"})
+                             "search_messages", "hide", "meetings", "activity"})
     # Présence des tête-à-tête : relue sur le service au plus toutes les PRESENCE_EVERY secondes.
     PRESENCE_EVERY = 60.0
     # Note de statut sans échéance : « jamais ». Teams écrit minuit le 31/12/9999 en heure locale
@@ -798,6 +798,42 @@ class WebApiDriver:
             r["thread_id"] = tid
         return found
 
+    # --- Flux d'activité et appels de Teams (48:notifications, 48:calllogs) ----------------
+    @property
+    def can_read_activity(self) -> bool:
+        return callable(getattr(self._inner, "activity_api", None))
+
+    def _tid_of(self, cid: Optional[str], name: str = "") -> Optional[str]:
+        """thread_id de Trame d'une conversation Teams (même règle que la liste), ou None."""
+        if not cid:
+            return None
+        st = self._chat
+        tid = next((t for t, c in st.mapped.items() if c == cid), None)
+        if tid is not None or cid == "48:notes":
+            return tid
+        row = st.rows.get(cid) or {}
+        if row.get("kind") == "dm" or cid.endswith("@unq.gbl.spaces"):
+            nm = name or str(row.get("name") or "")
+            return f"name:{nm}" if nm else None
+        return f"title-{cid}"
+
+    def teams_activity(self, limit: int = 50, calls: bool = True) -> dict:
+        """Mentions, réponses et réactions du flux « Activité » de Teams, et derniers appels,
+        chacun avec le thread_id de Trame de sa conversation quand il se déduit. Lève si le
+        service refuse."""
+        try:
+            out = self._inner.activity_api(limit, calls)
+        except Exception as e:
+            self._route("activity", "page", f"service indisponible : {e}")
+            raise
+        self._route("activity", "api")
+        for a in out["activity"]:
+            a["thread_id"] = self._tid_of(a.pop("teams_id", None))
+        for c in out["calls"]:
+            cid = c.pop("teams_id", None)
+            c["thread_id"] = self._tid_of(cid, c.get("with") or "")
+        return out
+
     # --- Réunions terminées : lues sur le service, sans ouvrir les conversations ------------
     MAX_MEETING_CHATS = 12
     # Groupes et tête-à-tête relus en plus pour leurs appels transcrits (« Réunion maintenant »,
@@ -1185,6 +1221,10 @@ class WebApiDriver:
             page = None
         page = page if isinstance(page, dict) else {}
         sign, chat = page.get("sign_selftest"), page.get("chatsvc_selftest")
+        routing = page.get("chatsvc_routing")
+        if isinstance(chat, dict) and isinstance(routing, dict):
+            # Adresse en service (0 régionale, 1 secours) et pause sur 429/503 : jamais de secret.
+            chat = {**chat, "routing": {k: routing[k] for k in ("bases", "preferred", "throttled_s") if k in routing}}
         out = {"signing": sign if isinstance(sign, dict) else None, "chatsvc": chat if isinstance(chat, dict) else None}
         object.__setattr__(self, "_health_cache", (now, out))
         return out

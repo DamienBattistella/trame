@@ -391,6 +391,99 @@ test("chatsvc rouvre la session une fois sur un 401 puis rend la main", async ()
   assert.equal(chatCalls, 2);
 });
 
+const withRetryAfter = (status: number, retryAfter: string | null) => ({
+  ok: false,
+  status,
+  headers: { get: (k: string) => (k.toLowerCase() === "retry-after" ? retryAfter : null) },
+  text: async () => "{}",
+});
+
+test("chatsvc : un 503 à l'adresse régionale passe par l'adresse de secours, qui reste la première ensuite", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_BODY);
+    if (url.startsWith("https://emea.ng.msg.teams.microsoft.com")) return withRetryAfter(503, null);
+    return fakeResponse('{"conversations":[]}');
+  });
+  const before = p.fetchCalls.length;
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, true);
+  const urls = p.fetchCalls.slice(before).map((c) => c.url).filter((u) => !u.includes("/authsvc/"));
+  assert.deepEqual(urls, [
+    "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations",
+    "https://teams.microsoft.com/api/chatsvc/emea/v1/users/ME/conversations",
+  ]);
+  // La lecture suivante commence par l'adresse qui a répondu.
+  const mark = p.fetchCalls.length;
+  await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(p.fetchCalls[mark].url, "https://teams.microsoft.com/api/chatsvc/emea/v1/users/ME/conversations");
+  assert.equal((await p.run("diagnose")).result.chatsvc_routing.preferred, 1);
+});
+
+test("chatsvc : un 429 partout avec Retry-After met les lectures en pause, sans appel réseau", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  p.setResponse((url: string) => (url.includes("/authsvc/") ? fakeResponse(AUTHZ_BODY) : withRetryAfter(429, "30")));
+  const r = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(r.result.ok, false);
+  assert.equal(r.result.status, 429);
+  const before = p.fetchCalls.length;
+  const again = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  assert.equal(again.result.stage, "throttled");
+  assert.ok(again.result.retry_in_s > 20 && again.result.retry_in_s <= 30, String(again.result.retry_in_s));
+  assert.equal(p.fetchCalls.length, before); // rien n'est reparti
+  assert.ok((await p.run("diagnose")).result.chatsvc_routing.throttled_s > 0);
+});
+
+test("chatactivity : mentions, réactions et appels lus dans 48:notifications et 48:calllogs", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const asked: string[] = [];
+  p.setResponse((url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_BODY);
+    asked.push(decodeURIComponent(new URL(url).pathname));
+    if (url.includes("48%3Anotifications"))
+      return fakeResponse(JSON.stringify({ messages: [
+        // Charge en texte JSON, comme Teams l'envoie souvent.
+        { id: "1", originalarrivaltime: "2026-11-20T10:00:00Z", properties: { activity: JSON.stringify({
+          activityType: "mention", activityTimestamp: "2026-11-20T10:00:00Z", sourceUserImDisplayName: "Ana Lima",
+          sourceThreadId: "19:abc@thread.v2", sourceThreadTopic: "Équipe", sourceMessageId: "1795777000000",
+          messagePreview: "<p>@Toi tu peux &amp; regarder ?</p>" }) } },
+        // Charge en objet, plus récente.
+        { id: "2", properties: { activity: { activityType: "reactionInChat", activityTimestamp: "2026-11-21T09:00:00Z",
+          sourceUserImDisplayName: "Marc", sourceThreadId: "javascript:alert(1)", sourceMessageId: "x1" } } },
+        { id: "3", properties: {} }, // sans charge : ignoré
+      ] }));
+    if (url.includes("48%3Acalllogs"))
+      return fakeResponse(JSON.stringify({ messages: [
+        { id: "9", properties: { "call-log": JSON.stringify({ callDirection: "incoming", callState: "missed", callType: "twoParty",
+          startTime: "2026-11-21T08:00:00Z", originatorParticipant: { displayName: "Ana Lima" }, threadId: "19:x_y@unq.gbl.spaces" }) } },
+        { id: "8", properties: { "call-log": { callDirection: "outgoing", callState: "accepted", startTime: "2026-11-19T08:00:00Z",
+          connectTime: "2026-11-19T08:00:05Z", endTime: "2026-11-19T08:10:05Z", targetParticipant: { displayName: "Marc" } } } },
+      ] }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatactivity", { limit: 20 })).result;
+  assert.equal(r.ok, true);
+  assert.deepEqual(asked.sort(), ["/v1/users/ME/conversations/48:calllogs/messages", "/v1/users/ME/conversations/48:notifications/messages"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.activity.map((a: any) => a.kind))), ["reaction", "mention"]); // plus récent d’abord
+  const [reaction, mention] = r.activity;
+  assert.equal(mention.from, "Ana Lima");
+  assert.equal(mention.thread, "19:abc@thread.v2");
+  assert.equal(mention.message, "1795777000000");
+  assert.equal(mention.preview, "@Toi tu peux & regarder ?");
+  assert.equal(reaction.thread, ""); // id inattendu : écarté
+  assert.equal(reaction.message, "");
+  assert.equal(r.calls[0].state, "missed");
+  assert.equal(r.calls[0].with, "Ana Lima");
+  assert.equal(r.calls[1].direction, "outgoing");
+  assert.equal(r.calls[1].duration_s, 600);
+  // La forme ne donne que des noms de champs.
+  assert.ok(r.shape.activity_keys.includes("activityType"));
+  assert.ok(!JSON.stringify(r.shape).includes("Ana"));
+});
+
 test("chatsvc sans jeton Teams observé : étape « bearer », aucun appel réseau", async () => {
   const p = teamsPage();
   const before = p.fetchCalls.length;

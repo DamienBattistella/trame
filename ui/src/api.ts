@@ -822,7 +822,7 @@ export type TeamsApiStatus = { driver: string; routes: Record<string, ApiRoute>;
 const DEMO_TEAMS_API: TeamsApiStatus = {
   driver: "WebApiDriver",
   routes: Object.fromEntries(
-    ["list", "read", "watch", "unread", "presence", "my_status", "search_people", "search_messages", "meetings", "transcript",
+    ["list", "read", "watch", "unread", "presence", "my_status", "search_people", "search_messages", "meetings", "transcript", "activity",
       "send", "start_chat", "hide", "react", "mark_read", "delete", "edit", "set_status", "set_note"].map((k) => [
       k,
       k === "read"

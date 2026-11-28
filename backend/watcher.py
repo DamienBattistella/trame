@@ -2347,6 +2347,21 @@ class Watcher:
                 "teams_search": bool(self.driver.can_search_people), "teams_error": teams_error,
                 "unsupported": None if self.driver.can_start_chat else self.driver.start_chat_unsupported}
 
+    def teams_activity(self, limit: int = 50, calls: bool = True, kind: Optional[str] = None) -> dict:
+        """Flux « Activité » de Teams (mentions, réponses, réactions à tes messages) et derniers
+        appels, lus sur le service de chat sans ouvrir le volet Activité. kind filtre le flux
+        (mention, reply, reaction, other)."""
+        read = getattr(self.driver, "teams_activity", None)
+        if read is None or not getattr(self.driver, "can_read_activity", False):
+            return {"supported": False, "activity": [], "calls": [], "errors": {}}
+        try:
+            out = read(limit, calls)
+        except Exception as e:
+            raise ActionError(503, f"Activité Teams indisponible : {e}")
+        items = [a for a in out["activity"] if not kind or a.get("kind") == kind]
+        return {"supported": True, "activity": items, "calls": out["calls"], "errors": out.get("errors") or {},
+                "shape": out.get("shape") or {}}
+
     def older_conversations(self, query: str = "", offset: int = 0, limit: int = 50) -> dict:
         """« Anciennes conversations » : celles que Teams connaît et que la liste ne montre pas, de
         la plus récente à la plus ancienne, filtrées par nom. Rien n'est ouvert dans Teams."""

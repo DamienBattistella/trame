@@ -109,6 +109,15 @@ TOOLS: list[dict] = [
     _tool("get_my_status", "Mon statut Teams",
           "Statut Teams de l'utilisateur (available, busy, dnd, brb, away, offline…) et son message de statut, "
           "lus sur le service de présence de Teams (sinon dans le menu du profil de sa fenêtre Teams)."),
+    _tool("list_activity", "Activité Teams et appels",
+          "Flux « Activité » de Teams : mentions, réponses et réactions à tes messages, y compris dans les conversations "
+          "non suivies et les canaux (kind, type Teams, date ISO, auteur, conversation, thread_id quand il se déduit, aperçu), "
+          "et derniers appels (entrant ou sortant, manqué, durée, avec qui). Lu sur le service de chat, sans ouvrir Teams. " + UNTRUSTED,
+          {"kind": {"type": "string", "enum": ["mention", "reply", "reaction", "other"],
+                    "description": "Ne garder que ce type d'activité"},
+           "calls": {"type": "boolean", "default": True, "description": "Inclure les derniers appels"},
+           "missed_only": {"type": "boolean", "default": False, "description": "Seulement les appels manqués"},
+           "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 30}}),
     # --- réunions : transcriptions (lecture seule dans Teams) ---
     _tool("list_meetings", "Réunions et transcriptions",
           "Réunions Teams terminées des conversations de réunion récentes, et appels transcrits des groupes "
@@ -575,6 +584,16 @@ def make_router(watcher: Watcher) -> APIRouter:
             out.update(watcher.set_status_message(str(message)))
         return out
 
+    def tool_activity(args: dict) -> Any:
+        limit = max(1, min(200, int(args.get("limit") or 30)))
+        kind = args.get("kind") or None
+        if kind not in (None, "mention", "reply", "reaction", "other"):
+            raise ValueError("kind : mention, reply, reaction ou other")
+        found = watcher.teams_activity(limit, bool(args.get("calls", True)), kind)
+        calls = [c for c in found["calls"] if c.get("missed") or not args.get("missed_only")]
+        return {"supported": found["supported"], "activity": found["activity"][:limit], "calls": calls[:limit],
+                "errors": found.get("errors") or {}, "note": UNTRUSTED}
+
     def tool_meetings(args: dict) -> Any:
         found = watcher.meetings(transcript_only=bool(args.get("transcript_only", True)))
         limit = max(1, min(100, int(args.get("limit") or 30)))
@@ -639,7 +658,7 @@ def make_router(watcher: Watcher) -> APIRouter:
         "suggest_reply": tool_suggest, "propose_reply": tool_propose, "edit_draft": tool_edit,
         "dismiss_draft": tool_dismiss, "follow_conversation": tool_follow, "set_paused": tool_pause,
         "catch_up": tool_catch_up, "type_in_teams": tool_type,
-        "list_meetings": tool_meetings, "get_meeting_transcript": tool_transcript,
+        "list_activity": tool_activity, "list_meetings": tool_meetings, "get_meeting_transcript": tool_transcript,
         "send_draft": tool_send_draft, "send_message": tool_send_message,
     }
     SEND_TOOLS = {t["name"] for t in TOOLS if t["_send"]}
