@@ -287,8 +287,11 @@ y est refusé).
   Worker, avec un jeton que la page n'expose pas. « Chercher aussi dans Teams » se fait donc en
   deux étapes : d'abord Trame cherche lui-même sur le service de chat (op `chatsearch`) dans les
   200 derniers messages des 40 conversations les plus récentes, chaque mot de la requête présent
-  (casse et accents ignorés), au plus 8 lectures par seconde, rien d'ouvert dans la page (donc
-  aussi pendant un partage d'écran) ; chaque résultat porte l'id de sa conversation. Puis, à la
+  (casse et accents ignorés), au plus 8 lectures par seconde, 4 en parallèle (une à une, 40
+  conversations prenaient 15 s), rien d'ouvert dans la page (donc aussi pendant un partage
+  d'écran) ; chaque résultat porte l'id de sa conversation. Les messages lus restent en mémoire de
+  la page tant que le dernier message de la conversation ne change pas (au plus 2 min) : une
+  recherche affinée juste après ne relit que les conversations qui ont bougé. Puis, à la
   demande, « Chercher dans tout l'historique de Teams » lance la recherche de Teams par la page.
   Service indisponible : la recherche de Teams directement.
 
@@ -311,7 +314,13 @@ La carte « La réunion est terminée » de la page porte l'**id du message de f
 vérifié sur deux réunions) : la liste se lit sur le service, sans ouvrir les conversations, et la
 lecture des transcriptions par la page reste valable. Créneau : les heures prévues (`starttime`,
 `endtime`), sinon les heures réelles ; transcrite si un message de transcription tombe entre le
-début et 10 min après la fin. Service indisponible : la page, comme avant.
+début et 10 min après la fin. Les conversations sont lues 4 en parallèle, au plus 8 par
+seconde ; l'agenda est demandé une fois par jour concerné. Service indisponible : la page, comme avant.
+
+**Transcriptions : restent sur la page.** Relevé en direct le 28/11/2026 : sur le service de chat,
+le message `RichText/Media_CallTranscript` est vide (ni balise, ni contenu ; seule propriété
+`s2spartnername`). Le texte vit dans le récapitulatif (Stream/SharePoint), atteint par la page
+avec des jetons qu'elle n'expose pas. La lecture des transcriptions par la page reste donc la voie.
 
 Toutes les sortes de réunion : en plus des conversations de réunion planifiée (`19:meeting_…`, les 12
 plus récentes), les groupes nommés et tête-à-tête actifs depuis 30 jours (les 12 plus récents) sont
@@ -330,5 +339,6 @@ la page ne sait ouvrir que les conversations de la liste de Chat.
 4. ~~Écritures simples~~ (#128), ~~réponse citée~~ (#138), ~~mentions~~.
 5. ~~Présence, mon statut, note, recherche de personnes~~ (#135), ~~changement de statut~~ ;
    ~~nouvelle conversation~~ (#142, #144), ~~recherche dans les fils récents~~ (#146), ~~liste
-   complétée par le service~~, ~~masquer dans Teams~~ ; restent les réunions et les transcriptions.
+   complétée par le service~~, ~~masquer dans Teams~~, ~~réunions~~ (#155) ; les transcriptions
+   restent sur la page (§ 9).
 6. ~~Contrôle des repères limité aux actions restées sur la page~~ (#130).
