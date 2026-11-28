@@ -90,14 +90,14 @@ export function AppRail({
                           exit={{ scale: 0 }}
                           transition={spring}
                           aria-hidden
-                          className="absolute -top-1.5 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold tabular-nums text-primary-foreground ring-2 ring-sidebar"
+                          className="absolute -top-1.5 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-3xs font-semibold tabular-nums text-primary-foreground ring-2 ring-sidebar"
                         >
                           {count > 99 ? "99+" : count}
                         </motion.span>
                       )}
                     </AnimatePresence>
                   </span>
-                  <span aria-hidden className={cn("relative hidden text-[11px] leading-none lg:block", active && "font-medium")}>
+                  <span aria-hidden className={cn("relative hidden text-2xs leading-none lg:block", active && "font-medium")}>
                     {s.label}
                   </span>
                 </button>
@@ -137,7 +137,7 @@ export function AppRail({
               </motion.span>
             </AnimatePresence>
             {/* Un état, pas une commande de lecture : dès qu'il y a la place, il s'écrit. */}
-            <span aria-hidden className={cn("hidden text-[11px] leading-none lg:block", paused && "font-medium")}>
+            <span aria-hidden className={cn("hidden text-2xs leading-none lg:block", paused && "font-medium")}>
               {paused ? "En pause" : "Actif"}
             </span>
           </button>

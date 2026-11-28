@@ -39,7 +39,7 @@ const EFFORT_HINT: Record<Effort, string> = {
 function Meter({ label, value }: { label: string; value: number }) {
   return (
     <span className="flex items-center gap-1.5" aria-label={`${label} ${value} sur 4`}>
-      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <span className="text-2xs text-muted-foreground">{label}</span>
       <span className="flex gap-0.5" aria-hidden>
         {[1, 2, 3, 4].map((i) => (
           <span key={i} className={cn("h-1.5 w-3 rounded-full", i <= value ? "bg-primary" : "bg-muted-foreground/20")} />
@@ -79,9 +79,9 @@ function EffortRow({ value, onChange, withMax }: { value: Effort; onChange: (v: 
         <span className="text-xs text-muted-foreground">{EFFORT_HINT[value]}</span>
       </div>
       <Segment fill label="Effort" value={value} options={withMax ? EFFORTS : EFFORTS.filter((e) => e.value !== "max")} onChange={onChange} />
-      <div className="flex justify-between px-1 text-[11px] text-muted-foreground">
-        <span>← Plus rapide</span>
-        <span>Plus réfléchi →</span>
+      <div className="flex justify-between px-1 text-2xs text-muted-foreground">
+        <span>Plus rapide</span>
+        <span>Plus réfléchi</span>
       </div>
     </div>
   );
@@ -150,7 +150,7 @@ export function ModelPicker({
               >
                 <span className="flex items-center gap-2">
                   <span className="font-medium">{m.name}</span>
-                  {m.badge && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{m.badge}</span>}
+                  {m.badge && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-3xs font-medium text-link">{m.badge}</span>}
                   <span className="ml-auto">
                     <SelectCircle checked={on} />
                   </span>

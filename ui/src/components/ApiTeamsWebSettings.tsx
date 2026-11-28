@@ -102,7 +102,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
         : sign.error
           ? `Signature indisponible : ${sign.error}`
           : `Signature refusée (HTTP ${sign.status ?? "?"}) : repli sur la page`;
-  const dot = !api || sign == null ? "bg-muted-foreground/40" : sign.ok ? "bg-success" : "bg-amber-500";
+  const dot = !api || sign == null ? "bg-muted-foreground/40" : sign.ok ? "bg-success" : "bg-warning";
   // Session du service de chat (là où Teams lit et écrit les messages), ouverte dans la page.
   const chat = api?.chatsvc ?? null;
   const chatLine = !api || chat == null
@@ -112,7 +112,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
       : chat.stage === "bearer"
         ? "Service de chat : en attente d'un jeton Teams"
         : `Service de chat indisponible${chat.status ? ` (HTTP ${chat.status})` : ""} : repli sur la page`;
-  const chatDot = chat?.ok ? "bg-success" : "bg-amber-500";
+  const chatDot = chat?.ok ? "bg-success" : "bg-warning";
 
   const routes = api?.routes ?? {};
   const groups = GROUPS.map((g) => ({
@@ -154,7 +154,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
         <div className="flex flex-col gap-3 border-t px-4 py-3">
           {groups.map((g) => (
             <div key={g.label} className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{g.label}</span>
+              <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">{g.label}</span>
               <div className="flex flex-wrap gap-1.5">
                 {g.items.map((i) => (
                   <RouteChip key={i.key} label={i.label} route={i.route} />
@@ -162,7 +162,7 @@ export function ApiTeamsWebSettings({ trame }: { trame: Trame }) {
               </div>
             </div>
           ))}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-success" aria-hidden /> API signée dans la page
             </span>

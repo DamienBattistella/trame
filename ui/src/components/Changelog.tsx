@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Gauge, Sparkles, Wrench } from "lucide-react";
+import { Gauge, PackagePlus, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,7 @@ const RELEASES = changelog as Release[];
 const SEEN_KEY = "trame.seenVersion";
 
 const KINDS = [
-  { key: "feat", label: "Nouveautés", icon: Sparkles, tone: "text-primary" },
+  { key: "feat", label: "Nouveautés", icon: PackagePlus, tone: "text-link" },
   { key: "fix", label: "Corrections", icon: Wrench, tone: "text-success" },
   { key: "perf", label: "Performances", icon: Gauge, tone: "text-warning" },
 ] as const;
@@ -174,7 +174,7 @@ export function ChangelogRow() {
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
       <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary">
-        <Sparkles className="size-4" />
+        <PackagePlus className="size-4" />
       </span>
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-sm font-medium">Nouveautés</span>

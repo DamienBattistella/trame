@@ -70,7 +70,7 @@ export function UpdateLed({ side }: { side?: "right" | "bottom" } = {}) {
                   variant="ghost"
                   size="icon"
                   className="relative size-10 rounded-xl"
-                  aria-label={installing ? `Installation de Trame ${update.version} en cours` : `Mise à jour ${update.version} disponible — installer`}
+                  aria-label={installing ? `Installation de Trame ${update.version} en cours` : `Mise à jour ${update.version} disponible : installer`}
                   aria-busy={installing || undefined}
                   onClick={() => setOpen(true)}
                 >
@@ -83,7 +83,7 @@ export function UpdateLed({ side }: { side?: "right" | "bottom" } = {}) {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side={side}>
-                {installing ? `Installation de Trame ${update.version}…` : `Mise à jour ${update.version} disponible — installer`}
+                {installing ? `Installation de Trame ${update.version}…` : `Mise à jour ${update.version} disponible : installer`}
               </TooltipContent>
             </Tooltip>
           </motion.div>

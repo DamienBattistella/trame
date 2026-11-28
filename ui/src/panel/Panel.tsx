@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, Fingerprint, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Sparkle, Trash2, Users, X } from "lucide-react";
+import { Brain, HeartPulse, AlertTriangle, BellRing, BookOpenText, Check, Fingerprint, GitBranch, History, Loader2, MoreHorizontal, RotateCcw, Pencil, Plus, Send, Settings2, ShieldCheck, MessagesSquare, Activity, Plug, Puzzle, SlidersHorizontal, Trash2, Users, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { GithubLogo } from "@/brands";
@@ -387,7 +387,7 @@ function SettingsView({ trame, onRestartSetup, onBrief }: { trame: Trame; onRest
     {
       id: "brain",
       label: "Cerveau",
-      icon: Sparkle,
+      icon: Brain,
       desc: "Qui rédige tes réponses, et son état de connexion.",
       state: save.brain,
       body: (

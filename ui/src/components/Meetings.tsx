@@ -602,7 +602,7 @@ function MeetingRow({ meeting: m, relative, fetch, saved, repeats, filtered, bat
                   type="button"
                   onClick={onSeries}
                   aria-label={`Réunion récurrente : afficher ses ${repeats} occurrences`}
-                  className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-2xs font-medium text-muted-foreground tabular-nums hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
                   <Repeat className="size-3" /> {repeats}
                 </button>
@@ -754,7 +754,7 @@ function MeetingDetail({ meeting: m, fetch, saved, repeats, filtered, batching, 
               <ul className="flex flex-col gap-1.5" aria-label="Intervenants">
                 {got.speakers.slice(0, 8).map((s) => (
                   <li key={s} className="flex min-w-0 items-center gap-2 text-sm">
-                    <InitialsAvatar name={s} className="size-6 text-[10px]" />
+                    <InitialsAvatar name={s} className="size-6 text-3xs" />
                     <span className="truncate">{s}</span>
                   </li>
                 ))}
@@ -830,8 +830,8 @@ function PublishedBadge({ state }: { state?: GithubReportState }) {
           }}
           aria-label={`${label} sur ${state.repo}`}
           className={cn(
-            "pointer-events-auto relative z-[1] inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
-            merged ? "bg-success/10 text-success hover:bg-success/20" : "bg-warning/10 text-warning-foreground hover:bg-warning/20"
+            "pointer-events-auto relative z-[1] inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-2xs font-medium",
+            merged ? "bg-success/10 text-success hover:bg-success/20" : "bg-warning/10 text-warning hover:bg-warning/20"
           )}
         >
           <GitPullRequest className="size-3" /> {merged ? "Publié" : "PR"}

@@ -125,7 +125,7 @@ export function SkillsSettings({ trame }: { trame: Trame }) {
               <div key={`${i.source}/${i.folder}`} className="flex items-start gap-2 px-4 py-2.5 text-sm">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
-                  <span className="font-mono">{i.folder}</span> <span className="text-muted-foreground">· {i.source} — {i.reason}</span>
+                  <span className="font-mono">{i.folder}</span> <span className="text-muted-foreground">· {i.source} : {i.reason}</span>
                 </span>
               </div>
             ))}
@@ -159,7 +159,7 @@ function SkillRow({ skill, busy, onToggle }: { skill: SkillInfo; busy: boolean; 
         {skill.hasScripts && (
           <p
             data-testid="skill-scripts"
-            className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400"
+            className="flex items-center gap-1.5 text-xs text-warning"
             title={skill.scripts.join("\n")}
           >
             <FileCode2 className="size-3.5 shrink-0" />
