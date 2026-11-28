@@ -1580,6 +1580,9 @@ export function useTrame() {
             { key: "like", emoji: "👍", count: 2, mine: false },
             { key: "1f44f_clappinghands", emoji: "👏", count: 1, mine: false },
             { key: "sad", emoji: "😢", count: 1, mine: false },
+            // Émoticônes Teams sans équivalent Unicode : l'interface montre l'image de Teams.
+            { key: "launch", emoji: "", count: 1, mine: false },
+            { key: "faceinclouds", emoji: "", count: 1, mine: false },
           ], files: [{ name: "Recette-OBX.pdf", url: "" }, { name: "demo-parcours.mp4", url: "https://example-my.sharepoint.com/:v:/g/personal/demo/IQDemo", kind: "video" }], images: [{ data: null, width: 0, height: 0 }] },
       ];
       demoArchive.add(threadId, messages);

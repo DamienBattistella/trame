@@ -251,6 +251,11 @@ export const REACTIONS: { key: Reaction; emoji: string; label: string }[] = [
 export const reactionGlyph = (key: Reaction, emoji?: string) =>
   emoji || REACTIONS.find((r) => r.key === key)?.emoji || `:${key}:`;
 
+/** L'image que Teams sert pour une émoticône sans équivalent Unicode (« launch », « faceinclouds »…) ;
+ *  une clé inconnue du CDN y répond 404, l'interface retombe alors sur reactionGlyph. */
+export const teamsEmoticonUrl = (key: Reaction) =>
+  `https://statics.teams.cdn.office.net/evergreen-assets/personal-expressions/v2/assets/emoticons/${encodeURIComponent(key)}/default/30_f.png`;
+
 export interface ThreadMessage {
   /** Identifiant du message dans Teams, quand le pilote le connaît. */
   id?: string | null;
