@@ -461,12 +461,17 @@ test("chatactivity : mentions, réactions et appels lus dans 48:notifications et
           startTime: "2026-11-21T08:00:00Z", originatorParticipant: { displayName: "Ana Lima" }, threadId: "19:x_y@unq.gbl.spaces" }) } },
         { id: "8", properties: { "call-log": { callDirection: "outgoing", callState: "accepted", startTime: "2026-11-19T08:00:00Z",
           connectTime: "2026-11-19T08:00:05Z", endTime: "2026-11-19T08:10:05Z", targetParticipant: { displayName: "Marc" } } } },
+        // Sans nom dans la charge : demandé par l'identifiant de l'appelant.
+        { id: "7", properties: { "call-log": { callDirection: "incoming", callState: "accepted", startTime: "2026-11-18T08:00:00Z",
+          originator: "8:orgid:00000000-0000-0000-0000-000000000007" } } },
       ] }));
+    if (url.includes("fetchShortProfile"))
+      return fakeResponse(JSON.stringify({ value: [{ mri: "8:orgid:00000000-0000-0000-0000-000000000007", displayName: "Léa Roux" }] }));
     return fakeResponse("{}", { status: 404 });
   });
   const r = (await p.run("chatactivity", { limit: 20 })).result;
   assert.equal(r.ok, true);
-  assert.deepEqual(asked.sort(), ["/v1/users/ME/conversations/48:calllogs/messages", "/v1/users/ME/conversations/48:notifications/messages"]);
+  assert.deepEqual(asked.filter((u) => u.includes("/conversations/")).sort(), ["/v1/users/ME/conversations/48:calllogs/messages", "/v1/users/ME/conversations/48:notifications/messages"]);
   assert.deepEqual(JSON.parse(JSON.stringify(r.activity.map((a: any) => a.kind))), ["reaction", "mention"]); // plus récent d’abord
   const [reaction, mention] = r.activity;
   assert.equal(mention.from, "Ana Lima");
@@ -479,6 +484,8 @@ test("chatactivity : mentions, réactions et appels lus dans 48:notifications et
   assert.equal(r.calls[0].with, "Ana Lima");
   assert.equal(r.calls[1].direction, "outgoing");
   assert.equal(r.calls[1].duration_s, 600);
+  assert.equal(r.calls[2].with, "Léa Roux");
+  assert.equal(r.calls[2].other, undefined); // l'identifiant ne sort pas
   // La forme ne donne que des noms de champs.
   assert.ok(r.shape.activity_keys.includes("activityType"));
   assert.ok(!JSON.stringify(r.shape).includes("Ana"));

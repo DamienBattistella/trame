@@ -3148,7 +3148,9 @@
       const connect = ms(c.connectTime);
       const end = ms(c.endTime);
       const thread = String(c.threadId || "");
+      const otherMri = String((outgoing ? c.target : c.originator) || (other && other.id) || "");
       return {
+        other: /^8:[A-Za-z0-9:._-]{3,120}$/.test(otherMri) ? otherMri : "",
         direction: outgoing ? "outgoing" : "incoming",
         state: String(c.callState || "").toLowerCase().slice(0, 30),
         type: String(c.callType || "").slice(0, 30),
@@ -3167,6 +3169,14 @@
       const callItems = log && log.ok ? log.messages.map((m) => callOf(m, me)).filter(Boolean) : [];
       items.sort((a, b) => b.ts - a.ts);
       callItems.sort((a, b) => b.ts - a.ts);
+      // Teams ne met souvent pas le nom du correspondant dans la charge (vu en direct : 13 sur
+      // 44) : il est demandé comme pour les tête-à-tête, par son identifiant.
+      const unnamed = callItems.filter((c) => !c.with && c.other).map((c) => c.other);
+      const names = unnamed.length ? await chatsvc.people(unnamed) : {};
+      for (const c of callItems) {
+        if (!c.with && c.other) c.with = text(names[c.other], 200);
+        delete c.other;
+      }
       // Forme des charges (noms de champs, jamais leurs valeurs) : de quoi ajuster la lecture.
       const firstA = feed.ok ? feed.messages.map((m) => obj((m.properties || {}).activity)).find(Boolean) : null;
       const firstC = log && log.ok ? log.messages.map((m) => obj((m.properties || {})["call-log"])).find(Boolean) : null;

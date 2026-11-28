@@ -827,10 +827,22 @@ class WebApiDriver:
             self._route("activity", "page", f"service indisponible : {e}")
             raise
         self._route("activity", "api")
+        rows = self._chat.rows
+
+        def name_of(cid: Optional[str]) -> str:
+            # Nom de la conversation tel que la liste le connaît (sujet du groupe, nom de l'autre).
+            row = rows.get(cid or "") or {}
+            return str((row.get("name") if row.get("kind") == "dm" else row.get("topic")) or "").strip()
+
         for a in out["activity"]:
-            a["thread_id"] = self._tid_of(a.pop("teams_id", None))
+            cid = a.pop("teams_id", None)
+            if not a.get("conversation"):
+                a["conversation"] = name_of(cid)
+            a["thread_id"] = self._tid_of(cid)
         for c in out["calls"]:
             cid = c.pop("teams_id", None)
+            if not c.get("with") and (rows.get(cid or "") or {}).get("kind") == "dm":
+                c["with"] = name_of(cid)
             c["thread_id"] = self._tid_of(cid, c.get("with") or "")
         return out
 
