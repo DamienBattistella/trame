@@ -321,3 +321,16 @@ def test_reaction_keys_seen_live_become_emoji():
     assert reaction_emoji("clap-tone3") == "👏🏽"
     assert reaction_emoji("victory-tone2") == "✌🏼"
     assert reaction_emoji("heart") == "❤️"
+
+
+def test_no_reaction_on_a_deleted_message(make_client):
+    client, watcher, driver = make_client()
+    client.get(f"{DM_URL}/messages")
+    with watcher._lock:
+        for m in watcher._thread_cache[DM][1]:
+            if m["id"] == "m2":
+                m["deleted"] = True
+    for remove in (False, True):
+        r = client.post(f"{DM_URL}/react", json={"message": TARGET, "reaction": "like", "remove": remove})
+        assert r.status_code == 409 and "supprimé" in r.json()["error"]
+    assert driver.reactions == {}

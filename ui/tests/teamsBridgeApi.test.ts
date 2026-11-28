@@ -1316,6 +1316,79 @@ test("chatsearch : chaque mot présent (casse et accents ignorés), fils récent
   assert.equal(short.ok, false);
 });
 
+test("chatsearch : lectures en parallèle (4 au plus), cadencées à 8 par seconde, cache tant que rien ne bouge", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const ids = Array.from({ length: 8 }, (_, i) => `19:c${i}@thread.v2`);
+  const last: Record<string, string> = Object.fromEntries(ids.map((id, i) => [id, String(1795777000000 + i)]));
+  let inFlight = 0;
+  let peak = 0;
+  const starts: number[] = [];
+  const reads: string[] = [];
+  p.setResponse(async (url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    const hit = ids.find((id) => url.includes(`/conversations/${encodeURIComponent(id)}/messages`));
+    if (hit) {
+      reads.push(hit);
+      starts.push(Date.now());
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 300)); // latence réseau
+      inFlight--;
+      return fakeResponse(JSON.stringify({ messages: [
+        { id: last[hit], messagetype: "RichText/Html", imdisplayname: "Ana Martin", from: "https://x/v1/users/ME/contacts/8:orgid:ana", originalarrivaltime: new Date(Number(last[hit])).toISOString(), content: `<p>bilan ${hit}</p>`, properties: {} },
+      ] }));
+    }
+    if (url.includes("/v1/users/ME/conversations"))
+      return fakeResponse(JSON.stringify({ conversations: ids.map((id) => ({ id, threadProperties: { topic: id }, lastMessage: { id: last[id], originalarrivaltime: new Date(Number(last[id])).toISOString() } })) }));
+    return fakeResponse("{}", { status: 404 });
+  });
+  const t0 = Date.now();
+  const r = (await p.run("chatsearch", { query: "bilan" })).result;
+  const took = Date.now() - t0;
+  assert.equal(r.ok, true);
+  assert.equal(r.results.length, 8);
+  assert.equal(reads.length, 8);
+  assert.ok(peak > 1 && peak <= 4, `en parallèle : ${peak}`);
+  // Une par une, 8 lectures de 300 ms prenaient plus de 2,4 s.
+  assert.ok(took < 1800, `durée ${took} ms`);
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+  assert.ok(gaps.every((g) => g >= 110), `départs trop rapprochés : ${gaps}`);
+  // Même recherche, rien n'a bougé : aucune relecture des messages.
+  reads.length = 0;
+  const again = (await p.run("chatsearch", { query: "bilan c3" })).result;
+  assert.equal(reads.length, 0);
+  assert.equal(again.results.length, 1);
+  // Un nouveau message dans une conversation : seule celle-là est relue.
+  last[ids[5]] = "1795777009999";
+  await p.run("chatsearch", { query: "bilan" });
+  assert.deepEqual(reads, [ids[5]]);
+});
+
+test("chatmeetings : conversations lues en parallèle, résultats dans l'ordre demandé", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const ids = Array.from({ length: 6 }, (_, i) => `19:meeting_m${i}@thread.v2`);
+  let inFlight = 0;
+  let peak = 0;
+  p.setResponse(async (url: string) => {
+    if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
+    const i = ids.findIndex((id) => url.includes(`/conversations/${encodeURIComponent(id)}/messages`));
+    if (i >= 0) {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 50 * (6 - i))); // les premières répondent le plus tard
+      inFlight--;
+      return fakeResponse(JSON.stringify({ messages: [] }));
+    }
+    return fakeResponse("{}", { status: 404 });
+  });
+  const r = (await p.run("chatmeetings", { threads: ids })).result;
+  assert.equal(r.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.chats.map((c: any) => c.thread))), ids);
+  assert.ok(peak > 1 && peak <= 4, `en parallèle : ${peak}`);
+});
+
 test("chatgesture hide : propriété « hidden » de la conversation, prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);

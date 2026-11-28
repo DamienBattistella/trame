@@ -1844,6 +1844,11 @@ class Watcher:
         if not REACTION_KEY.match(reaction or ""):
             raise ActionError(422, "Réaction inconnue.")
         self._require("react")
+        # Un message supprimé n'a plus de réactions : refusé ici, sans rien demander à Teams
+        # (qui répond 403 à l'ajout, et accepte sans effet un retrait).
+        seen = self._seen_message(thread_id, target)
+        if seen is not None and seen.get("deleted"):
+            raise ActionError(409, "Ce message est supprimé : plus de réaction possible.")
         self._typing_allowed()
         emoji = reaction_emoji(reaction) or f"« {reaction} »"
         none = "Aucune réaction retirée" if remove else "Aucune réaction posée"
