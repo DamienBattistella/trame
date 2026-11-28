@@ -29,7 +29,7 @@ import { layoutThread } from "@/lib/threadLayout";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
-import { AttachmentLimits, DraftItem, FactCheck, FactClaim, LinkCard, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ReactionCount, ThreadMessage, WatchEntity, reactionGlyph } from "@/types";
+import { AttachmentLimits, DraftItem, FactCheck, FactClaim, LinkCard, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ReactionCount, ThreadMessage, WatchEntity, reactionGlyph, teamsEmoticonUrl } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsShort, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -239,6 +239,15 @@ function CopyButton({ text, separated }: { text: string; separated: boolean }) {
 }
 
 /** « Ajouter une réaction », juste à côté des réactions déjà posées (comme Teams). */
+/** Une réaction : son emoji ; sans équivalent Unicode, l'image de l'émoticône servie par Teams ;
+ *  à défaut (clé propre à l'organisation, CDN injoignable), sa clé. */
+function ReactionIcon({ reaction, emoji }: { reaction: Reaction; emoji?: string }) {
+  const [broken, setBroken] = useState(false);
+  const glyph = reactionGlyph(reaction, emoji);
+  if (glyph !== `:${reaction}:` || broken) return <span className="text-lg leading-none">{glyph}</span>;
+  return <img src={teamsEmoticonUrl(reaction)} alt={glyph} draggable={false} className="size-5" onError={() => setBroken(true)} />;
+}
+
 function AddReaction({ mine, disabled, onReact }: { mine: Reaction[]; disabled: boolean; onReact: (r: Reaction) => void }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1201,7 +1210,7 @@ export function DiscussionView({
                               t.mine ? "border-primary/60" : "border-border"
                             )}
                           >
-                            {pending === r ? <Loader2 className="inline size-4 animate-spin" /> : <span className="text-lg leading-none">{reactionGlyph(r, t.emoji)}</span>}
+                            {pending === r ? <Loader2 className="inline size-4 animate-spin" /> : <ReactionIcon reaction={r} emoji={t.emoji} />}
                             {t.count > 1 && <span className="tabular-nums text-muted-foreground">{t.count}</span>}
                           </motion.button>
                         );
