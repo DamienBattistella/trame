@@ -297,6 +297,8 @@ def test_reaction_keys_become_emoji():
     assert reaction_emoji("1f44f_clappinghands") == "👏"
     assert reaction_emoji("2764-fe0f_redheart") == "❤️"
     assert reaction_emoji("1f680_rocket") == "🚀"
+    # Teinte de peau sur une clé à points de code, comme Teams l'écrit (« 1f44b_wavinghand-tone2 »).
+    assert reaction_emoji("1f44b_wavinghand-tone2") == "👋🏼"
     assert reaction_emoji("clap") == "👏"
     assert reaction_emoji("customorgemoji") == ""
 
