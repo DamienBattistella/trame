@@ -941,6 +941,29 @@ test("chatgesture edit : seulement un de MES messages, nouveau texte prouvé et 
   assert.equal(writes.length, 1);
 });
 
+test("chatgesture edit : message avec aperçu de lien modifiable, l'aperçu gardé tant que l'adresse reste", async () => {
+  const p = teamsPage();
+  await withTeamsBearer(p);
+  const url = "https://www.githubstatus.com/";
+  const links = JSON.stringify([{ url, preview: { title: "GitHub Status" }, previewenabled: true }]);
+  const messages: any = {
+    "1795777000002": msgRaw("1795777000002", {
+      from: MY_MRI,
+      imdisplayname: "Alex Moreau",
+      content: `<p><a href="${url}">${url}</a></p>`,
+      properties: { links, custom: "gardé" },
+    }),
+  };
+  const writes = chatServer(p, messages);
+  const ref = { id: "1795777000002", sender: "Alex Moreau", text: url };
+  const kept = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: ref, text: `Panne en cours : ${url}` })).result;
+  assert.equal(kept.ok, true);
+  assert.deepEqual(JSON.parse(writes[0].body.properties.links), JSON.parse(links));
+  const gone = (await p.run("chatgesture", { kind: "edit", thread: GROUP_ID, message: { ...ref, text: `Panne en cours : ${url}` }, text: "C'est réglé" })).result;
+  assert.equal(gone.ok, true);
+  assert.equal(writes[1].body.properties.links, undefined);
+});
+
 test("chatgesture edit : message riche ou texte vide refusés pour de bon, sans repli sur la page", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);

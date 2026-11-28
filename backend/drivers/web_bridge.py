@@ -24,7 +24,7 @@ class BridgeUnavailable(RuntimeError):
 # A link is kept only on Microsoft's file hosts (it opens in the user's browser).
 FILE_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(sharepoint\.com|onedrive\.(live\.)?com|1drv\.ms|teams\.microsoft\.com|"
                         r"teams\.cloud\.microsoft)(/|$)", re.IGNORECASE)
-IMAGE_DATA = re.compile(r"^data:image/(jpeg|png);base64,[A-Za-z0-9+/]+=*$")
+IMAGE_DATA = re.compile(r"^data:image/(jpeg|png|gif);base64,[A-Za-z0-9+/]+=*$")
 MAX_FILES, MAX_IMAGES, MAX_IMAGE_CHARS = 10, 8, 1_500_000
 
 # Appel API authentifié depuis la page (webfetch) : les seuls hôtes autorisés, ceux que le

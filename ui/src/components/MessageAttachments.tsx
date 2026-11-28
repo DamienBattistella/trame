@@ -35,7 +35,7 @@ export function MessageAttachments({
           <button
             key={i}
             type="button"
-            className="block overflow-hidden rounded-lg border bg-background/40"
+            className="block w-fit max-w-full overflow-hidden rounded-lg border bg-background/40"
             title="Agrandir l'image"
             onClick={() => setZoom(img)}
           >

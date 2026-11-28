@@ -45,6 +45,12 @@ def test_oversized_image_is_dropped(monkeypatch):
     assert driver.read_history(DM, 30)[0][0].images == [ImageRef()]
 
 
+def test_animated_gif_is_kept_as_is(monkeypatch):
+    gif = "data:image/gif;base64,R0lGODlhAQABAAAAACw="
+    driver = _bridge(monkeypatch, [{"sender": "Yves", "text": "", "images": [{"data": gif, "width": 480, "height": 270}]}])
+    assert driver.read_history(DM, 30)[0][0].images == [ImageRef(data=gif, width=480, height=270)]
+
+
 class AttachDriver(MockTeamsDriver):
     def read_context(self, thread_id, last_n):
         return [
