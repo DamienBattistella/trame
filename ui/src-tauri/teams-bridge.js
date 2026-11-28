@@ -675,19 +675,43 @@
           .finally(() => (pending = null));
       return pending;
     };
+    // Lecture (GET, sans effet) : l'adresse régionale du service puis son adresse de secours
+    // (chatServiceAfd, donnée par authsvc). On passe à l'autre sur une panne réseau, un 5xx ou un
+    // 429 ; celle qui a répondu reste la première essayée ensuite. Un 429 ou un 503 avec
+    // Retry-After met les lectures en pause (au plus 2 min) : pas de rafale vers un service saturé.
+    let preferred = 0; // index de l'adresse qui a répondu en dernier
+    let throttledUntil = 0;
+    const retryAfterMs = (res) => {
+      const raw = String((res.headers && res.headers.get && res.headers.get("retry-after")) || "").trim();
+      if (!raw) return res.status === 429 ? 10 * 1000 : 0;
+      const secs = /^\d+$/.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
+      return Math.max(1000, Math.min(120 * 1000, (Number.isFinite(secs) ? secs : 10) * 1000));
+    };
     const send = async (s, method, path, search) => {
       let lastErr = null;
-      for (const base of s.bases) {
+      let lastRes = null;
+      const order = s.bases.map((_, i) => (i + preferred) % s.bases.length);
+      for (const i of order) {
         try {
-          return await fetch(base + path + search, {
+          const res = await fetch(s.bases[i] + path + search, {
             method,
             credentials: "omit",
             headers: { Authentication: `skypetoken=${s.token}`, Accept: "application/json" },
           });
+          if (res.status >= 500 || res.status === 429) {
+            const wait = retryAfterMs(res);
+            if (wait) throttledUntil = Math.max(throttledUntil, Date.now() + wait);
+            lastRes = res; // le service peine à cette adresse : on essaie l'autre
+            continue;
+          }
+          preferred = i;
+          if (res.ok) throttledUntil = 0;
+          return res;
         } catch (err) {
           lastErr = err; // réseau : on essaie l'autre adresse du service
         }
       }
+      if (lastRes) return lastRes;
       const e = new Error(`échec réseau vers le service de chat : ${String((lastErr && lastErr.message) || lastErr)}`);
       e.stage = "chatsvc";
       throw e;
@@ -721,7 +745,8 @@
       }
       const [method, path, search] = WRITES[kind](conv, mid);
       try {
-        const res = await fetch(s.bases[0] + path + search, {
+        // Une seule adresse (jamais rejoué) : celle qui a répondu aux dernières lectures.
+        const res = await fetch(s.bases[preferred % s.bases.length] + path + search, {
           method,
           credentials: "omit",
           headers: { Authentication: `skypetoken=${s.token}`, Accept: "application/json", "Content-Type": "application/json" },
@@ -745,6 +770,9 @@
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(query || {})) if (QUERY_KEYS.has(k) && v != null) qs.set(k, String(v));
       const search = qs.toString() ? "?" + qs.toString() : "";
+      const wait = throttledUntil - Date.now();
+      if (wait > 0)
+        return { ok: false, stage: "throttled", status: 429, retry_in_s: Math.ceil(wait / 1000), error: `service de chat saturé : nouvel essai dans ${Math.ceil(wait / 1000)} s` };
       try {
         let s = await ensure(false);
         let res = await send(s, "GET", p, search);
@@ -848,7 +876,14 @@
         return "";
       }
     };
-    return { get, write, selftest, image, people, whoami, me: () => (session ? session.me : ""), last: () => lastTest };
+    // État de l'acheminement, sans rien de secret : adresse en service (0 régionale, 1 secours),
+    // nombre d'adresses connues, pause en cours.
+    const routing = () => ({
+      bases: session ? session.bases.length : 0,
+      preferred,
+      throttled_s: Math.max(0, Math.ceil((throttledUntil - Date.now()) / 1000)),
+    });
+    return { get, write, selftest, image, people, whoami, routing, me: () => (session ? session.me : ""), last: () => lastTest };
   })();
 
   // Pose les hooks passifs. La capture de STRUCTURE ne retient que les NOMS d'en-têtes d'auth.
@@ -3048,6 +3083,108 @@
   };
   // Cache de la recherche, PRIVÉ À LA PAGE (comme ce que Teams affiche) : jamais sérialisé.
   const searchCache = new Map(); // id de conversation -> { last, at, msgs }
+
+  // --- Flux d'activité et appels, par le service de chat ---
+  // Teams range son flux « Activité » (mentions, réponses, réactions à tes messages) dans la
+  // conversation système 48:notifications et l'historique des appels dans 48:calllogs : deux
+  // lectures, sans ouvrir le volet Activité. Chaque message porte sa charge dans une propriété
+  // (« activity », « call-log »), objet ou JSON en texte. Lecture seule.
+  const chatActivity = (() => {
+    const CONV_ID = /^(19:[A-Za-z0-9_.:=-]{1,200}@(thread\.(v2|skype|tacv2)|unq\.gbl\.spaces)|48:notes)$/;
+    const obj = (v) => {
+      if (v && typeof v === "object") return v;
+      if (typeof v !== "string" || !v.trim()) return null;
+      try {
+        const o = JSON.parse(v);
+        return o && typeof o === "object" ? o : null;
+      } catch {
+        return null;
+      }
+    };
+    const text = (v, n) => String(v == null ? "" : v).replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim().slice(0, n);
+    const ms = (v) => {
+      const n = typeof v === "number" ? v : Date.parse(String(v || ""));
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    // Type Teams → type Trame ; tout autre type est gardé tel quel (« other »).
+    const KIND = [
+      [/mention/i, "mention"],
+      [/repl/i, "reply"],
+      [/reaction|like|emotion/i, "reaction"],
+    ];
+    const kindOf = (t) => (KIND.find(([re]) => re.test(t)) || [null, "other"])[1];
+    const keys = (o) => (o && typeof o === "object" ? Object.keys(o).filter((k) => /^[A-Za-z][A-Za-z0-9_-]{0,40}$/.test(k)).sort().slice(0, 40) : []);
+    const read = async (id, pageSize) => {
+      const r = await chatsvc.get({ path: `/v1/users/ME/conversations/${encodeURIComponent(id)}/messages`, query: { view: "msnp24Equivalent", pageSize } });
+      return r.ok ? { ok: true, messages: (r.json && r.json.messages) || [] } : { ok: false, error: r.error || `HTTP ${r.status || "?"}`, stage: r.stage };
+    };
+    const activityOf = (raw) => {
+      const p = raw.properties || {};
+      const a = obj(p.activity);
+      if (!a) return null;
+      const type = String(a.activityType || "");
+      const thread = String(a.sourceThreadId || "");
+      const ts = ms(a.activityTimestamp) || ms(raw.originalarrivaltime) || ms(raw.composetime);
+      return {
+        kind: kindOf(type),
+        type: type.slice(0, 60),
+        subtype: String(a.activitySubtype || "").slice(0, 60),
+        ts,
+        from: text(a.sourceUserImDisplayName, 200),
+        conversation: text(a.sourceThreadTopic, 200),
+        thread: CONV_ID.test(thread) ? thread : "",
+        message: /^\d{1,20}$/.test(String(a.sourceMessageId || "")) ? String(a.sourceMessageId) : "",
+        preview: text(a.messagePreview, 400),
+      };
+    };
+    const callOf = (raw, me) => {
+      const p = raw.properties || {};
+      const c = obj(p["call-log"]) || obj(p.calllog) || obj(p.callLog);
+      if (!c) return null;
+      const dir = String(c.callDirection || "").toLowerCase();
+      const outgoing = dir === "outgoing" || (me && String(c.originator || "") === me);
+      const other = outgoing ? c.targetParticipant : c.originatorParticipant;
+      const start = ms(c.startTime) || ms(raw.originalarrivaltime);
+      const connect = ms(c.connectTime);
+      const end = ms(c.endTime);
+      const thread = String(c.threadId || "");
+      return {
+        direction: outgoing ? "outgoing" : "incoming",
+        state: String(c.callState || "").toLowerCase().slice(0, 30),
+        type: String(c.callType || "").slice(0, 30),
+        ts: start,
+        duration_s: connect && end > connect ? Math.round((end - connect) / 1000) : 0,
+        with: text(other && other.displayName, 200),
+        thread: CONV_ID.test(thread) ? thread : "",
+      };
+    };
+    return async ({ limit = 50, calls = true } = {}) => {
+      const n = Math.max(1, Math.min(200, Number(limit) || 50));
+      const me = chatsvc.me();
+      const [feed, log] = await Promise.all([read("48:notifications", n), calls ? read("48:calllogs", Math.min(100, n)) : null]);
+      if (!feed.ok && !(log && log.ok)) return { ok: false, stage: feed.stage, error: feed.error };
+      const items = feed.ok ? feed.messages.map(activityOf).filter(Boolean) : [];
+      const callItems = log && log.ok ? log.messages.map((m) => callOf(m, me)).filter(Boolean) : [];
+      items.sort((a, b) => b.ts - a.ts);
+      callItems.sort((a, b) => b.ts - a.ts);
+      // Forme des charges (noms de champs, jamais leurs valeurs) : de quoi ajuster la lecture.
+      const firstA = feed.ok ? feed.messages.map((m) => obj((m.properties || {}).activity)).find(Boolean) : null;
+      const firstC = log && log.ok ? log.messages.map((m) => obj((m.properties || {})["call-log"])).find(Boolean) : null;
+      return {
+        ok: true,
+        activity: items.slice(0, n),
+        calls: callItems.slice(0, n),
+        errors: { activity: feed.ok ? null : feed.error, calls: !log || log.ok ? null : log.error },
+        shape: {
+          activity_messages: feed.ok ? feed.messages.length : 0,
+          activity_keys: keys(firstA),
+          call_messages: log && log.ok ? log.messages.length : 0,
+          call_keys: keys(firstC),
+          property_names: feed.ok ? Array.from(new Set(feed.messages.flatMap((m) => keys(m.properties)))).slice(0, 40) : [],
+        },
+      };
+    };
+  })();
   const SEARCH_TTL = 2 * 60 * 1000;
   const mriOfFrom = (from) => {
     const m = /\/contacts\/([^/?#]+)$/.exec(String(from || ""));
@@ -4159,6 +4296,7 @@
     // La transcription d'une réunion (de canal) lue sur Graph, sans rien ouvrir dans la page.
     graphtranscript: (args) => graphTranscript(args || {}),
     chatsearch: (args) => chatSearch(args || {}),
+    chatactivity: (args) => chatActivity(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé
     // et borné — jamais d'en-tête de réponse (hors type), jamais d'auth.
@@ -5235,6 +5373,8 @@
       mt_token: apiCapture.mtState(),
       // Auto-test du service de chat : { ok, status, stage, region, at } ; ni jeton ni contenu.
       chatsvc_selftest: chatTest,
+      // Acheminement du service de chat : adresse en service, pause sur 429/503 (Retry-After).
+      chatsvc_routing: chatsvc.routing(),
       };
     },
   };

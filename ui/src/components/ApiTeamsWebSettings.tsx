@@ -20,6 +20,7 @@ const GROUPS: { label: string; actions: Record<string, string> }[] = [
       search_messages: "Recherche",
       meetings: "Réunions",
       transcript: "Transcriptions",
+      activity: "Activité et appels",
     },
   },
   {

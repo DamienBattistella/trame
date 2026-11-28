@@ -577,6 +577,55 @@ class WebBridgeDriver(TeamsDriver):
                             "mine": bool(r.get("mine")), "at": (r.get("at") or "").strip(), "text": text})
         return out[:limit]
 
+    ACTIVITY_KINDS = {"mention", "reply", "reaction", "other"}
+
+    def activity_api(self, limit: int = 50, calls: bool = True) -> dict:
+        """Flux d'activité de Teams (mentions, réponses, réactions) et derniers appels, lus DANS
+        la page sur le service de chat (48:notifications, 48:calllogs). Lève ApiError si les deux
+        lectures échouent. Les ids de conversation sont vérifiés (sinon vides)."""
+        res = self._rpc("chatactivity", limit=max(1, min(200, int(limit))), calls=bool(calls), timeout=30)
+        if not isinstance(res, dict) or not res.get("ok"):
+            raise self.ApiError((res or {}).get("error") if isinstance(res, dict) else "réponse illisible de la page")
+
+        def iso(ts: Any) -> Optional[str]:
+            try:
+                return datetime.fromtimestamp(int(ts) / 1000).isoformat(timespec="seconds") if int(ts) > 0 else None
+            except (TypeError, ValueError, OverflowError, OSError):
+                return None
+
+        def tid(v: Any) -> Optional[str]:
+            s = str(v or "")
+            return s if CHAT_ID.fullmatch(s) else None
+
+        activity = []
+        for a in res.get("activity") or []:
+            if not isinstance(a, dict):
+                continue
+            kind = str(a.get("kind") or "other")
+            activity.append({"kind": kind if kind in self.ACTIVITY_KINDS else "other", "type": _one_line(a.get("type"), 60),
+                             "at": iso(a.get("ts")), "from": _one_line(a.get("from"), 200),
+                             "conversation": _one_line(a.get("conversation"), 200), "teams_id": tid(a.get("thread")),
+                             "message_id": str(a["message"]) if re.fullmatch(r"\d{1,20}", str(a.get("message") or "")) else None,
+                             "preview": _one_line(a.get("preview"), 400)})
+        call_list = []
+        for c in res.get("calls") or []:
+            if not isinstance(c, dict):
+                continue
+            direction = "outgoing" if c.get("direction") == "outgoing" else "incoming"
+            state = _one_line(c.get("state"), 30).casefold()
+            try:
+                duration = max(0, int(c.get("duration_s") or 0))
+            except (TypeError, ValueError):
+                duration = 0
+            call_list.append({"direction": direction, "state": state, "missed": direction == "incoming" and state in {"missed", "declined", "unanswered"},
+                              "type": _one_line(c.get("type"), 30), "at": iso(c.get("ts")), "duration_s": duration,
+                              "with": _one_line(c.get("with"), 200), "teams_id": tid(c.get("thread"))})
+        errors = res.get("errors") if isinstance(res.get("errors"), dict) else {}
+        shape = res.get("shape") if isinstance(res.get("shape"), dict) else {}
+        return {"activity": activity, "calls": call_list,
+                "errors": {k: (_one_line(v, 200) if v else None) for k, v in errors.items() if k in ("activity", "calls")},
+                "shape": {k: v for k, v in shape.items() if k in ("activity_messages", "activity_keys", "call_messages", "call_keys", "property_names")}}
+
     def search_messages_api(self, query: str, limit: int = 25, chats: int = 40) -> list[dict]:
         """Recherche faite DANS la page sur le service de chat : les derniers messages des
         conversations les plus récentes, sans ouvrir la recherche de Teams. Même forme que

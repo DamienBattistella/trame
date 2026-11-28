@@ -451,6 +451,13 @@ def create_app(
     def refresh_conversations():
         return {"ok": True, "count": watcher.refresh_conversations()}
 
+    @app.get("/api/teams/activity")
+    def teams_activity(limit: int = 50, calls: bool = True, kind: Optional[str] = None):
+        """Flux « Activité » de Teams (mentions, réponses, réactions) et derniers appels."""
+        if kind is not None and kind not in ("mention", "reply", "reaction", "other"):
+            raise ActionError(400, "kind : mention, reply, reaction ou other.")
+        return {"ok": True, **watcher.teams_activity(max(1, min(200, limit)), calls, kind)}
+
     @app.get("/api/conversations/older")
     def older_conversations(q: str = "", offset: int = 0, limit: int = 50):
         """Conversations que Teams connaît et que la liste ne montre pas (les plus anciennes)."""
