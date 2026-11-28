@@ -834,16 +834,29 @@ class WebApiDriver:
             row = rows.get(cid or "") or {}
             return str((row.get("name") if row.get("kind") == "dm" else row.get("topic")) or "").strip()
 
+        # Seules les conversations qu'un clic peut ouvrir gardent leur thread_id : celles de la
+        # liste et celles des « Anciennes conversations ». Un canal ou un fil que la liste de
+        # Teams ne connaît pas n'a rien à ouvrir (vu en direct : 11 sur 89).
+        reachable = set(self._chat.mapped)
+        try:
+            reachable |= {e.thread_id for e in self.older_conversations("", 0, 1_000_000)[0]}
+        except Exception:
+            pass
+
+        def tid_of(cid: Optional[str], name: str = "") -> Optional[str]:
+            tid = self._tid_of(cid, name)
+            return tid if tid in reachable else None
+
         for a in out["activity"]:
             cid = a.pop("teams_id", None)
             if not a.get("conversation"):
                 a["conversation"] = name_of(cid)
-            a["thread_id"] = self._tid_of(cid)
+            a["thread_id"] = tid_of(cid)
         for c in out["calls"]:
             cid = c.pop("teams_id", None)
             if not c.get("with") and (rows.get(cid or "") or {}).get("kind") == "dm":
                 c["with"] = name_of(cid)
-            c["thread_id"] = self._tid_of(cid, c.get("with") or "")
+            c["thread_id"] = tid_of(cid, c.get("with") or "")
         return out
 
     # --- Réunions terminées : lues sur le service, sans ouvrir les conversations ------------

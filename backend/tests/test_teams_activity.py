@@ -95,6 +95,14 @@ def test_api_driver_maps_conversations_to_trame_ids():
     assert d.routes()["activity"]["via"] == "api"
 
 
+def test_conversations_nothing_can_open_have_no_thread_id(monkeypatch):
+    # Un canal que la liste de Teams ne connaît pas : rien à ouvrir, donc pas de lien.
+    item = {"kind": "mention", "ts": NOW, "from": "Ana Martin", "thread": "19:canal@thread.tacv2", "message": "5"}
+    monkeypatch.setitem(PAGE_RESULT, "activity", [item])
+    out = _driver().teams_activity()
+    assert out["activity"][0]["thread_id"] is None
+
+
 def test_api_driver_falls_back_and_says_why():
     d = _driver(fail=True)
     with pytest.raises(RuntimeError):
