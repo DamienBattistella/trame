@@ -38,11 +38,13 @@ def test_lists_what_the_list_does_not_show_most_recent_first():
     items, total = d.older_conversations(exclude=["name:Ana Martin"])
     assert [(e.thread_id, e.display_name, e.surface) for e in items] == [
         ("title-19:recent@thread.v2", "Équipe Interop", Surface.group),
+        ("19:x_y@unq.gbl.spaces", "Paul Roy", Surface.dm),  # homonymes : chacun sous l'id de SA conversation
+        ("19:y_z@unq.gbl.spaces", "Paul Roy", Surface.dm),
         ("title-19:meeting_abc@thread.v2", "Revue de sprint", Surface.group),
         ("title-19:old@thread.v2", "Vieux projet séjours", Surface.group),
         ("name:Marc Petit", "Marc Petit", Surface.dm),
     ]
-    assert total == 4  # ni vide, ni sans nom, ni homonymes, ni celle déjà dans la liste
+    assert total == 6  # ni vide, ni sans nom, ni celle déjà dans la liste
 
 
 def test_filter_by_name_ignores_case_and_accents_and_pages():
@@ -51,8 +53,8 @@ def test_filter_by_name_ignores_case_and_accents_and_pages():
     assert [e.display_name for e in items] == ["Vieux projet séjours"] and total == 1
     first, total = d.older_conversations(limit=2, exclude=["name:Ana Martin"])
     rest, _ = d.older_conversations(offset=2, limit=2, exclude=["name:Ana Martin"])
-    assert total == 4 and [e.display_name for e in first + rest] == [
-        "Équipe Interop", "Revue de sprint", "Vieux projet séjours", "Marc Petit"]
+    assert total == 6 and [e.display_name for e in first + rest] == [
+        "Équipe Interop", "Paul Roy", "Paul Roy", "Revue de sprint"]
 
 
 def test_open_links_a_listed_conversation_only():
@@ -67,6 +69,10 @@ def test_open_links_a_listed_conversation_only():
     # Gardée à la relecture suivante de la liste, même si la page ne la montre pas.
     d._map([SHOWN])
     assert d._chat.mapped["name:Marc Petit"] == "19:p_q@unq.gbl.spaces"
+    # Un homonyme s'ouvre sous l'id de sa conversation, lisible par le service sans alias.
+    h = d.open_older("19:y_z@unq.gbl.spaces")
+    assert h.display_name == "Paul Roy" and d._chat.mapped["19:y_z@unq.gbl.spaces"] == "19:y_z@unq.gbl.spaces"
+    assert d._inner.chat_id("19:y_z@unq.gbl.spaces") == "19:y_z@unq.gbl.spaces" if hasattr(d._inner, "chat_id") else True
 
 
 def test_service_down_raises():
