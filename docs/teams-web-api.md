@@ -375,31 +375,6 @@ lire les transcriptions (`OnlineMeetingTranscript.Read.All`), Graph répond 403 
 « Chercher la transcription » pour une réunion de canal même quand le fil ne signale pas de
 transcription.
 
-Un appel coupé puis relancé laisse deux fins d'appel pour un seul rendez-vous : une seule réunion
-est gardée par créneau prévu (celle qui a une transcription, sinon la dernière). Le créneau d'une
-occurrence est recalé sur l'agenda : l'événement est reconnu d'abord par sa **conversation** (lien de
-la réunion, `onlineMeeting.joinUrl`), le sujet de l'agenda différant souvent du nom de la
-conversation (« Suivi : Migration weekly » contre « Migration weekly »).
-
-### 10. Calendrier — op `calendarevents`
-
-Le calendrier de Trame part de l'agenda, comme celui de Teams : Graph `/me/calendarView` de la
-semaine affichée, signé dans la page avec le jeton que Teams a posé (jamais rendu au moteur), au
-plus 5 pages de 100 événements. Seul ce qu'affiche un agenda est rendu : sujet, horaires (UTC),
-journée entière, disponibilité (`showAs`, `oof` pour une absence), privé, annulé, lien de réunion
-et conversation Teams qu'il porte (`19:meeting_…@thread.v2`, ou `@thread.tacv2` pour un canal),
-organisateur (nom seul), lieu, récurrence. Ni corps, ni participants, ni adresse.
-
-Le moteur découpe chaque événement par jour en heure locale (une absence du soir au matin apparaît
-sur les deux jours) et écarte les annulés. Les réunions Teams commencées de la semaine dont la
-conversation n'a pas de réunion connue ce jour-là sont relues sur le service de chat, même hors des
-12 conversations de réunion les plus récentes (au plus 30 par affichage, pas avant 10 min pour une
-réunion déjà cherchée sans résultat). L'interface rattache chaque réunion lue à son événement (même
-conversation, sinon même titre, le même jour, à moins de 2 h) : un bloc par rendez-vous, au titre
-de l'agenda. Réunions à venir et jamais lancées apparaissent sans transcription ; absences, événements
-privés et sans réunion Teams seulement sur demande (`ui.calendar_personal`). Agenda refusé : les
-réunions lues, comme avant. Les transcriptions des réunions de canal restent non lues (§ 9).
-
 ## Étapes suivantes (PR séparées)
 
 1. ~~Découverte~~ (`webfetch`, capture fetch/XHR/WebSocket, signature en page).
