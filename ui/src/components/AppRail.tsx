@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { CalendarDays, Captions, MessagesSquare, Pause, Play, ScrollText, Settings } from "lucide-react";
+import { CalendarDays, Captions, MessagesSquare, ScrollText, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { OwnStatus } from "@/components/OwnStatus";
@@ -41,22 +41,19 @@ function Tip({ label, keys, children }: { label: React.ReactNode; keys?: string[
 /**
  * Navigation principale, toujours à gauche, sur tous les écrans. En haut les sections
  * (icône et libellé, libellé en infobulle sous 1024 px) ; en bas, comme la zone de profil
- * de Teams ou Slack, ce qui règle l'application : mise à jour, pause, Réglages et
+ * de Teams ou Slack, ce qui règle l'application : mise à jour, Réglages et
  * ton statut Teams. Les sections portent aria-current, jamais un rôle d'onglet.
  */
 export function AppRail({
   trame,
   tab,
   onTab,
-  onTogglePause,
 }: {
   trame: Trame;
   tab: PanelTab;
   onTab: (t: PanelTab) => void;
-  onTogglePause: (paused: boolean) => void;
 }) {
   const drafts = trame.state.drafts.length;
-  const paused = trame.state.paused;
   return (
     <nav aria-label="Navigation principale" className="flex w-14 shrink-0 flex-col items-center gap-1 border-r bg-sidebar py-2 lg:w-[4.5rem]">
       <ul className="flex w-full flex-col items-center gap-1 px-1.5">
@@ -111,37 +108,6 @@ export function AppRail({
 
       <div className="flex w-full flex-col items-center gap-1 px-1.5">
         <UpdateLed side="right" />
-        {/* Interrupteur global : vert quand Trame lit Teams, orange en pause (le bandeau du panneau le redit). */}
-        <Tip label={paused ? "Trame est en pause : reprendre" : "Trame est actif : mettre en pause"}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={!paused}
-            aria-label="Trame actif"
-            onClick={() => onTogglePause(!paused)}
-            className={cn(
-              iconButton,
-              "lg:flex lg:h-14 lg:w-full lg:flex-col lg:items-center lg:justify-center lg:gap-1",
-              paused && "bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning"
-            )}
-          >
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={paused ? "p" : "a"}
-                initial={{ scale: 0, rotate: -90 }}
-                animate={{ scale: 1, rotate: 0 }}
-                exit={{ scale: 0, rotate: 90 }}
-                transition={{ type: "spring", stiffness: 500, damping: 25 }}
-              >
-                {paused ? <Pause className="size-4" /> : <Play className="size-4 text-success" />}
-              </motion.span>
-            </AnimatePresence>
-            {/* Un état, pas une commande de lecture : dès qu'il y a la place, il s'écrit. */}
-            <span aria-hidden className={cn("hidden text-[11px] leading-none lg:block", paused && "font-medium")}>
-              {paused ? "En pause" : "Actif"}
-            </span>
-          </button>
-        </Tip>
         <Tip label="Réglages" keys={["Ctrl", ","]}>
           <button
             type="button"
