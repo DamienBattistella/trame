@@ -1454,7 +1454,8 @@ test("chatmeetings : conversations lues en parallèle, résultats dans l'ordre d
 test("chatgesture hide : propriété « hidden » de la conversation, prouvée relue ; déjà dans l'état voulu, rien n'est écrit", async () => {
   const p = teamsPage();
   await withTeamsBearer(p);
-  const conv: any = { properties: {} };
+  // L'état vit dans threadProperties (comme le lit Teams), en chaîne sur le service.
+  const conv: any = { properties: {}, threadProperties: {} };
   const writes: any[] = [];
   p.setResponse((url: string, init: any) => {
     if (url.includes("/authsvc/")) return fakeResponse(AUTHZ_TWO);
@@ -1462,7 +1463,8 @@ test("chatgesture hide : propriété « hidden » de la conversation, prouvée r
     if (method === "PUT" && url.includes("/properties?name=hidden")) {
       const body = JSON.parse(init.body);
       writes.push({ url, body });
-      conv.properties.hidden = body.hidden;
+      if (typeof body.hidden !== "boolean") return fakeResponse("{}", { status: 400 }); // comme Teams
+      conv.threadProperties.hidden = String(body.hidden);
       return fakeResponse("", { status: 200 });
     }
     if (url.includes(`/conversations/${encodeURIComponent(GROUP_ID)}`)) return fakeResponse(JSON.stringify(conv));
@@ -1470,13 +1472,19 @@ test("chatgesture hide : propriété « hidden » de la conversation, prouvée r
   });
   const r = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
   assert.equal(r.ok, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(writes[0].body)), { hidden: "true" });
+  assert.deepEqual(JSON.parse(JSON.stringify(writes[0].body)), { hidden: true });
   const again = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: true })).result;
   assert.equal(again.already, true);
   const back = (await p.run("chatgesture", { kind: "hide", thread: GROUP_ID, hidden: false })).result;
   assert.equal(back.ok, true);
-  assert.equal(conv.properties.hidden, "false");
+  assert.equal(conv.threadProperties.hidden, "false");
   assert.equal(writes.length, 2);
+  // Sa conversation avec soi-même : refusée avant tout appel.
+  const before = p.fetchCalls.length;
+  const notes = (await p.run("chatgesture", { kind: "hide", thread: "48:notes", hidden: true })).result;
+  assert.equal(notes.ok, false);
+  assert.equal(notes.attempted, false);
+  assert.equal(p.fetchCalls.length, before);
 });
 
 test("les ops du pont ont des noms uniques : une clé en double écraserait silencieusement la première", () => {
