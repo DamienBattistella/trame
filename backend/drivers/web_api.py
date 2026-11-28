@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import presence as presencemod
+import transcripts as transcriptsmod
 from drivers import rail_label
 from drivers.base import DeleteUncertain, EditUncertain, Focus, ReactUncertain, SendUncertain, TeamsDriver
 from models import IncomingMessage, MessageRef, Surface, WatchEntity
@@ -792,9 +793,10 @@ class WebApiDriver:
                     return out
         return self._inner.list_meetings(limit)
 
-    def _recaps_of(self, chats: list[tuple[str, str, str]]) -> list[dict]:
+    def _recaps_of(self, chats: list[tuple[str, str, str]], links: Optional[dict] = None) -> list[dict]:
         """Les réunions terminées des conversations `chats` ((id Teams, thread_id, nom)), lues sur
-        le service de chat. Lève si le service refuse."""
+        le service de chat ; `links` : id Teams -> lien de la réunion, gardé avec elle. Lève si le
+        service refuse."""
         # Le sujet sert à retrouver l'occurrence dans l'agenda (créneau d'une occurrence
         # déplacée) ; un tête-à-tête n'en a pas.
         topics = {cid: (name if not tid.startswith("name:") else "") for cid, tid, name in chats}
@@ -806,8 +808,11 @@ class WebApiDriver:
                 continue
             tid, name = where[c["thread"]]
             for r in c["recaps"]:
-                out.append({"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
-                            "when": r["when"], "transcript": r["transcript"]})
+                item = {"thread_id": tid, "chat": name, "mid": r["mid"], "title": name,
+                        "when": r["when"], "transcript": r["transcript"]}
+                if links and links.get(c["thread"]):
+                    item["join_url"] = links[c["thread"]]
+                out.append(item)
         return out
 
     # --- Agenda : le calendrier de Trame part de l'agenda, comme celui de Teams ---------------
@@ -819,10 +824,15 @@ class WebApiDriver:
         """Les événements de l'agenda du jour `start` au jour `end` (inclus). Lève si Graph refuse."""
         return self._inner.calendar_api(start, end)
 
-    def meetings_of_chats(self, chats: list[tuple[str, str]]) -> list[dict]:
+    # Fil d'une réunion de canal : le canal et la publication qui l'annonce.
+    CHANNEL_MEETING = re.compile(r"19:[A-Za-z0-9_.=-]{1,200}@thread\.tacv2;messageid=\d{1,20}")
+
+    def meetings_of_chats(self, chats: list[tuple]) -> list[dict]:
         """Les réunions terminées des conversations de réunion `chats` ((id Teams, sujet de
-        l'agenda)), lues sur le service de chat même hors des MAX_MEETING_CHATS plus récentes :
-        celles que l'agenda montre dans la période affichée. Même forme que list_meetings."""
+        l'agenda[, lien de la réunion])), lues sur le service de chat même hors des
+        MAX_MEETING_CHATS plus récentes : celles que l'agenda montre dans la période affichée,
+        réunions de canal comprises (fil « canal;messageid=publication », thread_id « chan:… »,
+        lien gardé pour lire la transcription sur Graph). Même forme que list_meetings."""
         if not callable(getattr(self._inner, "meetings_api", None)) or not chats:
             return []
         st = self._chat
@@ -831,7 +841,15 @@ class WebApiDriver:
         names = getattr(self._inner, "_names", None)
         kinds = getattr(self._inner, "_kinds", None)
         picked: list[tuple[str, str, str]] = []
-        for cid, subject in chats:
+        links: dict[str, str] = {}
+        for chat in chats:
+            cid, subject = chat[0], chat[1]
+            join = chat[2] if len(chat) > 2 else ""
+            if self.CHANNEL_MEETING.fullmatch(cid):
+                picked.append((cid, f"chan:{cid}", subject or "Réunion de canal"))
+                if join:
+                    links[cid] = join
+                continue
             if not re.fullmatch(r"19:meeting_[A-Za-z0-9_-]{1,200}@thread\.v2", cid):
                 continue
             row = st.rows.get(cid) or {}
@@ -843,7 +861,24 @@ class WebApiDriver:
             if isinstance(kinds, dict):
                 kinds.setdefault(tid, Surface.group)
             picked.append((cid, tid, name))
-        return self._recaps_of(picked) if picked else []
+        return self._recaps_of(picked, links) if picked else []
+
+    def meeting_transcript_graph(self, join_url: str, at: int = 0) -> dict:
+        """Transcription d'une réunion de canal, lue sur Graph dans la page : mêmes entrées
+        ({speaker, time, text}) que la lecture de la page, pour le même .vtt de Trame."""
+        read = getattr(self._inner, "transcript_graph", None)
+        if not callable(read):
+            return {"ok": False, "reason": "error", "error": "lecture par Graph indisponible avec ce pilote"}
+        res = read(join_url, at)
+        if not res.get("ok"):
+            return {**res, "reason": "graph_denied"} if res.get("reason") == "denied" else res
+        try:
+            cues = transcriptsmod.parse_vtt(res.get("vtt") or "")
+        except transcriptsmod.TranscriptError as e:
+            return {"ok": False, "reason": "empty", "error": f"transcription illisible : {e}"}
+        entries = [{"speaker": c.speaker, "time": transcriptsmod.format_timestamp(c.start).split(".")[0], "text": c.text}
+                   for c in cues]
+        return {"ok": True, "entries": entries, "complete": True}
 
     def meeting_transcript(self, thread_id: str, mid: str, probe: bool = False) -> dict:
         """La transcription se lit dans la page, qui ouvre la conversation par son nom. Une réunion

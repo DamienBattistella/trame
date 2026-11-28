@@ -328,8 +328,8 @@ relus pour leurs appels (« Réunion maintenant », réunion planifiée dans un 
 transcrit) : mêmes `Event/Call`. Hors des conversations de réunion, seuls les appels **transcrits**
 sont gardés. Jusqu'à 3 pages de 200 messages par conversation (`backwardLink`). Le nom de la
 conversation est retenu pour que la page l'ouvre ensuite (aussi après un redémarrage du moteur,
-depuis la liste gardée sur le poste). Les réunions de canal (`@thread.tacv2`) ne sont pas couvertes :
-la page ne sait ouvrir que les conversations de la liste de Chat.
+depuis la liste gardée sur le poste). Les réunions de canal (`@thread.tacv2`) ne sont dans aucune
+conversation de la liste : elles viennent de l'agenda (§ 10, § 11).
 
 Un appel coupé puis relancé laisse deux fins d'appel pour un seul rendez-vous : une seule réunion
 est gardée par créneau prévu (celle qui a une transcription, sinon la dernière). Le créneau d'une
@@ -354,7 +354,26 @@ réunion déjà cherchée sans résultat). L'interface rattache chaque réunion 
 conversation, sinon même titre, le même jour, à moins de 2 h) : un bloc par rendez-vous, au titre
 de l'agenda. Réunions à venir et jamais lancées apparaissent sans transcription ; absences, événements
 privés et sans réunion Teams seulement sur demande (`ui.calendar_personal`). Agenda refusé : les
-réunions lues, comme avant. Les transcriptions des réunions de canal restent non lues (§ 9).
+réunions lues, comme avant. La liste des Réunions lit aussi l'agenda des deux dernières semaines.
+
+### 11. Réunions de canal — fil de la publication, transcription sur Graph
+
+Le lien d'une réunion de canal porte, après l'id du canal, l'id du message qui l'annonce dans le
+canal (`…%40thread.tacv2/1795000000000?context=…`) ; `calendarevents` le rend (`root`). Ses fins
+d'appel sont des réponses à ce message : le fil `19:…@thread.tacv2;messageid=<publication>` est lu
+sur le service de chat comme une conversation de réunion (op `chatmeetings`), thread_id de Trame
+`chan:<fil>`. Le lien de la réunion est gardé avec elle (`join_url` dans `meetings.json`).
+
+Le récapitulatif d'une réunion de canal ne s'ouvre pas depuis la liste de Chat : la transcription se
+lit sur Graph (op `graphtranscript`), signé dans la page avec le jeton que Teams a posé :
+`/me/onlineMeetings?$filter=JoinWebUrl eq '<lien>'`, puis `/transcripts`, puis le `.vtt` de celle
+qui couvre la fin d'appel (`mid`, à 3 h près ; sinon « pas de transcription pour cette occurrence »).
+Seul le `.vtt` sort de la page ; le moteur le relit en prises de parole et écrit le même `.vtt` que
+pour les autres réunions. **Non vérifié en direct** : si le jeton Graph de Teams n'a pas le droit de
+lire les transcriptions (`OnlineMeetingTranscript.Read.All`), Graph répond 403 et Trame le dit
+(« Graph refuse de donner cette transcription… ») ; rien n'est tenté d'autre. L'interface propose
+« Chercher la transcription » pour une réunion de canal même quand le fil ne signale pas de
+transcription.
 
 ## Étapes suivantes (PR séparées)
 

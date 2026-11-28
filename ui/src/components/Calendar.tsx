@@ -670,9 +670,11 @@ function MeetingCard({
   const got = fetch?.state === "ok" ? fetch.saved : null;
   const refused = fetch?.state === "error" ? fetch : null;
   const when = [day ? dayLabel(day) : m.when || "Date inconnue", start && end ? `${start} à ${end}` : null].filter(Boolean).join(", ");
+  // Réunion de canal : sa transcription se lit sur Graph, que le fil du canal la signale ou non.
+  const channel = m.threadId.startsWith("chan:");
 
   const reportButton = (
-    <Button size="sm" className="rounded-full" onClick={onReport} disabled={reporting || running || !m.transcript}>
+    <Button size="sm" className="rounded-full" onClick={onReport} disabled={reporting || running || !(m.transcript || saved)}>
       {reporting ? <Loader2 className="size-4 animate-spin" /> : <NotebookPen className="size-4" />}
       {reporting ? "Préparation…" : "Compte-rendu"}
     </Button>
@@ -707,7 +709,7 @@ function MeetingCard({
             <span className="min-w-0 flex-1 text-sm text-muted-foreground">Organisation connue une fois la transcription relue</span>
           )}
           {join}
-          {m.transcript ? (
+          {m.transcript || saved ? (
             reportButton
           ) : (
             <Tooltip>
@@ -740,14 +742,18 @@ function MeetingCard({
             </div>
             <p className="text-sm text-pretty text-muted-foreground">
               {running
-                ? "Trame relit la transcription dans sa fenêtre Teams…"
+                ? channel
+                  ? "Trame lit la transcription sur Graph…"
+                  : "Trame relit la transcription dans sa fenêtre Teams…"
                 : saved
                   ? `Enregistrée en .vtt, prête pour un compte-rendu.`
                   : refused
                     ? refused.error
                     : m.transcript
                       ? "Disponible dans Teams, pas encore enregistrée sur ce poste."
-                      : "Teams n'a pas de transcription pour cette réunion."}
+                      : channel
+                        ? "Réunion de canal : Trame peut chercher sa transcription sur Graph."
+                        : "Teams n'a pas de transcription pour cette réunion."}
             </p>
           </div>
 
@@ -767,11 +773,11 @@ function MeetingCard({
                 <Chip onClick={() => onCopy(saved.path)} icon={<Copy className="size-3.5" />}>Copier le chemin</Chip>
               </>
             ) : (
-              m.transcript &&
+              (m.transcript || channel) &&
               refused?.kind !== "none" &&
               refused?.kind !== "denied" && (
                 <Chip onClick={onFetch} disabled={running} icon={running ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}>
-                  {running ? "Récupération…" : "Récupérer la transcription"}
+                  {running ? "Récupération…" : m.transcript ? "Récupérer la transcription" : "Chercher la transcription"}
                 </Chip>
               )
             )}

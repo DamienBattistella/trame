@@ -699,12 +699,23 @@ class WebBridgeDriver(TeamsDriver):
                 "online": e.get("online") is True,
                 "join_url": str(e.get("join_url") or "")[:2000],
                 "thread": thread if CHAT_ID.fullmatch(thread) else "",
+                "root": root if (root := str(e.get("root") or "")).isdigit() and len(root) <= 20 else "",
                 "organizer": _one_line(e.get("organizer"), 120),
                 "location": _one_line(e.get("location"), 160),
                 "recurring": e.get("recurring") is True,
                 "response": _one_line(e.get("response"), 30),
             })
         return out
+
+    def transcript_graph(self, join_url: str, at: int = 0) -> dict:
+        """La transcription d'une réunion lue sur Graph DANS la page (réunions de canal, dont le
+        récapitulatif ne s'ouvre pas dans la liste de Chat) : {ok, vtt} ou {ok: False, reason, error}."""
+        res = self._rpc("graphtranscript", joinUrl=str(join_url or ""), at=int(at or 0), timeout=self.TRANSCRIPT_TIMEOUT)
+        if not isinstance(res, dict):
+            return {"ok": False, "reason": "error", "error": "réponse illisible de la page"}
+        if res.get("ok"):
+            return {"ok": True, "vtt": str(res.get("vtt") or "")}
+        return {"ok": False, "reason": str(res.get("reason") or "error"), "error": _one_line(res.get("error"), 300)}
 
     def meeting_shapes(self, chats: int = 3, per: int = 60) -> dict:
         """Structure (jamais le contenu) des conversations de réunion récentes sur le service de
