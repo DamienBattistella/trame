@@ -673,6 +673,39 @@ class WebBridgeDriver(TeamsDriver):
             out.append({"thread": str(c["thread"]), "recaps": recaps})
         return out
 
+    def calendar_api(self, start: str, end: str, timeout: float = 30.0) -> list[dict]:
+        """L'agenda du jour `start` au jour `end` (AAAA-MM-JJ, inclus), lu DANS la page sur Graph
+        avec le jeton que Teams a posé. Chaque événement ne garde que ce qu'affiche un agenda.
+        Lève ApiError si Graph refuse (jeton pas encore vu, droit manquant)."""
+        res = self._rpc("calendarevents", start=str(start), end=str(end), timeout=timeout)
+        if not isinstance(res, dict) or not res.get("ok"):
+            raise self.ApiError((res or {}).get("error") if isinstance(res, dict) else "réponse illisible de la page")
+        out = []
+        for e in res.get("events") or []:
+            if not isinstance(e, dict):
+                continue
+            thread = str(e.get("thread") or "")
+            out.append({
+                "id": _one_line(e.get("id"), 300),
+                "subject": _one_line(e.get("subject"), 200),
+                "start": _one_line(e.get("start"), 25),
+                "end": _one_line(e.get("end"), 25),
+                "all_day": e.get("all_day") is True,
+                "start_day": _one_line(e.get("start_day"), 10),
+                "end_day": _one_line(e.get("end_day"), 10),
+                "show_as": _one_line(e.get("show_as"), 20),
+                "private": e.get("private") is True,
+                "cancelled": e.get("cancelled") is True,
+                "online": e.get("online") is True,
+                "join_url": str(e.get("join_url") or "")[:2000],
+                "thread": thread if CHAT_ID.fullmatch(thread) else "",
+                "organizer": _one_line(e.get("organizer"), 120),
+                "location": _one_line(e.get("location"), 160),
+                "recurring": e.get("recurring") is True,
+                "response": _one_line(e.get("response"), 30),
+            })
+        return out
+
     def meeting_shapes(self, chats: int = 3, per: int = 60) -> dict:
         """Structure (jamais le contenu) des conversations de réunion récentes sur le service de
         chat, et ids des cartes de récapitulatif affichées : la découverte qui précède le câblage

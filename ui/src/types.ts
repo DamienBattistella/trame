@@ -113,13 +113,14 @@ export interface Settings {
   mcp: { enabled: boolean; token: string; allowSend: boolean };
   teamsWeb: { enabled: boolean };
   /** Préférences d'interface, gardées dans config.json : une mise à jour ne les perd pas. */
-  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound; calendarView: CalendarView };
+  ui: { conversationSort: ConversationSort; updateCheckMinutes: UpdateCheckMinutes; theme: Theme; notificationSound: NotificationSound; calendarView: CalendarView; calendarPersonal: boolean };
 }
 
 export type ConversationSort = "watched" | "recent" | "alpha";
 export type Theme = "dark" | "light";
 /** Vue du calendrier : la semaine en colonnes, ou un seul jour. */
-export type CalendarView = "week" | "day";
+/** « week » : 7 jours ; « work_week » : lundi au vendredi, comme Teams ; « day » : un jour. */
+export type CalendarView = "week" | "work_week" | "day";
 /** Son des notifications Windows : « off » (muet) ou un son du système. */
 export type NotificationSound = "off" | "Default" | "IM" | "Mail" | "Reminder" | "SMS";
 export const NOTIFICATION_SOUNDS: readonly NotificationSound[] = ["off", "Default", "IM", "Mail", "Reminder", "SMS"];
@@ -552,6 +553,34 @@ export interface Meeting {
   transcript: boolean;
   /** Le .vtt déjà enregistré dans le dossier des transcriptions, s'il y est. */
   saved: { path: string; name: string } | null;
+}
+
+/** Un événement de l'agenda Teams sur un jour (découpé par jour, heure locale). */
+export interface CalendarEvent {
+  /** Unique par jour : un événement qui passe minuit a un morceau par jour. */
+  id: string;
+  eventId: string;
+  title: string;
+  date: string;
+  /** « HH:MM » ; null pour un événement sur la journée. */
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
+  /** free, tentative, busy, oof (absent), workingElsewhere. */
+  showAs: string;
+  private: boolean;
+  /** Réunion Teams (lien pour la rejoindre). */
+  online: boolean;
+  /** Conversation Teams de la réunion (« 19:meeting_… », ou le canal). */
+  chatId: string;
+  /** thread_id de Trame de la conversation de réunion (« title-19:meeting_… »), sinon "". */
+  threadId: string;
+  joinUrl: string;
+  organizer: string;
+  location: string;
+  recurring: boolean;
+  started: boolean;
+  ended: boolean;
 }
 
 /** Une transcription enregistrée en .vtt sur le poste. */

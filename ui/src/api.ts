@@ -51,6 +51,7 @@ import {
   NOTIFICATION_SOUNDS,
   type NotificationSound,
   type CalendarView,
+  type CalendarEvent,
   type FileLink,
 } from "@/types";
 import { demoSoulDetails, mapSoulDetails, SoulDetails } from "@/lib/persona";
@@ -391,12 +392,14 @@ function mapSettings(s: any): Settings {
       updateCheckMinutes: toCheckMinutes(s?.ui?.update_check_minutes),
       theme: s?.ui?.theme === "light" ? "light" : "dark",
       notificationSound: toSound(s?.ui?.notification_sound),
-      calendarView: s?.ui?.calendar_view === "day" ? "day" : "week",
+      calendarView: toCalendarView(s?.ui?.calendar_view),
+      calendarPersonal: s?.ui?.calendar_personal === true,
     },
   };
 }
 /** Copie locale du thème, pour le premier rendu avant la réponse du moteur. */
 const THEME_KEY = "trame.theme";
+const toCalendarView = (v: unknown): CalendarView => (v === "day" || v === "work_week" ? v : "week");
 const toSound = (v: unknown): NotificationSound => (NOTIFICATION_SOUNDS.includes(v as NotificationSound) ? (v as NotificationSound) : "off");
 const toSort = (v: unknown): ConversationSort => (v === "recent" || v === "alpha" ? v : "watched");
 const toCheckMinutes = (v: unknown): UpdateCheckMinutes =>
@@ -638,6 +641,7 @@ function settingsPatchToWire(p: SettingsPatch): Record<string, unknown> {
     if (p.ui.theme !== undefined) u.theme = p.ui.theme;
     if (p.ui.notificationSound !== undefined) u.notification_sound = p.ui.notificationSound;
     if (p.ui.calendarView !== undefined) u.calendar_view = p.ui.calendarView;
+    if (p.ui.calendarPersonal !== undefined) u.calendar_personal = p.ui.calendarPersonal;
     out.ui = u;
   }
   return out;
@@ -724,7 +728,7 @@ let localSettings: Settings = {
   telemetry: { enabled: false, endpoint: "", includeContent: false },
   mcp: { enabled: false, token: "", allowSend: false },
   teamsWeb: { enabled: false },
-  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off", calendarView: "week" },
+  ui: { conversationSort: "watched", updateCheckMinutes: 15, theme: "dark", notificationSound: "off", calendarView: "week", calendarPersonal: false },
 };
 const localBriefs = new Map<string, Brief>();
 // Recherche du mode démo : comme le moteur, seuls les messages déjà lus (reçus ou ouverts).
@@ -890,6 +894,31 @@ function demoMeetings(): Meeting[] {
     return saved ? { ...m, saved: { path: `${DEMO_TRANSCRIPTS_DIR}\\${demoFileName(m)}`, name: demoFileName(m) } } : m;
   });
 }
+const mapEvent = (e: any): CalendarEvent => ({
+  id: String(e.id), eventId: String(e.event_id || ""), title: String(e.title || "Occupé"), date: String(e.date),
+  start: e.start ?? null, end: e.end ?? null, allDay: Boolean(e.all_day), showAs: String(e.show_as || ""),
+  private: Boolean(e.private), online: Boolean(e.online), chatId: String(e.chat_id || ""), threadId: String(e.thread_id || ""),
+  joinUrl: String(e.join_url || ""), organizer: String(e.organizer || ""), location: String(e.location || ""),
+  recurring: Boolean(e.recurring), started: Boolean(e.started), ended: Boolean(e.ended),
+});
+/** L'agenda de démo : chaque réunion de démo, une réunion à venir et une absence. */
+function demoCalendar(start: string, end: string, meetings: Meeting[]): CalendarEvent[] {
+  const now = new Date();
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = iso(now);
+  const tomorrow = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  const base = { allDay: false, showAs: "busy", private: false, recurring: false, location: "", organizer: "Sofia Marino" };
+  const out: CalendarEvent[] = meetings.map((m) => ({
+    ...base, id: `ev-${m.meetingId}`, eventId: `ev-${m.meetingId}`, title: m.title, date: m.date ?? today, start: m.start, end: m.end,
+    online: true, chatId: m.threadId, threadId: `title-${m.threadId}`, joinUrl: "", started: true, ended: true,
+  }));
+  out.push({ ...base, id: "ev-next", eventId: "ev-next", title: "Revue de sprint", date: tomorrow, start: "10:00", end: "11:00",
+    online: true, chatId: "19:meeting_demo_next@thread.v2", threadId: "title-19:meeting_demo_next@thread.v2",
+    joinUrl: "https://teams.microsoft.com/l/meetup-join/19%3ameeting_demo_next%40thread.v2/0", started: false, ended: false });
+  out.push({ ...base, id: "ev-oof", eventId: "ev-oof", title: "Absent", date: tomorrow, start: "14:00", end: "18:00", showAs: "oof",
+    online: false, chatId: "", threadId: "", joinUrl: "", organizer: "", started: false, ended: false });
+  return out.filter((e) => e.date >= start && e.date <= end);
+}
 const mapMeeting = (m: any): Meeting => ({
   meetingId: m.meeting_id || `${m.thread_id}#${m.mid}`, threadId: m.thread_id, mid: String(m.mid), title: m.title || m.chat || "Réunion",
   when: m.when || "", date: m.date ?? null, start: m.start ?? null, end: m.end ?? null, chat: m.chat || "",
@@ -936,6 +965,7 @@ export function useTrame() {
   const [notificationSound, setNotificationSoundState] = useState<NotificationSound>(localSettings.ui.notificationSound);
   // Vue du calendrier (semaine ou jour), enregistrée dans config.json.
   const [calendarView, setCalendarViewState] = useState<CalendarView>(localSettings.ui.calendarView);
+  const [calendarPersonal, setCalendarPersonalState] = useState<boolean>(localSettings.ui.calendarPersonal);
   const soundRef = useRef(notificationSound);
   soundRef.current = notificationSound;
   const applyPrefs = (s: Settings) => {
@@ -943,6 +973,7 @@ export function useTrame() {
     setThemeState(s.ui.theme);
     setNotificationSoundState(s.ui.notificationSound);
     setCalendarViewState(s.ui.calendarView);
+    setCalendarPersonalState(s.ui.calendarPersonal);
     setConversationSortState(s.ui.conversationSort);
     setUpdateCheckMinutesState(s.ui.updateCheckMinutes);
     void setDesktopUpdateCheckMinutes(s.ui.updateCheckMinutes);
@@ -1260,6 +1291,11 @@ export function useTrame() {
   const setCalendarView = (next: CalendarView) => {
     setCalendarViewState(next);
     if (connectedRef.current || demoRef.current) void updateSettings({ ui: { calendarView: next } });
+  };
+  /** Absences, événements privés et sans réunion Teams dans le calendrier : enregistré aussi. */
+  const setCalendarPersonal = (next: boolean) => {
+    setCalendarPersonalState(next);
+    if (connectedRef.current || demoRef.current) void updateSettings({ ui: { calendarPersonal: next } });
   };
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -1604,6 +1640,18 @@ export function useTrame() {
     if (!connectedRef.current) return demo(1200, { meetings: demoMeetings(), directory: DEMO_TRANSCRIPTS_DIR });
     const res = await request<{ meetings: any[]; directory: string }>("GET", "/api/meetings");
     return res.ok ? { ok: true, meetings: res.meetings.map(mapMeeting), directory: res.directory } : res;
+  };
+  /** L'agenda Teams du jour `start` au jour `end` (AAAA-MM-JJ) et les réunions connues, transcriptions
+   *  rattachées : lu sur Graph dans la page Teams de Trame, rien n'y est ouvert. */
+  const calendar = async (start: string, end: string): Promise<Result<{ events: CalendarEvent[]; meetings: Meeting[]; directory: string }>> => {
+    if (!connectedRef.current) {
+      if (!demoRef.current) return { ok: false, error: OFFLINE };
+      const meetings = demoMeetings();
+      return demo(300, { events: demoCalendar(start, end, meetings), meetings, directory: DEMO_TRANSCRIPTS_DIR });
+    }
+    const res = await request<{ events: any[]; meetings: any[]; directory: string }>(
+      "GET", `/api/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    return res.ok ? { ok: true, events: res.events.map(mapEvent), meetings: res.meetings.map(mapMeeting), directory: res.directory } : res;
   };
   /** La liste de la dernière lecture, gardée sur le poste (survit aux mises à jour) : Teams n'est pas relu. */
   const knownMeetings = async (): Promise<Result<{ meetings: Meeting[]; directory: string; readAt: Date | null }>> => {
@@ -2362,6 +2410,8 @@ export function useTrame() {
     notificationSound,
     calendarView,
     setCalendarView,
+    calendarPersonal,
+    setCalendarPersonal,
     setNotificationSound,
     getBrief,
     generateBrief,
@@ -2389,6 +2439,7 @@ export function useTrame() {
     searchTeams,
     listMeetings,
     knownMeetings,
+    calendar,
     saveTranscript,
     fileLink,
     openTranscriptsFolder,

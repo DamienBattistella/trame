@@ -547,6 +547,12 @@ def create_app(
         """Finished meetings of the recent meeting chats (opens them in Teams intégré)."""
         return {"ok": True, **watcher.meetings()}
 
+    @app.get("/api/calendar")
+    def calendar(start: str, end: str):
+        """L'agenda Teams du jour `start` au jour `end` (AAAA-MM-JJ), lu sur Graph dans la page,
+        et les réunions connues (transcriptions) : rien n'est ouvert dans la fenêtre Teams."""
+        return {"ok": True, **watcher.calendar(start, end)}
+
     @app.get("/api/meetings/known")
     def meetings_known():
         """The meetings of the last reading, kept on this computer: Teams is not read."""

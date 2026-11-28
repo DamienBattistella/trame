@@ -3001,6 +3001,28 @@
   // (`<ended/>…`), et un `RichText/Media_CallTranscript` quand elle est transcrite. La carte
   // « La réunion est terminée » de la page porte l'id du message de FIN (même `mid` que la page,
   // vérifié sur deux réunions) : la lecture des transcriptions par la page reste valable.
+  // La conversation Teams d'une réunion, lue dans son lien (« …/meetup-join/19%3ameeting_…%40thread.v2/0 ») ;
+  // une réunion de canal porte l'id du canal (« @thread.tacv2 »). "" sans lien Teams.
+  const meetingThreadOf = (joinUrl) => {
+    let u = String(joinUrl || "");
+    try {
+      u = decodeURIComponent(u);
+    } catch {}
+    const m = /\b(19:[A-Za-z0-9_.=-]{1,200}@thread\.(?:v2|tacv2|skype))/.exec(u);
+    return m ? m[1] : "";
+  };
+  // Un appel coupé puis relancé laisse deux fins d'appel pour UN SEUL rendez-vous : une seule
+  // réunion par créneau, celle qui a une transcription (sinon la dernière terminée).
+  const oneAppointment = (recaps) => {
+    const by = new Map();
+    for (const r of recaps) {
+      const kept = by.get(r.when);
+      if (!kept) by.set(r.when, r);
+      else if ((r.transcript && !kept.transcript) || (r.transcript === kept.transcript && r.ts > kept.ts)) by.set(r.when, r);
+    }
+    return recaps.filter((r) => by.get(r.when) === r);
+  };
+
   const chatMeetings = (() => {
     const DAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
     const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -3045,7 +3067,7 @@
     const dayList = async (d) => {
       const from = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       const to = new Date(from.getTime() + 86400000);
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${encodeURIComponent(from.toISOString())}&endDateTime=${encodeURIComponent(to.toISOString())}&$select=subject,start,end&$top=100`;
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${encodeURIComponent(from.toISOString())}&endDateTime=${encodeURIComponent(to.toISOString())}&$select=subject,start,end,onlineMeeting&$top=100`;
       let list = [];
       try {
         const r = await ops.webfetch({ url, method: "GET", sign: true, json: true, cookies: false, headers: { Prefer: 'outlook.timezone="UTC"' } });
@@ -3053,6 +3075,7 @@
           list = r.json.value
             .map((e) => ({
               subject: norm(e && e.subject),
+              thread: meetingThreadOf(e && e.onlineMeeting && e.onlineMeeting.joinUrl),
               start: new Date(`${String((e && e.start && e.start.dateTime) || "").replace(/Z$/, "")}Z`),
               end: new Date(`${String((e && e.end && e.end.dateTime) || "").replace(/Z$/, "")}Z`),
             }))
@@ -3061,11 +3084,17 @@
       } catch {}
       return list;
     };
-    const fromCalendar = async (topic, callStart) => {
+    // L'événement de la réunion d'abord par sa conversation (lien de la réunion) : le sujet de
+    // l'agenda diffère souvent du nom de la conversation (« Suivi : Migration weekly » contre
+    // « Migration weekly »). Le sujet ne sert qu'à défaut.
+    const fromCalendar = async (topic, callStart, thread) => {
+      const near = (await dayEvents(callStart)).filter((e) => Math.abs(e.start - callStart) <= 2 * 3600000);
+      const same = near.filter((e) => thread && e.thread === thread);
+      if (same.length) return same.reduce((a, b) => (Math.abs(b.start - callStart) < Math.abs(a.start - callStart) ? b : a));
       const want = norm(topic);
       if (!want) return null;
-      const near = (await dayEvents(callStart)).filter((e) => e.subject === want && Math.abs(e.start - callStart) <= 2 * 3600000);
-      return near.length === 1 ? near[0] : null;
+      const named = near.filter((e) => e.subject === want);
+      return named.length === 1 ? named[0] : null;
     };
     // Pages de 200 messages, au plus MAX_PAGES : dans un groupe actif, l'appel d'il y a quelques
     // jours est souvent au-delà des 200 derniers messages.
@@ -3136,11 +3165,11 @@
         const transcript = msgs.some((x) => x.messagetype === "RichText/Media_CallTranscript" && Number(x.id) >= startId && Number(x.id) <= endId + 10 * 60 * 1000);
         if (onlyTranscribed && !transcript) continue;
         // L'agenda dit le créneau de CETTE occurrence (déplacée ou non) quand il le dit sans doute.
-        const ev = await fromCalendar(topic, actual);
+        const ev = await fromCalendar(topic, actual, thread);
         const slot = ev ? [ev.start, ev.end] : [a, b];
         recaps.push({ mid: String(m.id), when: when(slot[0], slot[1]), transcript, ts: endId, calendar: Boolean(ev) });
       }
-      return { thread, ok: true, recaps: recaps.reverse() };
+      return { thread, ok: true, recaps: oneAppointment(recaps).reverse() };
     };
     return async ({ threads = [], topics = {} } = {}) => {
       const ids = (Array.isArray(threads) ? threads : []).filter((t) => CALL_CHAT.test(String(t))).slice(0, 30);
@@ -3150,6 +3179,71 @@
       return { ok: true, chats: out };
     };
   })();
+
+  // --- L'agenda d'une période, lu sur Graph avec le jeton que Teams a posé (lecture seule) ---
+  // Le calendrier de Trame part de l'agenda, comme celui de Teams : réunions à venir, réunions
+  // jamais lancées, réunions de canal, absences, événements sur la journée. Chaque réunion Teams
+  // porte sa conversation (lien de la réunion) : le moteur y rattache les transcriptions.
+  // Rendu : uniquement ce qu'affiche un agenda (sujet, horaires, organisateur, lieu, lien).
+  const calendarEvents = async ({ start = "", end = "" } = {}) => {
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/;
+    const a = day.exec(String(start));
+    const b = day.exec(String(end));
+    if (!a || !b) return { ok: false, error: "période illisible" };
+    const from = new Date(Number(a[1]), Number(a[2]) - 1, Number(a[3]));
+    const to = new Date(Number(b[1]), Number(b[2]) - 1, Number(b[3]) + 1);
+    if (!(to > from) || to - from > 62 * 86400000) return { ok: false, error: "période trop longue" };
+    const select = "subject,start,end,isAllDay,showAs,sensitivity,isCancelled,isOnlineMeeting,onlineMeeting,organizer,location,type,responseStatus";
+    let url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${encodeURIComponent(from.toISOString())}&endDateTime=${encodeURIComponent(to.toISOString())}&$select=${select}&$top=100&$orderby=start/dateTime`;
+    const s = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+    const utc = (x) => {
+      const v = String((x && x.dateTime) || "").replace(/Z$/, "");
+      return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? `${v.slice(0, 19)}Z` : "";
+    };
+    const events = [];
+    for (let page = 0; page < 5 && url; page++) {
+      let r;
+      try {
+        r = await ops.webfetch({ url, method: "GET", sign: true, json: true, cookies: false, headers: { Prefer: 'outlook.timezone="UTC"' } });
+      } catch (e) {
+        r = { ok: false, error: String((e && e.message) || e) };
+      }
+      if (!r || !r.ok || !r.json || !Array.isArray(r.json.value)) {
+        if (page === 0) return { ok: false, error: (r && (r.error || (r.status && `HTTP ${r.status}`))) || "agenda refusé par Graph" };
+        break;
+      }
+      for (const e of r.json.value) {
+        if (!e || typeof e !== "object") continue;
+        const startAt = utc(e.start);
+        const endAt = utc(e.end);
+        if (!startAt || !endAt) continue;
+        const join = String((e.onlineMeeting && e.onlineMeeting.joinUrl) || "");
+        events.push({
+          id: s(e.id, 300),
+          subject: s(e.subject, 200),
+          start: startAt,
+          end: endAt,
+          // Sur la journée : la date affichée par Teams, sans fuseau (« 2026-11-25 »).
+          all_day: e.isAllDay === true,
+          start_day: e.isAllDay === true ? String((e.start && e.start.dateTime) || "").slice(0, 10) : "",
+          end_day: e.isAllDay === true ? String((e.end && e.end.dateTime) || "").slice(0, 10) : "",
+          show_as: s(e.showAs, 20),
+          private: ["private", "personal", "confidential"].includes(String(e.sensitivity || "")),
+          cancelled: e.isCancelled === true,
+          online: Boolean(join) || e.isOnlineMeeting === true,
+          join_url: join.slice(0, 2000),
+          thread: meetingThreadOf(join),
+          organizer: s(e.organizer && e.organizer.emailAddress && e.organizer.emailAddress.name, 120),
+          location: s(e.location && e.location.displayName, 160),
+          recurring: e.type === "occurrence" || e.type === "exception",
+          response: s(e.responseStatus && e.responseStatus.response, 30),
+        });
+      }
+      const next = String(r.json["@odata.nextLink"] || "");
+      url = next.startsWith("https://graph.microsoft.com/") ? next : "";
+    }
+    return { ok: true, events };
+  };
 
   // --- Sonde des conversations de réunion (découverte, lecture seule) ---
   // Pour câbler les réunions sur le service de chat, il faut savoir quel message porte la carte
@@ -3932,6 +4026,8 @@
     chatdm: (args) => chatDm(args || {}),
     meetingshapes: (args) => meetingShapes(args || {}),
     chatmeetings: (args) => chatMeetings(args || {}),
+    // L'agenda de l'utilisateur sur une période (Graph, jeton que Teams a posé), en lecture seule.
+    calendarevents: (args) => calendarEvents(args || {}),
     chatsearch: (args) => chatSearch(args || {}),
     // Appel authentifié DEPUIS la page : fetch same-origin ou vers un service Teams que la
     // page interroge déjà, avec SES propres credentials. Ne renvoie que le corps métier parsé

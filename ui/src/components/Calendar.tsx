@@ -11,6 +11,8 @@ import {
   FolderOpen,
   Info,
   Loader2,
+  Lock,
+  MapPin,
   MessagesSquare,
   NotebookPen,
   RefreshCw,
@@ -20,9 +22,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Trame } from "@/api";
-import type { Meeting } from "@/types";
+import type { CalendarEvent, Meeting } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { JoinMeeting } from "@/components/JoinMeeting";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InitialsAvatar, Segment } from "@/components/kit";
@@ -38,6 +42,7 @@ import {
   hourRange,
   isoDay,
   isoWeek,
+  joinCalendar,
   layoutDay,
   monthGrid,
   monthLabel,
@@ -46,7 +51,9 @@ import {
   relativeLabel,
   untimed,
   visibleDays,
+  weekSpan,
   WEEKDAY_SHORT,
+  type CalItem,
   type Placed,
 } from "@/lib/calendar";
 import type { ReportSession } from "@/types";
@@ -54,9 +61,16 @@ import type { ReportSession } from "@/types";
 /** Hauteur d'une heure dans la grille. */
 const HOUR = 64;
 
-type Tone = "saved" | "available" | "none";
+/** Un bloc du calendrier : un événement de l'agenda, sa réunion lue, ou une réunion lue seule. */
+type Item = CalItem<CalendarEvent, Meeting>;
 
-/** Une couleur par état de transcription, pas par réunion : vert enregistrée, violet Teams à récupérer, neutre sans. */
+type Tone = "saved" | "available" | "none" | "upcoming" | "personal";
+
+/** L'agenda lu par semaine (lundi → événements), gardé le temps de la session. */
+const agenda = new Map<string, CalendarEvent[]>();
+
+/** Une couleur par état, pas par réunion : vert transcription enregistrée, violet Teams à récupérer,
+ *  neutre sans transcription, pointillé à venir, effacé pour une absence ou un événement perso. */
 const TONE: Record<Tone, { label: string; block: string; dot: string; title: string }> = {
   saved: {
     label: "Transcription enregistrée",
@@ -76,6 +90,18 @@ const TONE: Record<Tone, { label: string; block: string; dot: string; title: str
     dot: "bg-muted-foreground/60",
     title: "text-foreground",
   },
+  upcoming: {
+    label: "À venir",
+    block: "border-dashed border-teams/50 bg-transparent hover:bg-teams/10",
+    dot: "border border-dashed border-teams bg-transparent",
+    title: "text-foreground",
+  },
+  personal: {
+    label: "Absence ou événement perso",
+    block: "border-border/60 bg-muted/20 hover:bg-muted/45",
+    dot: "bg-muted-foreground/25",
+    title: "text-muted-foreground",
+  },
 };
 
 const timeZone = (() => {
@@ -90,10 +116,11 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const hhmm = (minutes: number) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
 
 /**
- * Calendrier des réunions Teams que Trame a lues : la semaine (ou un jour) en grille
- * horaire, comme l'agenda de Teams ou d'Outlook. La couleur dit l'état de la transcription ;
- * un clic ouvre le volet de la réunion (transcription, détails, compte-rendu).
- * Même liste que Réunions, partagée en mémoire : rien n'est relu dans Teams sans demande.
+ * Calendrier : l'agenda Teams de la semaine (ou d'un jour) en grille horaire, comme Teams ou
+ * Outlook, avec les transcriptions des réunions lues rattachées à leur rendez-vous. La couleur
+ * dit l'état de la transcription ; un clic ouvre le volet (transcription, détails, compte-rendu,
+ * lien pour rejoindre). L'agenda est lu sur Graph dans la page Teams de Trame, sans rien y ouvrir ;
+ * sans agenda (pilote sans Graph), restent les réunions lues, comme avant.
  */
 export function Calendar({ trame }: { trame: Trame }) {
   const [meetings, setMeetings] = useState<Meeting[] | null>(memory.meetings);
@@ -106,7 +133,12 @@ export function Calendar({ trame }: { trame: Trame }) {
   const [starting, setStarting] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const view = trame.calendarView;
+  const personal = trame.calendarPersonal;
   const wide = useMedia("(min-width: 80rem)");
+  const span = useMemo(() => weekSpan(anchor), [anchor]);
+  const [events, setEvents] = useState<Record<string, CalendarEvent[]>>(() => Object.fromEntries(agenda));
+  const [agendaState, setAgendaState] = useState<"idle" | "loading" | "unavailable">("idle");
+  const [agendaError, setAgendaError] = useState<string | null>(null);
 
   useEffect(() => {
     memory.meetings = meetings;
@@ -129,12 +161,34 @@ export function Calendar({ trame }: { trame: Trame }) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // L'agenda de la semaine affichée : lu à l'arrivée sur une semaine, relu sur demande.
+  const readAgenda = async (week: { start: string; end: string }) => {
+    setAgendaState("loading");
+    const res = await trame.calendar(week.start, week.end);
+    if (!res.ok) {
+      // Pilote sans agenda : le calendrier montre les réunions lues, comme avant, sans alerte.
+      setAgendaState(res.status === 501 ? "unavailable" : "idle");
+      if (res.status !== 501) setAgendaError(res.error);
+      return;
+    }
+    setAgendaState("idle");
+    setAgendaError(null);
+    agenda.set(week.start, res.events);
+    setEvents((all) => ({ ...all, [week.start]: res.events }));
+    memory.directory = res.directory;
+    setMeetings(res.meetings);
+  };
+  useEffect(() => {
+    if (agendaState === "unavailable" || agenda.has(span.start)) return;
+    void readAgenda(span);
+  }, [span.start]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const load = async () => {
     setLoading(true);
     setError(null);
     const res = await trame.listMeetings();
-    setLoading(false);
     if (!res.ok) {
+      setLoading(false);
       setError({ message: res.error, status: res.status });
       return;
     }
@@ -142,16 +196,26 @@ export function Calendar({ trame }: { trame: Trame }) {
     memory.directory = res.directory;
     setMeetings(res.meetings);
     setFetches((f) => Object.fromEntries(Object.entries(f).filter(([, x]) => x.state === "error")));
+    if (agendaState !== "unavailable") await readAgenda(span);
+    setLoading(false);
   };
 
   const savedOf = (m: Meeting) => {
     const f = fetches[m.meetingId];
     return f?.state === "ok" ? { path: f.saved.path, name: f.saved.name } : m.saved;
   };
-  const toneOf = (m: Meeting): Tone => (savedOf(m) ? "saved" : m.transcript ? "available" : "none");
+  const toneOf = (it: Item): Tone => {
+    const m = it.meeting;
+    if (m) return savedOf(m) ? "saved" : m.transcript ? "available" : "none";
+    const e = it.event!;
+    if (e.showAs === "oof" || e.private || !e.online) return "personal";
+    return e.ended ? "none" : "upcoming";
+  };
 
   const days = useMemo(() => visibleDays(anchor, view), [anchor, view]);
-  const perDay = useMemo(() => byDay(meetings ?? []), [meetings]);
+  const weekEvents = events[span.start] ?? null;
+  const items = useMemo(() => joinCalendar(weekEvents ?? [], meetings ?? [], personal), [weekEvents, meetings, personal]);
+  const perDay = useMemo(() => byDay(items), [items]);
   const counts = useMemo(() => occurrences(meetings ?? []), [meetings]);
   const placedByDay = useMemo(() => days.map((d) => layoutDay(perDay.get(isoDay(d)) ?? [])), [days, perDay]);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -168,7 +232,7 @@ export function Calendar({ trame }: { trame: Trame }) {
     [meetings]
   );
 
-  const step = (dir: -1 | 1) => setAnchor((a) => addDays(a, dir * (view === "week" ? 7 : 1)));
+  const step = (dir: -1 | 1) => setAnchor((a) => addDays(a, dir * (view === "day" ? 1 : 7)));
   const today = isoDay(now);
   const onToday = days.some((d) => isoDay(d) === today);
 
@@ -208,23 +272,33 @@ export function Calendar({ trame }: { trame: Trame }) {
     } else toast.error("Compte-rendu impossible", { description: res.error });
   };
 
-  const detail = (m: Meeting) => (
-    <MeetingCard
-      meeting={m}
-      now={now}
-      tone={toneOf(m)}
-      saved={savedOf(m)}
-      fetch={fetches[m.meetingId]}
-      repeats={counts.get(fold(m.title)) ?? 1}
-      reporting={starting === m.meetingId}
-      onClose={() => setSelectedId(null)}
-      onFetch={() => void fetchOne(m)}
-      onOpen={(p) => void openFile(p)}
-      onReveal={(p) => void openFile(p, true)}
-      onCopy={(p) => void copyPath(p)}
-      onReport={() => void startReport(m)}
-    />
-  );
+  const detail = (it: Item) => {
+    const e = it.event;
+    const join = e?.online && e.joinUrl && !e.ended ? <JoinMeeting meeting={{ url: e.joinUrl, live: e.started }} /> : null;
+    if (!it.meeting) return <EventCard item={it} event={e!} now={now} tone={toneOf(it)} join={join} onClose={() => setSelectedId(null)} />;
+    const raw = it.meeting;
+    // Le titre et le créneau de l'agenda quand il y en a un ; l'organisateur de l'agenda à défaut.
+    const m: Meeting = { ...raw, title: it.title, date: it.date, start: it.start ?? raw.start, end: it.end ?? raw.end, organizer: raw.organizer || e?.organizer || "" };
+    return (
+      <MeetingCard
+        meeting={m}
+        now={now}
+        tone={toneOf(it)}
+        saved={savedOf(raw)}
+        fetch={fetches[raw.meetingId]}
+        repeats={counts.get(fold(raw.title)) ?? 1}
+        recurring={Boolean(e?.recurring)}
+        join={join}
+        reporting={starting === raw.meetingId}
+        onClose={() => setSelectedId(null)}
+        onFetch={() => void fetchOne(raw)}
+        onOpen={(p) => void openFile(p)}
+        onReveal={(p) => void openFile(p, true)}
+        onCopy={(p) => void copyPath(p)}
+        onReport={() => void startReport(raw)}
+      />
+    );
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 pb-4">
@@ -239,14 +313,14 @@ export function Calendar({ trame }: { trame: Trame }) {
           Semaine {isoWeek(days[0])}
         </span>
         <div className="flex-1" />
-        <Button variant="outline" size="sm" className="rounded-full" onClick={() => setAnchor(new Date())} disabled={onToday && view === "week"}>
+        <Button variant="outline" size="sm" className="rounded-full" onClick={() => setAnchor(new Date())} disabled={onToday && view !== "day"}>
           Aujourd'hui
         </Button>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="icon-sm" className="rounded-full" aria-label={view === "week" ? "Semaine précédente" : "Jour précédent"} onClick={() => step(-1)}>
+          <Button variant="outline" size="icon-sm" className="rounded-full" aria-label={view === "day" ? "Jour précédent" : "Semaine précédente"} onClick={() => step(-1)}>
             <ChevronLeft className="size-4" />
           </Button>
-          <Button variant="outline" size="icon-sm" className="rounded-full" aria-label={view === "week" ? "Semaine suivante" : "Jour suivant"} onClick={() => step(1)}>
+          <Button variant="outline" size="icon-sm" className="rounded-full" aria-label={view === "day" ? "Jour suivant" : "Semaine suivante"} onClick={() => step(1)}>
             <ChevronRight className="size-4" />
           </Button>
         </div>
@@ -256,13 +330,14 @@ export function Calendar({ trame }: { trame: Trame }) {
           onChange={trame.setCalendarView}
           options={[
             { value: "day", label: "Jour" },
+            { value: "work_week", label: "Semaine de travail" },
             { value: "week", label: "Semaine" },
           ]}
         />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Relire les réunions dans Teams" onClick={load} disabled={loading}>
-              <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+              <RefreshCw className={cn("size-4", (loading || agendaState === "loading") && "animate-spin")} />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Relire les réunions dans Teams</TooltipContent>
@@ -276,14 +351,29 @@ export function Calendar({ trame }: { trame: Trame }) {
           <Button variant="ghost" size="sm" className="h-7 rounded-full" onClick={load}>Réessayer</Button>
         </div>
       )}
+      {agendaError && !error && (
+        <div role="alert" className="flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/5 px-4 py-2.5 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-warning" />
+          <span className="min-w-0 flex-1">Agenda Teams non lu : {agendaError}. Seules les réunions déjà lues sont affichées.</span>
+          <Button variant="ghost" size="sm" className="h-7 rounded-full" onClick={() => void readAgenda(span)}>Réessayer</Button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-5">
         {wide && (
           <aside aria-label="Navigation du calendrier" className="flex w-60 shrink-0 flex-col gap-5 3xl:w-64">
             <MiniMonth anchor={anchor} days={days} today={today} busy={perDay} onPick={setAnchor} />
-            <Legend />
+            <Legend personal={personal} />
+            {agendaState !== "unavailable" && (
+              <label className="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+                <span>Absences et événements perso</span>
+                <Switch size="sm" aria-label="Afficher les absences et les événements perso" checked={personal} onCheckedChange={trame.setCalendarPersonal} />
+              </label>
+            )}
             <p className="px-1 text-xs text-pretty text-muted-foreground">
-              Les réunions Teams que Trame a lues, terminées ou en cours. {meetings ? "" : "Aucune liste lue pour l'instant."}
+              {agendaState === "unavailable"
+                ? `Les réunions Teams que Trame a lues, terminées ou en cours. ${meetings ? "" : "Aucune liste lue pour l'instant."}`
+                : "Ton agenda Teams, avec la transcription des réunions qui en ont une."}
             </p>
           </aside>
         )}
@@ -307,8 +397,8 @@ export function Calendar({ trame }: { trame: Trame }) {
           />
           {shownCount === 0 && (
             <EmptyOverlay
-              loading={loading}
-              listed={meetings !== null}
+              loading={loading || (agendaState === "loading" && weekEvents === null)}
+              listed={meetings !== null || weekEvents !== null}
               latest={latest}
               onLoad={load}
               onLatest={() => latest && setAnchor(parseDay(latest)!)}
@@ -336,12 +426,12 @@ function Grid({
   today: string;
   now: Date;
   range: { from: number; to: number };
-  placedByDay: Placed<Meeting>[][];
-  allDay: Meeting[][];
+  placedByDay: Placed<Item>[][];
+  allDay: Item[][];
   selectedId: string | null;
-  toneOf: (m: Meeting) => Tone;
+  toneOf: (m: Item) => Tone;
   onSelect: (id: string | null) => void;
-  detail: (m: Meeting) => React.ReactNode;
+  detail: (m: Item) => React.ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const hours = Array.from({ length: range.to - range.from }, (_, i) => range.from + i);
@@ -396,7 +486,7 @@ function Grid({
           {allDay.map((items, i) => (
             <div key={i} className="flex min-w-0 flex-col gap-1 border-l p-1">
               {items.map((m) => (
-                <EventPopover key={m.meetingId} open={selectedId === m.meetingId} onOpen={(o) => onSelect(o ? m.meetingId : null)} detail={detail(m)}>
+                <EventPopover key={m.key} open={selectedId === m.key} onOpen={(o) => onSelect(o ? m.key : null)} detail={detail(m)}>
                   <button
                     type="button"
                     className={cn("truncate rounded-md border px-2 py-1 text-left text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/60", TONE[toneOf(m)].block, TONE[toneOf(m)].title)}
@@ -436,12 +526,12 @@ function Grid({
               ))}
               {placedByDay[di].map((p) => (
                 <EventBlock
-                  key={p.item.meetingId}
+                  key={p.item.key}
                   placed={p}
                   from={range.from}
                   tone={toneOf(p.item)}
-                  selected={selectedId === p.item.meetingId}
-                  onSelect={(open) => onSelect(open ? p.item.meetingId : null)}
+                  selected={selectedId === p.item.key}
+                  onSelect={(open) => onSelect(open ? p.item.key : null)}
                   detail={detail(p.item)}
                 />
               ))}
@@ -486,7 +576,7 @@ function EventBlock({
   onSelect,
   detail,
 }: {
-  placed: Placed<Meeting>;
+  placed: Placed<Item>;
   from: number;
   tone: Tone;
   selected: boolean;
@@ -517,7 +607,10 @@ function EventBlock({
           selected && "z-[2] border-2 shadow-md"
         )}
       >
-        <span className={cn("truncate text-compact leading-tight font-medium", TONE[tone].title)}>{m.title}</span>
+        <span className={cn("flex min-w-0 items-center gap-1 truncate text-compact leading-tight font-medium", TONE[tone].title)}>
+          {m.event?.private && <Lock className="size-3 shrink-0" aria-label="Privé" />}
+          <span className="truncate">{m.title}</span>
+        </span>
         <span className="truncate text-xs leading-tight text-muted-foreground tabular-nums">
           {short ? start : `${start} à ${end}`}
         </span>
@@ -543,6 +636,8 @@ function MeetingCard({
   saved,
   fetch,
   repeats,
+  recurring,
+  join,
   reporting,
   onClose,
   onFetch,
@@ -557,6 +652,8 @@ function MeetingCard({
   saved: { path: string; name: string } | null;
   fetch?: Fetch;
   repeats: number;
+  recurring: boolean;
+  join: React.ReactNode;
   reporting: boolean;
   onClose: () => void;
   onFetch: () => void;
@@ -609,6 +706,7 @@ function MeetingCard({
           ) : (
             <span className="min-w-0 flex-1 text-sm text-muted-foreground">Organisation connue une fois la transcription relue</span>
           )}
+          {join}
           {m.transcript ? (
             reportButton
           ) : (
@@ -684,11 +782,73 @@ function MeetingCard({
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2.5 text-sm">
             <Fact icon={<CalendarClock className="size-4" />} label="Date" value={day ? dayLabel(day) + " " + day.getFullYear() : m.when || "Inconnue"} />
             {start && end && <Fact icon={<Clock className="size-4" />} label="Horaire" value={`${start} à ${end}${duration ? ` · ${duration}` : ""}`} />}
-            <Fact icon={<Repeat className="size-4" />} label="Série" value={repeats > 1 ? `${repeats} occurrences dans la liste` : "Réunion ponctuelle"} />
+            <Fact icon={<Repeat className="size-4" />} label="Série" value={repeats > 1 ? `${repeats} occurrences dans la liste` : recurring ? "Réunion récurrente" : "Réunion ponctuelle"} />
             {m.chat && m.chat !== m.title && <Fact icon={<MessagesSquare className="size-4" />} label="Conversation" value={m.chat} />}
           </dl>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/** Le volet d'un événement de l'agenda sans réunion lue : à venir, jamais lancé, ou perso. */
+function EventCard({ item, event: e, now, tone, join, onClose }: { item: Item; event: CalendarEvent; now: Date; tone: Tone; join: React.ReactNode; onClose: () => void }) {
+  const day = parseDay(item.date);
+  const duration = e.allDay ? "" : durationLabel(durationMinutes(e.start, e.end));
+  const relative = e.allDay ? null : relativeLabel(item, now);
+  const when = [day ? dayLabel(day) : "", e.allDay ? "toute la journée" : `${e.start} à ${e.end}`].filter(Boolean).join(", ");
+  const status = e.showAs === "oof"
+    ? "Absence dans ton agenda."
+    : !e.online
+      ? "Événement de ton agenda, sans réunion Teams."
+      : !e.started
+        ? "Réunion Teams à venir : sa transcription arrivera ici une fois la réunion terminée."
+        : !e.ended
+          ? "Réunion en cours."
+          : "Aucun appel Teams terminé trouvé pour cette réunion : pas de transcription.";
+  return (
+    <div className="flex flex-col gap-2.5 px-5 pt-4 pb-4">
+      <div className="flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium">
+          <span className={cn("size-2 rounded-full", TONE[tone].dot)} /> {TONE[tone].label}
+        </span>
+        {relative && <span className="rounded-md bg-secondary px-2 py-0.5 text-xs text-muted-foreground">{relative}</span>}
+        <div className="flex-1" />
+        <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Fermer" onClick={onClose}>
+          <X className="size-4" />
+        </Button>
+      </div>
+      <h2 className="flex items-center gap-2 text-xl leading-snug font-semibold text-balance">
+        {e.private && <Lock className="size-4 shrink-0 text-muted-foreground" aria-label="Privé" />}
+        {item.title}
+      </h2>
+      <p className="flex items-center gap-2 text-sm text-muted-foreground tabular-nums">
+        <Clock className="size-4 shrink-0" />
+        <span className="first-letter:uppercase">{when}</span>
+        {duration && <span>· {duration}</span>}
+      </p>
+      {e.location && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <MapPin className="size-4 shrink-0" /> <span className="min-w-0 truncate">{e.location}</span>
+        </p>
+      )}
+      {(e.organizer || join) && (
+        <div className="flex items-center gap-2">
+          {e.organizer ? (
+            <>
+              <InitialsAvatar name={e.organizer} className="size-7" />
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">Organisée par {e.organizer}</span>
+            </>
+          ) : (
+            <div className="flex-1" />
+          )}
+          {join}
+        </div>
+      )}
+      <p className="rounded-xl border bg-muted/40 p-3 text-sm text-pretty text-muted-foreground">
+        {status}
+        {e.recurring && " Réunion récurrente."}
+      </p>
     </div>
   );
 }
@@ -728,7 +888,7 @@ function MiniMonth({
   anchor: Date;
   days: Date[];
   today: string;
-  busy: Map<string, Meeting[]>;
+  busy: Map<string, Item[]>;
   onPick: (d: Date) => void;
 }) {
   const [month, setMonth] = useState(() => new Date(anchor.getFullYear(), anchor.getMonth(), 1));
@@ -768,7 +928,7 @@ function MiniMonth({
                     type="button"
                     role="gridcell"
                     aria-selected={shown.has(iso)}
-                    aria-label={`${dayLabel(d)}${has ? `, ${busy.get(iso)!.length} réunion${busy.get(iso)!.length > 1 ? "s" : ""}` : ""}`}
+                    aria-label={`${dayLabel(d)}${has ? `, ${busy.get(iso)!.length} événement${busy.get(iso)!.length > 1 ? "s" : ""}` : ""}`}
                     onClick={() => onPick(d)}
                     className={cn(
                       "relative mx-auto grid size-7 place-items-center rounded-full tabular-nums outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60",
@@ -790,10 +950,10 @@ function MiniMonth({
   );
 }
 
-function Legend() {
+function Legend({ personal }: { personal: boolean }) {
   return (
     <ul className="flex flex-col gap-2 px-1 text-xs text-muted-foreground" aria-label="Légende">
-      {(Object.keys(TONE) as Tone[]).map((t) => (
+      {(Object.keys(TONE) as Tone[]).filter((t) => personal || t !== "personal").map((t) => (
         <li key={t} className="flex items-center gap-2">
           <span className={cn("size-2.5 rounded-sm", TONE[t].dot)} /> {TONE[t].label}
         </li>
@@ -823,7 +983,7 @@ function EmptyOverlay({
           {loading ? <Loader2 className="size-5 animate-spin" /> : <CalendarClock className="size-5" />}
         </span>
         {loading ? (
-          <p role="status" className="text-sm text-muted-foreground">Trame parcourt tes conversations de réunion dans Teams…</p>
+          <p role="status" className="text-sm text-muted-foreground">Trame lit ton agenda et tes réunions dans Teams…</p>
         ) : !listed ? (
           <>
             <div className="text-sm font-medium">Tes réunions ne sont pas encore lues</div>
@@ -834,7 +994,7 @@ function EmptyOverlay({
           </>
         ) : (
           <>
-            <div className="text-sm font-medium">Aucune réunion sur cette période</div>
+            <div className="text-sm font-medium">Aucun événement sur cette période</div>
             {latestDay ? (
               <Button variant="outline" className="mt-2 rounded-full" onClick={onLatest}>
                 Aller à la dernière ({dayLabel(latestDay)})
