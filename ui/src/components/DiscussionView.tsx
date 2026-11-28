@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
+import { Ban, BookOpenText, Brain, Check, Copy, ExternalLink, FileText, ListChecks, Loader2, Paperclip, Pencil, PenLine, Reply, RotateCcw, SearchX, Send, SmilePlus, SpellCheck, Star, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { StickToBottom, type StickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AutoToggle, Dotted, InitialsAvatar, PRESENCE, PresenceLabel, shake } from "@/components/kit";
@@ -28,7 +29,7 @@ import { layoutThread } from "@/lib/threadLayout";
 import { GithubLogo } from "@/brands";
 import { cn } from "@/lib/utils";
 import { CANCELLED, DELETED_TEXT, Trame } from "@/api";
-import { AttachmentLimits, DraftItem, FactCheck, FactClaim, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ReactionCount, ThreadMessage, WatchEntity, reactionGlyph } from "@/types";
+import { AttachmentLimits, DraftItem, FactCheck, FactClaim, LinkCard, MeetingLink, MessageHit, MessageRef, PendingFile, REACTIONS, Reaction, ReactionCount, ThreadMessage, WatchEntity, reactionGlyph } from "@/types";
 import { acceptOf, addFiles, humanSize, limitsShort, limitsText, pastedFiles } from "@/lib/attachments";
 import type { BriefTarget } from "@/components/BriefSheet";
 
@@ -150,12 +151,15 @@ function MessageEditor({
   onChange,
   onCancel,
   onSave,
+  cards,
 }: {
   value: string;
   saving: boolean;
   onChange: (text: string) => void;
   onCancel: () => void;
   onSave: () => void;
+  /** Aperçus de lien du message : montrés sous le texte, comme dans Teams. */
+  cards?: LinkCard[];
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -185,9 +189,10 @@ function MessageEditor({
         }}
         className="min-h-0 resize-none bg-background text-sm"
       />
+      <LinkCards cards={cards?.filter((c) => !c.url || value.includes(c.url))} interactive={false} />
       <div className="flex items-center justify-end gap-2">
         <span className="mr-auto text-xs text-muted-foreground">
-          <Kbd>Entrée</Kbd> enregistrer · <Kbd>Échap</Kbd> annuler
+          <Kbd>Entrée</Kbd> enregistrer · <Kbd>Maj+Entrée</Kbd> nouvelle ligne · <Kbd>Échap</Kbd> annuler
         </span>
         <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
           Annuler
@@ -230,6 +235,47 @@ function CopyButton({ text, separated }: { text: string; separated: boolean }) {
       </TooltipTrigger>
       <TooltipContent>{copied ? "Copié" : "Copier"}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** « Ajouter une réaction », juste à côté des réactions déjà posées (comme Teams). */
+function AddReaction({ mine, disabled, onReact }: { mine: Reaction[]; disabled: boolean; onReact: (r: Reaction) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          title="Ajouter une réaction"
+          aria-label="Ajouter une réaction"
+          className="inline-flex size-7 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-xs hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
+        >
+          <SmilePlus className="size-4" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="start" className="flex w-auto gap-0.5 rounded-full p-1">
+        {REACTIONS.map((r) => (
+          <button
+            key={r.key}
+            type="button"
+            title={mine.includes(r.key) ? `${r.label} · cliquer pour retirer` : r.label}
+            aria-label={mine.includes(r.key) ? `Retirer la réaction : ${r.label}` : `Réagir : ${r.label}`}
+            aria-pressed={mine.includes(r.key)}
+            onClick={() => {
+              setOpen(false);
+              onReact(r.key);
+            }}
+            className={cn(
+              "grid size-8 place-items-center rounded-full text-xl leading-none transition-transform hover:scale-125 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring",
+              mine.includes(r.key) && "bg-primary/10"
+            )}
+          >
+            {r.emoji}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -313,6 +359,22 @@ function MessageActions({
           <TooltipContent>Répondre à ce message</TooltipContent>
         </Tooltip>
       )}
+      {canEdit && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Modifier ce message"
+              disabled={Boolean(pending)}
+              onClick={onEdit}
+              className="grid size-7 place-items-center rounded-full border-l text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <Pencil className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Modifier ce message</TooltipContent>
+        </Tooltip>
+      )}
       {propose && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -342,22 +404,6 @@ function MessageActions({
         </Tooltip>
       )}
       {canCopy && <CopyButton text={message.text} separated={canReact && !canReply && !propose} />}
-      {canEdit && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="Modifier ce message"
-              disabled={Boolean(pending)}
-              onClick={onEdit}
-              className="ml-0.5 grid size-7 place-items-center rounded-full border-l text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              <Pencil className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Modifier ce message</TooltipContent>
-        </Tooltip>
-      )}
       {canDelete && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -829,7 +875,7 @@ export function DiscussionView({
     setSaving(false);
     if (!res.ok) return void toast.error("Message non modifié", { description: res.error });
     setEditing(null);
-    setMessages((list) => (list ?? []).map((x) => (sameRef(e.ref, x) ? { ...x, text, edited: true, links: [] } : x)));
+    setMessages((list) => (list ?? []).map((x) => (sameRef(e.ref, x) ? { ...x, text, edited: true, links: [], cards: x.cards?.filter((c) => !c.url || text.includes(c.url)) } : x)));
     toast.success("Message modifié dans Teams");
   };
 
@@ -1087,9 +1133,9 @@ export function DiscussionView({
                 const canReply = live && caps.reply;
                 // Seulement tes messages, connus de Teams par leur identifiant.
                 const canDelete = live && caps.delete && m.mine && Boolean(m.id);
-                // Texte simple seulement : citation, mention, pièce jointe ou aperçu seraient
-                // perdus en le réécrivant (Teams les garde, à modifier là-bas).
-                const plain = !m.quote && !m.replyTo && !m.mentions?.length && !m.files?.length && !m.images?.length && !m.cards?.length;
+                // Texte, aperçus de lien compris (gardés tant que l'adresse reste) : citation,
+                // mention ou pièce jointe seraient perdues en le réécrivant (à modifier dans Teams).
+                const plain = !m.quote && !m.replyTo && !m.mentions?.length && !m.files?.length && !m.images?.length;
                 const isEditing = Boolean(editing && m.mine && sameRef(editing.ref, m));
                 const canEdit = live && caps.edit && m.mine && Boolean(m.id) && Boolean(m.text.trim()) && plain && !editing;
                 const canPropose = live && Boolean(m.text.trim() || m.files?.length || m.images?.length);
@@ -1097,6 +1143,7 @@ export function DiscussionView({
                 const isFound = i === foundIndex;
                 const pending = reacting?.index === i ? reacting.reaction : null;
                 const edited = Boolean(m.edited && !m.deleted);
+                const imageOnly = !m.deleted && !m.text.trim() && Boolean(m.images?.length) && !m.files?.length && !m.cards?.length && !m.quote && !m.replyTo;
                 const body = isEditing && editing ? (
                   <MessageEditor
                     value={editing.text}
@@ -1104,6 +1151,7 @@ export function DiscussionView({
                     onChange={(text) => setEditing((e) => (e ? { ...e, text } : e))}
                     onCancel={() => !saving && setEditing(null)}
                     onSave={saveEdit}
+                    cards={m.cards}
                   />
                 ) : m.deleted ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground italic">
@@ -1127,7 +1175,7 @@ export function DiscussionView({
                 );
                 const tally = tallyOf(m);
                 const reactions = tally.length > 0 && (
-                  <div className={cn("flex flex-wrap items-center gap-1", m.mine && "justify-end")}>
+                  <div className={cn("relative flex flex-wrap items-center gap-1", m.mine ? "-mt-2.5 mr-2 justify-end" : "-mt-1")}>
                     <AnimatePresence initial={false}>
                       {tally.map((t) => {
                         const r = t.key;
@@ -1147,18 +1195,19 @@ export function DiscussionView({
                             disabled={!canReact || Boolean(reacting)}
                             onClick={() => react(m, i, r)}
                             className={cn(
-                              "inline-flex items-center gap-1 rounded-full border px-1.5 text-xs leading-5 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default",
-                              t.mine
-                                ? "border-primary/30 bg-primary/10 enabled:hover:border-primary/60 enabled:hover:bg-primary/20"
-                                : "border-border bg-muted/40 enabled:hover:bg-muted"
+                              "inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default",
+                              // Fond opaque : la pastille chevauche le bas de la bulle, comme dans Teams.
+                              "bg-popover shadow-xs enabled:hover:bg-muted",
+                              t.mine ? "border-primary/60" : "border-border"
                             )}
                           >
-                            {pending === r ? <Loader2 className="inline size-3 animate-spin" /> : reactionGlyph(r, t.emoji)}
+                            {pending === r ? <Loader2 className="inline size-4 animate-spin" /> : <span className="text-lg leading-none">{reactionGlyph(r, t.emoji)}</span>}
                             {t.count > 1 && <span className="tabular-nums text-muted-foreground">{t.count}</span>}
                           </motion.button>
                         );
                       })}
                     </AnimatePresence>
+                    {canReact && <AddReaction mine={m.reactions ?? []} disabled={Boolean(reacting)} onReact={(r) => react(m, i, r)} />}
                   </div>
                 );
                 return (
@@ -1204,7 +1253,9 @@ export function DiscussionView({
                           <div
                             title={row.tail ? undefined : m.at}
                             className={cn(
-                              "flex max-w-full flex-col gap-1.5 rounded-2xl bg-muted px-3.5 py-2 text-sm leading-5 whitespace-pre-wrap",
+                              "flex max-w-full flex-col gap-1.5 rounded-2xl text-sm leading-5 whitespace-pre-wrap",
+                              // Une image seule (GIF, capture) se montre sans bulle autour, comme dans Teams.
+                              imageOnly ? "" : "bg-muted px-3.5 py-2",
                               isEditing && "w-full",
                               isFound && "ring-2 ring-warning/70",
                               targeted && "ring-2 ring-link/50"

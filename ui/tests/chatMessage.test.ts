@@ -166,3 +166,15 @@ test("message modifié : repéré par edittime, jamais sur un message supprimé"
   assert.equal(convert({ ...base, content: "v1" }).edited, false);
   assert.equal(convert({ ...base, content: "", properties: { edittime: "1", deletetime: "2" } }).edited, false);
 });
+
+test("émoji de Teams (image typée Emoji ou <emoji>) : gardé dans le texte par son caractère", () => {
+  const m = convert({
+    ...base,
+    content:
+      '<p><span class="animated-emoticon-20-rotatinglight" title="Gyrophare" type="(rotatinglight)">' +
+      '<img itemscope="" itemtype="http://schema.skype.com/Emoji" src="https://statics.teams.cdn.office.net/evergreen-assets/personal-expressions/v2/assets/emoticons/rotatinglight/default/20_f.png" title="Gyrophare" alt="🚨" style="width:20px;height:20px;"></span>' +
+      ' <a href="https://www.githubstatus.com/">https://www.githubstatus.com/</a> <emoji id="smile" alt="😄" title="Sourire"></emoji></p>',
+  });
+  assert.equal(m.text, "🚨 https://www.githubstatus.com/ 😄");
+  assert.deepEqual(m.images, []);
+});

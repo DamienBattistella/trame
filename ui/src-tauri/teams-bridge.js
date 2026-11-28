@@ -1724,6 +1724,9 @@
     // typé Reply (auteur, heure, extrait) ; dans la page, la carte de citation de Teams.
     const isQuote = (el) => /schema\.skype\.com\/Reply/i.test(attr(el, "itemtype")) || /quoted-reply/i.test(attr(el, "data-tid"));
     const isMention = (el) => /schema\.skype\.com\/Mention/i.test(attr(el, "itemtype"));
+    const isEmoji = (el) => tag(el) === "EMOJI" || (tag(el) === "IMG" && /schema\.skype\.com\/Emoji/i.test(attr(el, "itemtype")));
+    // L'alt donne le caractère ; un ancien émoticône n'a qu'un code (« (cool) ») : gardé tel quel.
+    const emojiOf = (el) => one(attr(el, "alt")) || one(attr(el, "title"));
     const QUOTE_WHEN = /^(\d{1,2}\/\d{1,2}(\/\d{2,4})?\s+)?\d{1,2}:\d{2}$|^(hier|aujourd'hui|yesterday|today|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b.*\d{1,2}:\d{2}$/i;
     // Adresse ouvrable : http(s) seulement ; un lien « Safe Links » d'Outlook donne l'adresse
     // qu'il protège ; les paramètres de suivi (atlOrigin, utm_*) sont retirés.
@@ -1763,6 +1766,12 @@
         }
         if (n.nodeType !== 1) return;
         const t = tag(n);
+        // Émoji de Teams : une <img> typée Emoji (ou <emoji>) dont l'alt porte le caractère
+        // (« 🚨 ») ; sans lui, l'émoji disparaîtrait du texte avec les autres images.
+        if (isEmoji(n)) {
+          out += emojiOf(n);
+          return;
+        }
         // Pièces jointes : lues à part (messageFiles) ; leur grille porte aussi le texte
         // d'attente de Teams (« Le chargement est en cours… »), jamais celui du message.
         if (SKIP.has(t) || SKIP_ROLES.has(attr(n, "role")) || isCard(n) || attr(n, "data-tid") === "file-attachment-grid") return;
@@ -2061,6 +2070,23 @@
     }
     return null;
   };
+  // Un GIF animé redessiné dans un canvas n'en garde que la première image : il passe tel
+  // quel (data: d'origine) s'il n'est pas trop lourd, sinon en miniature fixe.
+  const GIF_MAX = 1_100_000; // ≈ 1,5 Mo en base64 : la limite du moteur par image
+  const dataUrl = (blob) =>
+    new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(typeof r.result === "string" ? r.result : null);
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(blob);
+    });
+  const animated = async (blob, bitmap) => {
+    if (!/^image\/gif$/i.test(blob.type || "") || blob.size > GIF_MAX) return null;
+    const data = await dataUrl(blob);
+    if (!data) return null;
+    const scale = Math.min(1, THUMBS.width / bitmap.width);
+    return { data, width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) };
+  };
   // Miniature JPEG d'une image d'un message : celle que Teams affiche déjà (adresse blob:
   // de la page), sinon l'originale demandée au service Teams ; null si rien n'est lisible.
   const thumbnail = async (img) => {
@@ -2069,6 +2095,8 @@
       const blob = loaded(img) && local(src) ? await (await fetch(src)).blob() : await fetchSigned(img);
       if (!blob) return null;
       const bitmap = await createImageBitmap(blob);
+      const gif = await animated(blob, bitmap);
+      if (gif) return gif;
       const scale = Math.min(1, THUMBS.width / bitmap.width);
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(bitmap.width * scale);
@@ -2403,12 +2431,15 @@
               const blob = await chatsvc.image(src);
               if (blob) {
                 const bitmap = await createImageBitmap(blob);
-                const scale = Math.min(1, THUMBS.width / bitmap.width);
-                const canvas = document.createElement("canvas");
-                canvas.width = Math.round(bitmap.width * scale);
-                canvas.height = Math.round(bitmap.height * scale);
-                canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-                shot = { data: canvas.toDataURL("image/jpeg", 0.8), width: canvas.width, height: canvas.height };
+                shot = await animated(blob, bitmap);
+                if (!shot) {
+                  const scale = Math.min(1, THUMBS.width / bitmap.width);
+                  const canvas = document.createElement("canvas");
+                  canvas.width = Math.round(bitmap.width * scale);
+                  canvas.height = Math.round(bitmap.height * scale);
+                  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                  shot = { data: canvas.toDataURL("image/jpeg", 0.8), width: canvas.width, height: canvas.height };
+                }
               }
             } catch {}
           }
@@ -2803,8 +2834,8 @@
       if (!w.ok && !w.unknown && w.status >= 400 && w.status < 500) return notSent(`envoi refusé par le service de chat (HTTP ${w.status})`);
       return uncertain("envoi non confirmé : vérifie dans Teams avant de renvoyer");
     };
-    // Modifier un de SES messages, en texte simple seulement : réécrire en texte brut un
-    // message cité, avec mention, pièce jointe ou carte les perdrait. Ce refus est définitif
+    // Modifier un de SES messages, en texte (aperçus de lien compris) : réécrire en texte brut un
+    // message cité, avec mention ou pièce jointe les perdrait. Ce refus est définitif
     // (attempted : la page ne ferait pas mieux). Prouvé quand la relecture montre le nouveau
     // texte, marqué « Modifié ».
     const refused = (error) => ({ ok: false, attempted: true, refused: true, error });
@@ -2818,17 +2849,28 @@
       if (!me || mriOf(t.raw.from) !== me) return notSent("ce message n'est pas à toi : rien n'a été modifié");
       if ((t.raw.properties || {}).deletetime) return refused("message supprimé : rien n'a été modifié");
       const s = t.seen;
-      if (s.quote || s.mentions.length || s.files.length || s.images.length || s.cards.length)
-        return refused("message avec citation, mention, pièce jointe ou aperçu : modifie-le dans Teams");
+      if (s.quote || s.mentions.length || s.files.length || s.images.length)
+        return refused("message avec citation, mention ou pièce jointe : modifie-le dans Teams");
       const want = fold(body);
       if (fold(s.text) === want) return { ok: true, already: true };
+      // Aperçus de lien : gardés tels que Teams les a faits, comme quand on modifie dans Teams,
+      // tant que leur adresse reste dans le nouveau texte ; retirés avec elle.
+      let stored = (t.raw.properties || {}).links || [];
+      try {
+        if (typeof stored === "string") stored = JSON.parse(stored);
+      } catch {
+        stored = [];
+      }
+      const links = (Array.isArray(stored) ? stored : []).filter((l) => l && l.url && body.includes(String(l.url)));
+      const properties = { importance: "", subject: "" };
+      if (links.length) properties.links = JSON.stringify(links);
       const w = await chatsvc.write("edit", thread, t.mid, {
         content: toHtml(body),
         messagetype: "RichText/Html",
         contenttype: "text",
         amsreferences: [],
         imdisplayname: String(t.raw.imdisplayname || ""),
-        properties: { importance: "", subject: "" },
+        properties,
       });
       if (!w.sent) return notSent(w.error);
       if (!w.ok && !w.unknown) return { ok: false, attempted: true, error: `modification refusée (HTTP ${w.status})` };
