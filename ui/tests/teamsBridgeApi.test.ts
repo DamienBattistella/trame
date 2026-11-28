@@ -23,6 +23,7 @@ const teamsPage = () => {
   const replies: any[] = [];
   const fetchCalls: Array<{ url: string; init: any }> = [];
   const wsCreated: string[] = [];
+  const ticks: Function[] = [];
   let nextResponse = fakeResponse('{"ok":true}');
   class FakeWS {
     url: string;
@@ -68,7 +69,11 @@ const teamsPage = () => {
         throw new TypeError("This document requires 'TrustedHTML' assignment.");
       }
     },
-    setTimeout: (fn: Function, ms?: number) => setTimeout(fn as any, ms),
+    // Les minuteries de 20 s (relance du jeton) sont aussi notées, pour être jouées à la main.
+    setTimeout: (fn: Function, ms?: number) => {
+      if (ms === 20000) ticks.push(fn);
+      return setTimeout(fn as any, ms);
+    },
     clearTimeout: (id: any) => clearTimeout(id),
     addEventListener: () => {},
     fetch: async (url: any, init: any) => {
@@ -103,6 +108,7 @@ const teamsPage = () => {
     fetchCalls,
     wsCreated,
     setResponse: (r: any) => (nextResponse = r),
+    ticks,
   };
 };
 
@@ -483,6 +489,62 @@ test("authz refusé : pas de nouvel échange tant que le jeton est le même, un 
   const ok = await p.run("chatsvc", { path: "/v1/users/ME/conversations" });
   assert.equal(ok.result.ok, true);
   assert.equal(authz, 2);
+});
+
+// La page au repos, jeton expiré : horloge avancée, liste visible, sessionStorage et reload simulés.
+const idlePage = async () => {
+  const p = teamsPage();
+  let offset = 0;
+  const RealDate = Date;
+  p.ctx.Date = class extends RealDate {
+    static now() {
+      return RealDate.now() + offset;
+    }
+  };
+  const store = new Map<string, string>();
+  p.ctx.sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, String(v)) };
+  let reloads = 0;
+  p.ctx.location.reload = () => reloads++;
+  p.ctx.document.querySelector = (sel: string) => (sel === '[role="tree"]' ? {} : null);
+  await teamsCall(p, "/api/mt/part/emea-03/beta/users/tenantsv2", mtJwt(-60, undefined, "OLD"));
+  return {
+    p,
+    store,
+    reloads: () => reloads,
+    advance: (ms: number) => (offset += ms),
+    tick: () => p.ticks.splice(0).forEach((fn) => fn()),
+  };
+};
+
+test("jeton expiré et voulu : la page se recharge au repos, une fois par 30 min au plus", async () => {
+  const page = await idlePage();
+  await page.p.run("chatsvc", { path: "/v1/users/ME/conversations" }); // un appel en a voulu un
+  page.tick(); // fin d'opération à l'instant : pas encore
+  assert.equal(page.reloads(), 0);
+  page.advance(16000);
+  page.tick();
+  assert.equal(page.reloads(), 1);
+  assert.ok(page.store.get("trame.tokenReload"));
+  // Après le rechargement (même sessionStorage), pas de nouveau rechargement avant 30 min.
+  const again = await idlePage();
+  again.store.set("trame.tokenReload", String(Date.now()));
+  await again.p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  again.advance(16000);
+  again.tick();
+  assert.equal(again.reloads(), 0);
+});
+
+test("jeton expiré mais personne ne l'a voulu, ou liste absente : aucun rechargement", async () => {
+  const idle = await idlePage();
+  idle.advance(16000);
+  idle.tick();
+  assert.equal(idle.reloads(), 0); // aucun appel n'a demandé le jeton
+  const login = await idlePage();
+  await login.p.run("chatsvc", { path: "/v1/users/ME/conversations" });
+  login.p.ctx.document.querySelector = () => null; // écran de connexion : pas de liste
+  login.advance(16000);
+  login.tick();
+  assert.equal(login.reloads(), 0);
 });
 
 test("webfetch signé : un jeton expiré de l'endpoint cède la place au jeton valide de l'hôte", async () => {
