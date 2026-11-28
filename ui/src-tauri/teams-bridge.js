@@ -4937,7 +4937,7 @@
 
   // --- Jeton Teams expiré : recharger la page AU REPOS ----------------------------------
   // Teams fait ses appels de chat depuis un worker ; la fenêtre ne repose presque jamais de
-  // jeton middletier, qui expire environ une heure après. Quand un appel en a voulu un et
+  // jeton middletier, qui expire au bout de quelques heures (environ 18 h relevées en direct). Quand un appel en a voulu un et
   // qu'ils sont tous expirés, on recharge la page Teams (comme au lancement de Trame : la
   // session est gardée, Teams repose des jetons frais). Seulement au repos : aucune opération
   // en cours ni finie depuis moins de 15 s, liste visible (jamais l'écran de connexion), zone
